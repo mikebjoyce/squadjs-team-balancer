@@ -77,15 +77,24 @@ Add this to your `config.json` plugins array:
 }
 ```
 
-## Admin Commands
+## Commands
+
+### Admin Commands
 
 | Command | Description |
 |---------|-------------|
+| `!teambalancer on\|off` | Enable/disable win streak tracking system |
 | `!teambalancer status` | View win streak and plugin status |
 | `!teambalancer dryrun on\|off` | Enable/disable dry-run (manual only) |
 | `!teambalancer scramble` | Manually trigger scramble |
 | `!teambalancer diag` | Run diagnostic analysis with 3 dry-run simulations |
 | `!scramble` | Shorthand for manual scramble |
+
+### Player Commands
+
+| Command | Description |
+|---------|-------------|
+| `!teambalancer` | Shows current win streak, last scramble, and plugin status |
 
 ## Configuration Options
 
@@ -109,6 +118,7 @@ Set `devMode = true` to enable command testing in all chat (not admin-only).
 ## Author
 
 **Slacker** (Discord: real_slacker / mike.b.joyce@gmail.com)
+
 ---
 
 *Built for SquadJS - Enhance your Squad server experience with fair and balanced matches*
