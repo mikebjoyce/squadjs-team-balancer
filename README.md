@@ -107,8 +107,7 @@ Set `devMode = true` to enable command testing in all chat (not admin-only).
 
 ## Author
 
-**Slacker** (Discord: real_slacker)
-
+**Slacker** (Discord: real_slacker / mike.b.joyce@gmail.com)
 ---
 
 *Built for SquadJS - Enhance your Squad server experience with fair and balanced matches*
