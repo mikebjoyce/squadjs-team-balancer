@@ -1,519 +1,618 @@
 import BasePlugin from './base-plugin.js';
 export default class TeamBalancer extends BasePlugin {
-  /**
-   * ╔═══════════════════════════════════════════════════════════════╗
-   * ║                      TEAM BALANCER PLUGIN                    ║
-   * ║             SquadJS Plugin for Fair Match Enforcement        ║
-   * ╚═══════════════════════════════════════════════════════════════╝
-   *
-   * OVERVIEW:
-   * Tracks dominant win streaks and rebalances teams using a squad-preserving
-   * scramble algorithm. Designed for Squad servers to avoid steamrolling,
-   * reduce churn, and maintain match fairness over time.
-   *
-   * Scramble execution swaps entire squads or unassigned players, balancing
-   * team sizes while respecting the 50-player cap and preserving squad cohesion.
-   * Includes dry-run mode for safe simulation, configurable thresholds, and
-   * fallback logic for emergency breaking if needed.
-   *
-   * CORE FEATURES:
-   * - Detects dominant win streaks based on ticket difference thresholds.
-   * - Triggers automatic or manual squad-preserving scrambles.
-   * - Handles RAAS, AAS, and Invasion with separate logic per mode.
-   * - Supports real-time diagnostics and dry-run simulation via chat.
-   * - Sends warning messages to swapped players (optional).
-   * - Logs all actions with verbose debug output (configurable).
-   *
-   * SCRAMBLE STRATEGY:
-   * - Uses randomized backtracking to select balanced swap sets.
-   * - Applies swap actions through RCON using SquadJS interfaces.
-   * - Fills or trims teams after swap to achieve 50-player parity.
-   * - Breaks squads only if necessary to enforce hard team caps.
-   * - Fully supports lobbies with only unassigned players.
-   *
-   * INSTALLATION:
-   * Add this to your `config.json` plugins array:
-   *
-   * {
-   *   "plugin": "TeamBalancer",
-   *   "enabled": true,
-   *   "options": {
-   *     "enableWinStreakTracking": true,
-   *     "maxWinStreak": 2,
-   *     "minTicketsToCountAsDominantWin": 175,
-   *     "invasionAttackTeamThreshold": 300,
-   *     "invasionDefenceTeamThreshold": 650,
-   *     "scrambleAnnouncementDelay": 10,
-   *     "showWinStreakMessages": true,
-   *     "warnOnSwap": true,
-   *     "dryRunMode": false,
-   *     "debugLogs": false
-   *   }
-   * }
-   *
-   * ADMIN COMMANDS:
-   *   !teambalancer status           → View win streak and plugin status
-   *   !teambalancer dryrun on|off    → Enable/disable dry-run (manual only)
-   *   !teambalancer scramble         → Manually trigger scramble
-   *   !scramble                      → Shorthand for manual scramble
-   *
-   * CONFIGURATION OPTIONS:
-   *   enableWinStreakTracking        → Enable automatic scrambling logic
-   *   maxWinStreak                   → Wins needed to trigger scramble
-   *   minTicketsToCountAsDominantWin→ Required ticket diff (non-Invasion)
-   *   invasionAttackTeamThreshold    → Threshold for attackers (Invasion)
-   *   invasionDefenceTeamThreshold   → Threshold for defenders (Invasion)
-   *   scrambleAnnouncementDelay      → Delay (sec) before scramble executes
-   *   dryRunMode                     → Manual scramble simulation toggle
-   *   showWinStreakMessages          → Broadcast win streak status
-   *   warnOnSwap                     → Notify players who are team-swapped
-   *   debugLogs                      → Print verbose internal debug output
-   *
-   * DEV MODE:
-   *   Set devMode = true to enable command testing in all chat (not admin-only).
-   *
-   * AUTHOR:
-   *   Slacker (Discord: real_slacker)
-   *
-   * ════════════════════════════════════════════════════════════════
-   */
+    /**
+     * ╔═══════════════════════════════════════════════════════════════╗
+     * ║                      TEAM BALANCER PLUGIN                     ║
+     * ║             SquadJS Plugin for Fair Match Enforcement         ║
+     * ╚═══════════════════════════════════════════════════════════════╝
+     *
+     * OVERVIEW:
+     * Tracks dominant win streaks and rebalances teams using a squad-preserving
+     * scramble algorithm. Designed for Squad servers to avoid steamrolling,
+     * reduce churn, and maintain match fairness over time.
+     *
+     * Scramble execution swaps entire squads or unassigned players, balancing
+     * team sizes while respecting the 50-player cap and preserving squad cohesion.
+     * Includes dry-run mode for safe simulation, configurable thresholds, and
+     * fallback logic for emergency breaking if needed.
+     *
+     * CORE FEATURES:
+     * - Detects dominant win streaks based on ticket difference thresholds.
+     * - Triggers automatic or manual squad-preserving scrambles.
+     * - Handles RAAS, AAS, and Invasion with separate logic per mode.
+     * - Supports real-time diagnostics and dry-run simulation via chat.
+     * - Sends warning messages to swapped players (optional).
+     * - Logs all actions with verbose debug output (configurable).
+     *
+     * SCRAMBLE STRATEGY:
+     * - Uses randomized backtracking to select balanced swap sets.
+     * - Applies swap actions through RCON using SquadJS interfaces.
+     * - Fills or trims teams after swap to achieve 50-player parity.
+     * - Breaks squads only if necessary to enforce hard team caps.
+     * - Fully supports lobbies with only unassigned players.
+     *
+     * INSTALLATION:
+     * Add this to your `config.json` plugins array:
+     *
+     * {
+     *   "plugin": "TeamBalancer",
+     *   "enabled": true,
+     *   "options": {
+     *     "enableWinStreakTracking": true,
+     *     "maxWinStreak": 2,
+     *     "minTicketsToCountAsDominantWin": 175,
+     *     "invasionAttackTeamThreshold": 300,
+     *     "invasionDefenceTeamThreshold": 650,
+     *     "scrambleAnnouncementDelay": 10,
+     *     "showWinStreakMessages": true,
+     *     "warnOnSwap": true,
+     *     "dryRunMode": false,
+     *     "debugLogs": false
+     *   }
+     * }
+     *
+     * ADMIN COMMANDS:
+     *   !teambalancer on|off           → Enable/disable win streak tracking system
+     *   !teambalancer status           → View win streak and plugin status
+     *   !teambalancer dryrun on|off    → Enable/disable dry-run (manual only)
+     *   !teambalancer diag             → Runs diagnostic with 3 dryrun scrambles
+     *   !teambalancer scramble         → Manually trigger scramble
+     *   !scramble                      → Shorthand for manual scramble
+     *
+     * CHAT COMMANDS:
+     *   !teambalancer                  → Shows current winstreak, last scramble, and plugin status
+     * 
+     * CONFIGURATION OPTIONS:
+     *   enableWinStreakTracking        → Enable automatic scrambling logic
+     *   maxWinStreak                   → Wins needed to trigger scramble
+     *   minTicketsToCountAsDominantWin → Required ticket diff (non-Invasion)
+     *   invasionAttackTeamThreshold    → Threshold for attackers (Invasion)
+     *   invasionDefenceTeamThreshold   → Threshold for defenders (Invasion)
+     *   scrambleAnnouncementDelay      → Delay (sec) before scramble executes
+     *   dryRunMode                     → Manual scramble simulation toggle
+     *   showWinStreakMessages          → Broadcast win streak status
+     *   warnOnSwap                     → Notify players who are team-swapped
+     *   debugLogs                      → Print verbose internal debug output
+     *
+     * DEV MODE:
+     *   Set devMode = true to enable command testing in all chat (not admin-only).
+     *
+     * AUTHOR:
+     *   Slacker (Discord: real_slacker)
+     *
+     * ════════════════════════════════════════════════════════════════
+     */
 
-  static get description() {
-    return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';
-  }
-
-  static get defaultEnabled() {
-    return true;
-  }
-
-  static get optionsSpecification() {
-    return {
-      enableWinStreakTracking: {
-        description: 'Enable automatic scrambling based on win streaks.',
-        default: true,
-        type: 'boolean'
-      },
-      maxWinStreak: {
-        description: 'Consecutive dominant wins to trigger scramble.',
-        default: 2,
-        type: 'number'
-      },
-      minTicketsToCountAsDominantWin: {
-        description: 'Minimum ticket difference for dominant win (non-Invasion).',
-        default: 175,
-        type: 'number'
-      },
-      invasionAttackTeamThreshold: {
-        description: 'Ticket threshold for dominant wins by attacking team in Invasion.',
-        default: 300,
-        type: 'number'
-      },
-      invasionDefenceTeamThreshold: {
-        description: 'Ticket threshold for dominant wins by defending team in Invasion.',
-        default: 650,
-        type: 'number'
-      },
-      scrambleAnnouncementDelay: {
-        description: 'Seconds to wait after announcing before scrambling.',
-        default: 10,
-        type: 'number'
-      },
-      showWinStreakMessages: {
-        description: 'Announce win streak progress or reset via RCON.',
-        default: true,
-        type: 'boolean'
-      },
-      warnOnSwap: {
-        description:
-          'If true, privately warns players when they are team-swapped during a scramble.',
-        default: true,
-        type: 'boolean'
-      },
-      debugLogs: {
-        description: 'Enable or disable debug logging.',
-        default: false,
-        type: 'boolean'
-      },
-      dryRunMode: {
-        description:
-          'If true, manual scrambles are logged but not executed. Does not affect automatic scrambles.',
-        default: true,
-        type: 'boolean'
-      }
-    };
-  }
-
-  validateOptions() {
-    if (this.options.scrambleAnnouncementDelay < 10) {
-      this.logWarning(
-        ` scrambleAnnouncementDelay (${this.options.scrambleAnnouncementDelay}s) too low. Enforcing minimum 10 seconds.`
-      );
-      this.options.scrambleAnnouncementDelay = 10;
-    }
-  }
-
-  constructor(server, options, connectors) {
-    super(server, options, connectors);
-    this.devMode = false; // <-- DEV MODE TOGGLE
-    this.winStreakTeam = null;
-    this.winStreakCount = 0;
-
-    this._scramblePending = false;
-    this._scrambleTimeout = null;
-    this._flippedAfterScramble = false;
-
-    this.onRoundEnded = this.onRoundEnded.bind(this);
-    this.onNewGame = this.onNewGame.bind(this);
-    this._cachedLayer = null;
-  }
-
-  logDebug(...args) {
-    if (this.options.debugLogs) {
-      console.log('[TeamBalancer]', ...args);
-    }
-  }
-
-  logWarning(...args) {
-    console.log('[WARNING] [TeamBalancer]', ...args);
-  }
-
-  async mount() {
-    this.logDebug('Mounting plugin.');
-    this.server.on('ROUND_ENDED', this.onRoundEnded);
-    this.server.on('NEW_GAME', this.onNewGame);
-    this.server.on('CHAT_COMMAND:teambalancer', this.onChatCommand.bind(this));
-    this.server.on('CHAT_COMMAND:scramble', this.onScrambleCommand.bind(this));
-    this.validateOptions();
-  }
-
-  async unmount() {
-    this.logDebug('Unmounting plugin.');
-    this.server.removeListener('ROUND_ENDED', this.onRoundEnded);
-    this.server.removeListener('NEW_GAME', this.onNewGame);
-    this.server.removeListener('CHAT_COMMAND:teambalancer', this.onChatCommand);
-    this.server.removeListener('CHAT_COMMAND:scramble', this.onScrambleCommand);
-    if (this._scrambleTimeout) clearTimeout(this._scrambleTimeout);
-  }
-
-  onNewGame() {
-    this.gameModeCached = this.server.gameMode;
-
-    if (!this.gameModeCached) {
-      this.logWarning('Cached game mode is undefined or null at NEW_GAME event.');
-    } else if (this.gameModeCached.toLowerCase() === 'skirmish') {
-      this.logWarning('Game mode is Skirmish; scramble logic may not apply correctly.');
+    static get description() {
+        return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';
     }
 
-    this.logDebug(`Cached game mode at NEW_GAME event: ${this.gameModeCached}`);
-  }
-
-  async onRoundEnded(data) {
-    this.logDebug('Round ended:', data);
-
-    if (!this.options.enableWinStreakTracking) {
-      this.logDebug('Win streak tracking disabled, ignoring round end.');
-      return;
+    static get defaultEnabled() {
+        return true;
     }
 
-    if (!data.winner) return this.resetStreak('No winner');
-
-    const winnerID = Number(data.winner.team);
-    const winnerTickets = Number(data.winner.tickets);
-    const loserTickets = Number(data.loser?.tickets ?? 0);
-
-    const isInvasion = (this.server.gameMode ?? this.gameModeCached) === 'Invasion';
-    let isDominant = false;
-
-    if (isInvasion) {
-      // In Invasion, team 1 is typically the attacking team, team 2 is defending
-      if (
-        (winnerID === 1 && winnerTickets >= this.options.invasionAttackTeamThreshold) ||
-        (winnerID === 2 && winnerTickets >= this.options.invasionDefenceTeamThreshold)
-      ) {
-        isDominant = true;
-      }
-    } else {
-      if (winnerTickets - loserTickets >= this.options.minTicketsToCountAsDominantWin) {
-        isDominant = true;
-      }
-    }
-
-    if (!isDominant) {
-      if (this.options.showWinStreakMessages) {
-        await this.server.rcon.broadcast(
-          `Round ended: Team ${winnerID} won, but not dominant enough to count toward streak.`
-        );
-      }
-      return this.resetStreak(`Non-dominant win by team ${winnerID}`);
-    }
-
-    if (this.winStreakTeam === winnerID) {
-      this.winStreakCount += 1;
-    } else {
-      this.winStreakTeam = winnerID;
-      this.winStreakCount = 1;
-    }
-
-    this.logDebug(`Team ${winnerID} now has ${this.winStreakCount} dominant win(s).`);
-
-    if (this.winStreakCount >= this.options.maxWinStreak && !this._scramblePending) {
-      const delaySeconds = this.options.scrambleAnnouncementDelay;
-      this._scramblePending = true;
-
-      // Log automatic scramble trigger
-      console.log(
-        `[TeamBalancer] Auto-scramble triggered - Team ${this.winStreakTeam} reached ${this.winStreakCount} win streak (${winnerTickets}-${loserTickets} tickets)`
-      );
-
-      if (this.options.showWinStreakMessages) {
-        const msg = `Team ${this.winStreakTeam} reached max dominant win streak. Scramble in ${delaySeconds} seconds.`;
-        this.logDebug(`Broadcasting: "${msg}"`);
-        await this.server.rcon.broadcast(msg);
-      } else {
-        const msg = `Scrambling teams in ${delaySeconds} seconds.`;
-        this.logDebug(`Broadcasting: "${msg}"`);
-        await this.server.rcon.broadcast(msg);
-      }
-
-      setTimeout(() => {
-        this.logDebug('Scramble countdown finished, initiating scramble.');
-        this.initiateScramble(true);
-      }, delaySeconds * 1000);
-    } else if (this.options.showWinStreakMessages) {
-      await this.server.rcon.broadcast(
-        `Team ${winnerID} has ${this.winStreakCount} dominant win(s).`
-      );
-    }
-  }
-
-  resetStreak(reason) {
-    this.logDebug(`${reason}. Resetting streak.`);
-    this.winStreakTeam = null;
-    this.winStreakCount = 0;
-    this._scramblePending = false;
-    this._flippedAfterScramble = false;
-    if (this._scrambleTimeout) {
-      clearTimeout(this._scrambleTimeout);
-      this._scrambleTimeout = null;
-    }
-  }
-
-  async initiateScramble(isSimulated = false) {
-    this._scrambleTimeout = setTimeout(async () => {
-      if (!isSimulated) {
-        const msg = `Executing scramble...`;
-        this.logDebug(`Broadcasting: "${msg}"`);
-        await this.server.rcon.broadcast(msg);
-      } else {
-        this.logDebug(`Executing dry run scramble...`);
-      }
-
-      await Scrambler.scrambleTeamsPreservingSquads({
-        squads: this.server.squads,
-        players: this.server.players,
-        winStreakTeam: this.winStreakTeam,
-        log: (...args) => console.log(...args),
-        switchTeam: async (steamID, newTeamID) => {
-          if (!isSimulated) {
-            try {
-              await this.server.rcon.switchTeam(steamID, newTeamID);
-              if (this.options.warnOnSwap) {
-                await this.server.rcon.warn(
-                  steamID,
-                  `You have been team-swapped as part of a balance adjustment.`
-                );
-              }
-            } catch (err) {
-              this.logDebug(`Failed to switch player ${steamID} to team ${newTeamID}:`, err);
+    static get optionsSpecification() {
+        return {
+            enableWinStreakTracking: {
+                description: 'Enable automatic scrambling based on win streaks.',
+                default: true,
+                type: 'boolean'
+            },
+            maxWinStreak: {
+                description: 'Consecutive dominant wins to trigger scramble.',
+                default: 2,
+                type: 'number'
+            },
+            minTicketsToCountAsDominantWin: {
+                description: 'Minimum ticket difference for dominant win (non-Invasion).',
+                default: 175,
+                type: 'number'
+            },
+            invasionAttackTeamThreshold: {
+                description: 'Ticket threshold for dominant wins by attacking team in Invasion.',
+                default: 300,
+                type: 'number'
+            },
+            invasionDefenceTeamThreshold: {
+                description: 'Ticket threshold for dominant wins by defending team in Invasion.',
+                default: 650,
+                type: 'number'
+            },
+            scrambleAnnouncementDelay: {
+                description: 'Seconds to wait after announcing before scrambling.',
+                default: 10,
+                type: 'number'
+            },
+            showWinStreakMessages: {
+                description: 'Announce win streak progress or reset via RCON.',
+                default: true,
+                type: 'boolean'
+            },
+            warnOnSwap: {
+                description:
+                    'If true, privately warns players when they are team-swapped during a scramble.',
+                default: true,
+                type: 'boolean'
+            },
+            debugLogs: {
+                description: 'Enable or disable debug logging.',
+                default: false,
+                type: 'boolean'
+            },
+            dryRunMode: {
+                description:
+                    'If true, manual scrambles are logged but not executed. Does not affect automatic scrambles.',
+                default: true,
+                type: 'boolean'
             }
-          } else {
-            this.logDebug(`[Dry Run] Would switch player ${steamID} to team ${newTeamID}`);
-          }
-        }
-      });
+        };
+    }
 
-      const msg = `Scramble complete!`;
-      if (!isSimulated) {
-        this.logDebug(`Broadcasting: "${msg}"`);
-        await this.server.rcon.broadcast(msg);
-        this.resetStreak('Post-scramble cleanup');
+    validateOptions() {
+        if (this.options.scrambleAnnouncementDelay < 10) {
+            this.logWarning(
+                ` scrambleAnnouncementDelay (${this.options.scrambleAnnouncementDelay}s) too low. Enforcing minimum 10 seconds.`
+            );
+            this.options.scrambleAnnouncementDelay = 10;
+        }
+    }
+
+    constructor(server, options, connectors) {
+        super(server, options, connectors);
+        this.devMode = false; // <-- DEV MODE TOGGLE
+        this.winStreakTeam = null;
+        this.winStreakCount = 0;
+        this.manuallyDisabled = false;
+
+        this._scramblePending = false;
         this._scrambleTimeout = null;
-      } else {
-        this.logDebug(msg);
-      }
-    }, 0);
-  }
+        this._flippedAfterScramble = false;
+        this.lastScrambleTime = null;
 
-  respond(steamID, msg) {
-    console.log(`[TeamBalancer][Response to ${steamID}] ${msg}`);
-    // Future: replace with RCON, Discord, etc.
-    // await this.server.rcon.warn(steamID, msg);
-  }
-
-  async onChatCommand(command) {
-    if (!this.devMode && command.chat !== 'ChatAdmin') return;
-    this.logDebug('[TeamBalancer] onChatCommand args:', command);
-    const message = command.message;
-    const steamID = command.steamID;
-    const player = command.player;
-    if (typeof message !== 'string' || !message.trim()) {
-      console.log('[TeamBalancer] No valid message found, ignoring command.');
-      this.respond(steamID, 'Usage: !teambalancer [dryrun on|off | status | scramble | diag]');
-      return;
+        this.onRoundEnded = this.onRoundEnded.bind(this);
+        this.onNewGame = this.onNewGame.bind(this);
+        this._cachedLayer = null;
     }
 
-    const args = message.trim().split(/\s+/);
-    const subcommand = args[0]?.toLowerCase();
+    logDebug(...args) {
+        if (this.options.debugLogs) {
+            console.log('[TeamBalancer]', ...args);
+        }
+    }
 
-    try {
-      switch (subcommand) {
-        case 'dryrun': {
-          const arg = args[1]?.toLowerCase();
-          if (arg === 'on') {
-            this.options.dryRunMode = true;
-            console.log(`[TeamBalancer] Dry run mode enabled by ${player?.name || steamID}`);
-            this.respond(steamID, 'Dry run mode enabled.');
-          } else if (arg === 'off') {
-            this.options.dryRunMode = false;
-            console.log(`[TeamBalancer] Dry run mode disabled by ${player?.name || steamID}`);
-            this.respond(steamID, 'Dry run mode disabled.');
-          } else {
-            this.respond(steamID, 'Usage: !teambalancer dryrun on|off');
-          }
-          break;
+    logWarning(...args) {
+        console.log('[WARNING] [TeamBalancer]', ...args);
+    }
+
+    async mount() {
+        this.logDebug('Mounting plugin.');
+        this.server.on('ROUND_ENDED', this.onRoundEnded);
+        this.server.on('NEW_GAME', this.onNewGame);
+        this.server.on('CHAT_COMMAND:teambalancer', this.onChatCommand.bind(this));
+        this.server.on('CHAT_COMMAND:scramble', this.onScrambleCommand.bind(this));
+        this.server.on('CHAT_MESSAGE', this.onChatMessage.bind(this));
+        this.validateOptions();
+    }
+
+    async unmount() {
+        this.logDebug('Unmounting plugin.');
+        this.server.removeListener('ROUND_ENDED', this.onRoundEnded);
+        this.server.removeListener('NEW_GAME', this.onNewGame);
+        this.server.removeListener('CHAT_COMMAND:teambalancer', this.onChatCommand);
+        this.server.removeListener('CHAT_COMMAND:scramble', this.onScrambleCommand);
+        this.server.removeListener('CHAT_MESSAGE', this.onChatMessage);
+        if (this._scrambleTimeout) clearTimeout(this._scrambleTimeout);
+    }
+
+    onNewGame() {
+        this.gameModeCached = this.server.gameMode;
+
+        if (!this.gameModeCached) {
+            this.logWarning('Cached game mode is undefined or null at NEW_GAME event.');
+        } else if (this.gameModeCached.toLowerCase() === 'skirmish') {
+            this.logWarning('Game mode is Skirmish; scramble logic may not apply correctly.');
         }
 
-        case 'status': {
-          const statusMsg = [
-            '[TeamBalancer Status]',
-            `Win streak tracking: ${this.options.enableWinStreakTracking ? 'ON' : 'OFF'}`,
-            `Dry run mode: ${this.options.dryRunMode ? 'ON (manual only)' : 'OFF'}`,
-            `Win streak: Team ${this.winStreakTeam ?? 'N/A'} with ${this.winStreakCount} win(s)`,
-            `Scramble pending: ${this._scramblePending}`
-          ].join('\n');
+        this.logDebug(`Cached game mode at NEW_GAME event: ${this.gameModeCached}`);
+    }
 
-          console.log(`[TeamBalancer] Status requested by ${player?.name || steamID}`);
-          this.respond(steamID, statusMsg);
-          break;
-        }
+    async onRoundEnded(data) {
+        this.logDebug('Round ended:', data);
 
-        case 'scramble': {
-          if (this._scramblePending) {
-            this.respond(
-              steamID,
-              '[WARNING] Scramble already pending. Cannot start a new scramble event.'
-            );
+        // Check if manually disabled first
+        if (this.manuallyDisabled) {
+            this.logDebug('Win streak tracking manually disabled, ignoring round end.');
             return;
-          }
-
-          this._scramblePending = true;
-
-          if (this.options.dryRunMode) {
-            console.log(
-              `[TeamBalancer] ${
-                player?.name || steamID
-              } requested a scramble (dry run enabled). Simulating team scramble...`
-            );
-          } else {
-            console.log(
-              `[TeamBalancer] ${
-                player?.name || steamID
-              } initiated a live scramble. Executing now...`
-            );
-          }
-
-          this.respond(steamID, 'Initiating manual scramble now...');
-          await this.initiateScramble(this.options.dryRunMode);
-
-          this._scramblePending = false;
-
-          break;
         }
 
-        case 'diag': {
-          const t1Players = this.server.players.filter((p) => p.teamID === '1');
-          const t2Players = this.server.players.filter((p) => p.teamID === '2');
-          const unassignedPlayers = this.server.players.filter((p) => p.squadID === null);
-
-          const t1Squads = this.server.squads.filter((s) => s.teamID === '1');
-          const t2Squads = this.server.squads.filter((s) => s.teamID === '2');
-
-          const diagMsg = [
-            '[TeamBalancer Diagnostics]',
-            `Dry run mode: ${this.options.dryRunMode ? 'ON' : 'OFF'}`,
-            `Win streak: Team ${this.winStreakTeam ?? 'N/A'} with ${this.winStreakCount} win(s)`,
-            `Scramble pending: ${this._scramblePending}`,
-            `Players: Total = ${this.server.players.length}, Team1 = ${t1Players.length}, Team2 = ${t2Players.length}, Unassigned = ${unassignedPlayers.length}`,
-            `Squads: Total = ${this.server.squads.length}, Team1 = ${t1Squads.length}, Team2 = ${t2Squads.length}`
-          ].join('\n');
-
-          console.log(`[TeamBalancer] Diagnostics requested by ${player?.name || steamID}`);
-          console.log(diagMsg);
-          this.respond(steamID, 'Diagnostics sent to server console.');
-
-          const runs = 3;
-          console.log(
-            `[TeamBalancer Diagnostics] Running ${runs} dry-run simulations on current server state:`
-          );
-
-          for (let i = 0; i < runs; i++) {
-            console.log(`[Dry Run ${i + 1}]`);
-            await this.initiateScramble(true);
-          }
-
-          break;
+        if (!this.options.enableWinStreakTracking) {
+            this.logDebug('Win streak tracking disabled, ignoring round end.');
+            return;
         }
 
-        default:
-          this.respond(steamID, 'Usage: !teambalancer [dryrun on|off | status | scramble | diag]');
-          break;
-      }
-    } catch (error) {
-      console.log(`[TeamBalancer] Error handling command from ${player?.name || steamID}:`, error);
-      this.respond(steamID, 'An error occurred processing your command.');
+        if (!data.winner) return this.resetStreak('No winner');
+
+        const winnerID = Number(data.winner.team);
+        const winnerTickets = Number(data.winner.tickets);
+        const loserTickets = Number(data.loser?.tickets ?? 0);
+
+        const isInvasion = (this.server.gameMode ?? this.gameModeCached) === 'Invasion';
+        let isDominant = false;
+
+        if (isInvasion) {
+            // In Invasion, team 1 is typically the attacking team, team 2 is defending
+            if (
+                (winnerID === 1 && winnerTickets >= this.options.invasionAttackTeamThreshold) ||
+                (winnerID === 2 && winnerTickets >= this.options.invasionDefenceTeamThreshold)
+            ) {
+                isDominant = true;
+            }
+        } else {
+            if (winnerTickets - loserTickets >= this.options.minTicketsToCountAsDominantWin) {
+                isDominant = true;
+            }
+        }
+
+        if (!isDominant) {
+            if (this.options.showWinStreakMessages) {
+                await this.server.rcon.broadcast(
+                    `Round ended: Team ${winnerID} won, but not dominant enough to count toward streak.`
+                );
+            }
+            return this.resetStreak(`Non-dominant win by team ${winnerID}`);
+        }
+
+        if (this.winStreakTeam === winnerID) {
+            this.winStreakCount += 1;
+        } else {
+            this.winStreakTeam = winnerID;
+            this.winStreakCount = 1;
+        }
+
+        this.logDebug(`Team ${winnerID} now has ${this.winStreakCount} dominant win(s).`);
+
+        if (this.winStreakCount >= this.options.maxWinStreak && !this._scramblePending) {
+            const delaySeconds = this.options.scrambleAnnouncementDelay;
+            this._scramblePending = true;
+
+            // Log automatic scramble trigger
+            console.log(
+                `[TeamBalancer] Auto-scramble triggered - Team ${this.winStreakTeam} reached ${this.winStreakCount} win streak (${winnerTickets}-${loserTickets} tickets)`
+            );
+
+            if (this.options.showWinStreakMessages) {
+                const msg = `Team ${this.winStreakTeam} reached max dominant win streak. Scramble in ${delaySeconds} seconds.`;
+                this.logDebug(`Broadcasting: "${msg}"`);
+                await this.server.rcon.broadcast(msg);
+            } else {
+                const msg = `Scrambling teams in ${delaySeconds} seconds.`;
+                this.logDebug(`Broadcasting: "${msg}"`);
+                await this.server.rcon.broadcast(msg);
+            }
+
+            setTimeout(() => {
+                this.logDebug('Scramble countdown finished, initiating scramble.');
+                this.initiateScramble(false);
+            }, delaySeconds * 1000);
+        } else if (this.options.showWinStreakMessages) {
+            await this.server.rcon.broadcast(
+                `Team ${winnerID} has ${this.winStreakCount} dominant win(s).`
+            );
+        }
     }
-  }
 
-  async onScrambleCommand({ chat, steamID, player }) {
-    if (!this.devMode && chat !== 'ChatAdmin') return;
-
-    try {
-      if (this._scramblePending) {
-        this.respond(
-          steamID,
-          '[WARNING] Scramble already pending. Cannot start a new scramble event.'
-        );
-        return;
-      }
-
-      this._scramblePending = true;
-
-      if (this.options.dryRunMode) {
-        console.log(
-          `[TeamBalancer] ${
-            player?.name || steamID
-          } requested a scramble via !scramble (dry run enabled). Simulating team scramble...`
-        );
-      } else {
-        console.log(
-          `[TeamBalancer] ${
-            player?.name || steamID
-          } initiated a live scramble via !scramble. Executing now...`
-        );
-      }
-
-      this.respond(steamID, 'Initiating manual scramble now...');
-      await this.initiateScramble(this.options.dryRunMode);
-
-      this._scramblePending = false;
-    } catch (error) {
-      console.log(
-        `[TeamBalancer] Error handling scramble command from ${player?.name || steamID}:`,
-        error
-      );
-      this.respond(steamID, 'An error occurred processing your scramble command.');
+    resetStreak(reason) {
+        this.logDebug(`${reason}. Resetting streak.`);
+        this.winStreakTeam = null;
+        this.winStreakCount = 0;
+        this._scramblePending = false;
+        this._flippedAfterScramble = false;
+        if (this._scrambleTimeout) {
+            clearTimeout(this._scrambleTimeout);
+            this._scrambleTimeout = null;
+        }
     }
-  }
+
+    async initiateScramble(isSimulated = false) {
+        this._scrambleTimeout = setTimeout(async () => {
+            if (!isSimulated) {
+                const msg = `Executing scramble...`;
+                this.logDebug(`Broadcasting: "${msg}"`);
+                await this.server.rcon.broadcast(msg);
+            } else {
+                this.logDebug(`Executing dry run scramble...`);
+            }
+
+            await Scrambler.scrambleTeamsPreservingSquads({
+                squads: this.server.squads,
+                players: this.server.players,
+                winStreakTeam: this.winStreakTeam,
+                log: (...args) => console.log(...args),
+                switchTeam: async (steamID, newTeamID) => {
+                    if (!isSimulated) {
+                        try {
+                            await this.server.rcon.switchTeam(steamID, newTeamID);
+                            if (this.options.warnOnSwap) {
+                                await this.server.rcon.warn(
+                                    steamID,
+                                    `You have been team-swapped as part of a balance adjustment.`
+                                );
+                            }
+                        } catch (err) {
+                            this.logDebug(`Failed to switch player ${steamID} to team ${newTeamID}:`, err);
+                        }
+                    } else {
+                        this.logDebug(`[Dry Run] Would switch player ${steamID} to team ${newTeamID}`);
+                    }
+                }
+            });
+
+            const msg = `Scramble complete!`;
+            if (!isSimulated) {
+                this.logDebug(`Broadcasting: "${msg}"`);
+                await this.server.rcon.broadcast(msg);
+                this.lastScrambleTime = Date.now();
+                this.resetStreak('Post-scramble cleanup');
+                this._scrambleTimeout = null;
+            } else {
+                this.logDebug(msg);
+            }
+        }, 0);
+    }
+
+    respond(steamID, msg) {
+        console.log(`[TeamBalancer][Response to ${steamID}] ${msg}`);
+        // Future: replace with RCON, Discord, etc.
+        // await this.server.rcon.warn(steamID, msg);
+    }
+
+    async onChatMessage(info) {
+        const message = info.message?.trim();
+        if (!message || !message.startsWith('!teambalancer')) return;
+
+        // Only respond to plain "!teambalancer" command (not admin subcommands)
+        if (message !== '!teambalancer') return;
+
+        const steamID = info.steamID;
+        const playerName = info.player?.name || 'Unknown';
+
+        this.logDebug(`General teambalancer info requested by ${playerName} (${steamID})`);
+
+        // Build info response
+        const now = Date.now();
+        const lastScrambleText = this.lastScrambleTime
+            ? `${Math.floor((now - this.lastScrambleTime) / 60000)} minutes ago`
+            : 'Never';
+
+        const statusText = this.manuallyDisabled
+            ? 'Manually disabled'
+            : (this.options.enableWinStreakTracking ? 'Active' : 'Disabled in config');
+
+        const winStreakText = this.winStreakCount > 0
+            ? `Team ${this.winStreakTeam} has ${this.winStreakCount} dominant win(s)`
+            : 'No current win streak';
+
+        const infoMsg = [
+            '[TeamBalancer Info]',
+            `Status: ${statusText}`,
+            `Current streak: ${winStreakText}`,
+            `Last scramble: ${lastScrambleText}`,
+            `Max streak before scramble: ${this.options.maxWinStreak} wins`
+        ].join('\n');
+
+        console.log(`[TeamBalancer] Info response sent to ${playerName}: ${infoMsg.replace(/\n/g, ' | ')}`);
+
+        try {
+            await this.server.rcon.warn(steamID, infoMsg);
+        } catch (err) {
+            this.logDebug(`Failed to send info message to ${steamID}:`, err);
+        }
+    }
+
+    async onChatCommand(command) {
+        if (!this.devMode && command.chat !== 'ChatAdmin') return;
+        this.logDebug('[TeamBalancer] onChatCommand args:', command);
+        const message = command.message;
+        const steamID = command.steamID;
+        const player = command.player;
+        if (typeof message !== 'string' || !message.trim()) {
+            console.log('[TeamBalancer] No valid message found, ignoring command.');
+            this.respond(steamID, 'Usage: !teambalancer [on|off | dryrun on|off | status | scramble | diag]');
+            return;
+        }
+
+        const args = message.trim().split(/\s+/);
+        const subcommand = args[0]?.toLowerCase();
+
+        try {
+            switch (subcommand) {
+                case 'on': {
+                    if (!this.manuallyDisabled) {
+                        this.respond(steamID, 'Win streak tracking is already enabled.');
+                        return;
+                    }
+
+                    this.manuallyDisabled = false;
+                    console.log(`[TeamBalancer] Win streak tracking enabled by ${player?.name || steamID}`);
+                    this.respond(steamID, 'Win streak tracking enabled.');
+
+                    if (this.options.showWinStreakMessages) {
+                        await this.server.rcon.broadcast('Team balancer win streak tracking has been enabled.');
+                    }
+                    break;
+                }
+
+                case 'off': {
+                    if (this.manuallyDisabled) {
+                        this.respond(steamID, 'Win streak tracking is already disabled.');
+                        return;
+                    }
+
+                    this.manuallyDisabled = true;
+                    console.log(`[TeamBalancer] Win streak tracking disabled by ${player?.name || steamID}`);
+                    this.respond(steamID, 'Win streak tracking disabled.');
+
+                    // Reset any pending scrambles and streaks
+                    this.resetStreak('Manual disable');
+
+                    if (this.options.showWinStreakMessages) {
+                        await this.server.rcon.broadcast('Team balancer win streak tracking has been disabled.');
+                    }
+                    break;
+                }
+
+                case 'dryrun': {
+                    const arg = args[1]?.toLowerCase();
+                    if (arg === 'on') {
+                        this.options.dryRunMode = true;
+                        console.log(`[TeamBalancer] Dry run mode enabled by ${player?.name || steamID}`);
+                        this.respond(steamID, 'Dry run mode enabled.');
+                    } else if (arg === 'off') {
+                        this.options.dryRunMode = false;
+                        console.log(`[TeamBalancer] Dry run mode disabled by ${player?.name || steamID}`);
+                        this.respond(steamID, 'Dry run mode disabled.');
+                    } else {
+                        this.respond(steamID, 'Usage: !teambalancer dryrun on|off');
+                    }
+                    break;
+                }
+
+                case 'status': {
+                    const effectiveStatus = this.manuallyDisabled
+                        ? 'DISABLED (manual)'
+                        : (this.options.enableWinStreakTracking ? 'ENABLED' : 'DISABLED (config)');
+
+                    const lastScrambleText = this.lastScrambleTime
+                        ? new Date(this.lastScrambleTime).toLocaleString()
+                        : 'Never';
+
+                    const statusMsg = [
+                        '[TeamBalancer Status]',
+                        `Win streak tracking: ${effectiveStatus}`,
+                        `Dry run mode: ${this.options.dryRunMode ? 'ON (manual only)' : 'OFF'}`,
+                        `Win streak: Team ${this.winStreakTeam ?? 'N/A'} with ${this.winStreakCount} win(s)`,
+                        `Scramble pending: ${this._scramblePending}`,
+                        `Last scramble: ${lastScrambleText}`
+                    ].join('\n');
+
+                    console.log(`[TeamBalancer] Status requested by ${player?.name || steamID}`);
+                    this.respond(steamID, statusMsg);
+                    break;
+                }
+
+                case 'scramble': {
+                    if (this._scramblePending) {
+                        this.respond(
+                            steamID,
+                            '[WARNING] Scramble already pending. Cannot start a new scramble event.'
+                        );
+                        return;
+                    }
+
+                    this._scramblePending = true;
+
+                    if (this.options.dryRunMode) {
+                        console.log(
+                            `[TeamBalancer] ${player?.name || steamID
+                            } requested a scramble (dry run enabled). Simulating team scramble...`
+                        );
+                    } else {
+                        console.log(
+                            `[TeamBalancer] ${player?.name || steamID
+                            } initiated a live scramble. Executing now...`
+                        );
+                    }
+
+                    this.respond(steamID, 'Initiating manual scramble now...');
+                    await this.initiateScramble(this.options.dryRunMode);
+
+                    this._scramblePending = false;
+
+                    break;
+                }
+
+                case 'diag': {
+                    const t1Players = this.server.players.filter((p) => p.teamID === '1');
+                    const t2Players = this.server.players.filter((p) => p.teamID === '2');
+                    const unassignedPlayers = this.server.players.filter((p) => p.squadID === null);
+
+                    const t1Squads = this.server.squads.filter((s) => s.teamID === '1');
+                    const t2Squads = this.server.squads.filter((s) => s.teamID === '2');
+
+                    const diagMsg = [
+                        '[TeamBalancer Diagnostics]',
+                        `Dry run mode: ${this.options.dryRunMode ? 'ON' : 'OFF'}`,
+                        `Win streak: Team ${this.winStreakTeam ?? 'N/A'} with ${this.winStreakCount} win(s)`,
+                        `Scramble pending: ${this._scramblePending}`,
+                        `Players: Total = ${this.server.players.length}, Team1 = ${t1Players.length}, Team2 = ${t2Players.length}, Unassigned = ${unassignedPlayers.length}`,
+                        `Squads: Total = ${this.server.squads.length}, Team1 = ${t1Squads.length}, Team2 = ${t2Squads.length}`
+                    ].join('\n');
+
+                    console.log(`[TeamBalancer] Diagnostics requested by ${player?.name || steamID}`);
+                    console.log(diagMsg);
+                    this.respond(steamID, 'Diagnostics sent to server console.');
+
+                    const runs = 3;
+                    console.log(
+                        `[TeamBalancer Diagnostics] Running ${runs} dry-run simulations on current server state:`
+                    );
+
+                    for (let i = 0; i < runs; i++) {
+                        console.log(`[Dry Run ${i + 1}]`);
+                        await this.initiateScramble(true);
+                    }
+
+                    break;
+                }
+
+                default:
+                    this.respond(steamID, 'Usage: !teambalancer [on|off | dryrun on|off | status | scramble | diag]');
+                    break;
+            }
+        } catch (error) {
+            console.log(`[TeamBalancer] Error handling command from ${player?.name || steamID}:`, error);
+            this.respond(steamID, 'An error occurred processing your command.');
+        }
+    }
+
+    async onScrambleCommand({ chat, steamID, player }) {
+        if (!this.devMode && chat !== 'ChatAdmin') return;
+
+        try {
+            if (this._scramblePending) {
+                this.respond(
+                    steamID,
+                    '[WARNING] Scramble already pending. Cannot start a new scramble event.'
+                );
+                return;
+            }
+
+            this._scramblePending = true;
+
+            if (this.options.dryRunMode) {
+                console.log(
+                    `[TeamBalancer] ${player?.name || steamID
+                    } requested a scramble via !scramble (dry run enabled). Simulating team scramble...`
+                );
+            } else {
+                console.log(
+                    `[TeamBalancer] ${player?.name || steamID
+                    } initiated a live scramble via !scramble. Executing now...`
+                );
+            }
+
+            this.respond(steamID, 'Initiating manual scramble now...');
+            await this.initiateScramble(this.options.dryRunMode);
+
+            this._scramblePending = false;
+        } catch (error) {
+            console.log(
+                `[TeamBalancer] Error handling scramble command from ${player?.name || steamID}:`,
+                error
+            );
+            this.respond(steamID, 'An error occurred processing your scramble command.');
+        }
+    }
 }
 
 /**
