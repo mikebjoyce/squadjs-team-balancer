@@ -1,7 +1,7 @@
  /**
   * ╔═══════════════════════════════════════════════════════════════╗
-  * ║                      TEAM BALANCER PLUGIN                    ║
-  * ║             SquadJS Plugin for Fair Match Enforcement        ║
+  * ║                      TEAM BALANCER PLUGIN                     ║
+  * ║             SquadJS Plugin for Fair Match Enforcement         ║
   * ╚═══════════════════════════════════════════════════════════════╝
   *
   * OVERVIEW:
