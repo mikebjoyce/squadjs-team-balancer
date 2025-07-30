@@ -17,13 +17,42 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 - **Player Notifications**: Sends warning messages to swapped players (optional)
 - **Comprehensive Logging**: Logs all actions with verbose debug output (configurable)
 
-## Scramble Strategy
+## Scramble Algorithm
 
-- Uses randomized backtracking to select balanced swap sets
-- Applies swap actions through RCON using SquadJS interfaces
-- Fills or trims teams after swap to achieve 50-player parity
-- Breaks squads only if necessary to enforce hard team caps
-- Fully supports lobbies with only unassigned players
+The plugin uses a sophisticated **squad-preserving team scramble** algorithm designed to balance teams while maintaining squad cohesion. The algorithm operates in five major phases:
+
+### 1. Data Preparation
+- Clones input data to avoid side effects
+- Converts unassigned players into pseudo-squads of size 1
+- Splits squads into team-based candidate pools
+
+### 2. Swap Target Calculation
+- Determines player imbalance using win streak team context
+- Computes optimal number of players to swap for achieving parity
+
+### 3. Backtracked Squad Selection
+- Randomizes candidate pools and runs multiple swap attempts
+- Selects squad sets that approach the calculated swap target
+- Scores swaps based on player imbalance and overshoot metrics
+- Short-circuits once an acceptable swap score is found
+
+### 4. Mutual Swap Execution
+- Swaps selected squads between teams
+- Applies player team changes using RCON callbacks
+- Preserves team ID sets for post-swap analysis
+
+### 5. Emergency Trim/Break Phase
+- If teams exceed hard caps after swaps:
+  - Attempts to trim excess by breaking unlocked squads first
+  - Falls back to breaking locked squads if necessary
+  - Performs final safety checks to ensure cap enforcement
+
+### Key Features
+- **Squad Integrity**: Preserves full squad cohesion - no partial squad movement
+- **Unassigned Support**: Handles unassigned-only matches via pseudo-squads
+- **Fallback Logic**: Robust handling of edge cases and invalid squad states
+- **Team Size Caps**: Respects 50-player team limits with emergency breaking
+- **Dry-Run Compatible**: Supports simulation mode for safe testing
 
 ## Installation
 
@@ -78,8 +107,8 @@ Set `devMode = true` to enable command testing in all chat (not admin-only).
 
 ## Author
 
-**Slacker** (Discord: real_slacker) 
-Michael Joyuce (mike.b.joyce@gmail.com)
+**Slacker** (Discord: real_slacker)
+
 ---
 
 *Built for SquadJS - Enhance your Squad server experience with fair and balanced matches*
