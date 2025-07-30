@@ -6,6 +6,8 @@
 
 Tracks dominant win streaks and rebalances teams using a squad-preserving scramble algorithm. Designed for Squad servers to avoid steamrolling, reduce churn, and maintain match fairness over time.
 
+Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion. Includes dry-run mode for safe simulation, configurable thresholds, and fallback logic for emergency breaking if needed.
+
 ## Core Features
 
 - **Win Streak Detection**: Detects dominant win streaks based on ticket difference thresholds
@@ -15,8 +17,37 @@ Tracks dominant win streaks and rebalances teams using a squad-preserving scramb
 - **Player Notifications**: Sends warning messages to swapped players (optional)
 - **Comprehensive Logging**: Logs all actions with verbose debug output (configurable)
 
-## Key Features
+## Scramble Algorithm
 
+The plugin uses a sophisticated **squad-preserving team scramble** algorithm designed to balance teams while maintaining squad cohesion. The algorithm operates in five major phases:
+
+### 1. Data Preparation
+- Clones input data to avoid side effects
+- Converts unassigned players into pseudo-squads of size 1
+- Splits squads into team-based candidate pools
+
+### 2. Swap Target Calculation
+- Determines player imbalance using win streak team context
+- Computes optimal number of players to swap for achieving parity
+
+### 3. Backtracked Squad Selection
+- Randomizes candidate pools and runs multiple swap attempts
+- Selects squad sets that approach the calculated swap target
+- Scores swaps based on player imbalance and overshoot metrics
+- Short-circuits once an acceptable swap score is found
+
+### 4. Mutual Swap Execution
+- Swaps selected squads between teams
+- Applies player team changes using RCON callbacks
+- Preserves team ID sets for post-swap analysis
+
+### 5. Emergency Trim/Break Phase
+- If teams exceed hard caps after swaps:
+  - Attempts to trim excess by breaking unlocked squads first
+  - Falls back to breaking locked squads if necessary
+  - Performs final safety checks to ensure cap enforcement
+
+### Key Features
 - **Squad Integrity**: Preserves full squad cohesion - no partial squad movement
 - **Fallback Logic**: Robust handling of edge cases and invalid squad states
 - **Team Size Caps**: Respects 50-player team limits with emergency breaking
@@ -51,9 +82,9 @@ Add this to your `config.json` plugins array:
 
 | Command | Description |
 |---------|-------------|
-| `!teambalancer on|off` | Enable/disable win streak tracking system |
+| `!teambalancer on\|off` | Enable/disable win streak tracking system |
 | `!teambalancer status` | View win streak and plugin status |
-| `!teambalancer dryrun on|off` | Enable/disable dry-run (manual only) |
+| `!teambalancer dryrun on\|off` | Enable/disable dry-run (manual only) |
 | `!teambalancer scramble` | Manually trigger scramble |
 | `!teambalancer diag` | Run diagnostic analysis with 3 dry-run simulations |
 | `!scramble` | Shorthand for manual scramble |
@@ -78,36 +109,6 @@ Add this to your `config.json` plugins array:
 | `showWinStreakMessages` | Broadcast win streak status | `true` |
 | `warnOnSwap` | Notify players who are team-swapped | `true` |
 | `debugLogs` | Print verbose internal debug output | `false` |
-
-## Scramble Algorithm
-
-The plugin uses a sophisticated **squad-preserving team scramble** algorithm designed to balance teams while maintaining squad cohesion. The algorithm operates in five major phases:
-
-### 1. Data Preparation
-- Clones input data to avoid side effects
-- Converts unassigned players into pseudo-squads of size 1
-- Splits squads into team-based candidate pools
-
-### 2. Swap Target Calculation
-- Determines player imbalance using win streak team context
-- Computes optimal number of players to swap for achieving parity
-
-### 3. Backtracked Squad Selection
-- Randomizes candidate pools and runs multiple swap attempts
-- Selects squad sets that approach the calculated swap target
-- Scores swaps based on player imbalance and overshoot metrics
-- Short-circuits once an acceptable swap score is found
-
-### 4. Mutual Swap Execution
-- Swaps selected squads between teams
-- Applies player team changes using RCON callbacks
-- Preserves team ID sets for post-swap analysis
-
-### 5. Emergency Trim/Break Phase
-- If teams exceed hard caps after swaps:
-  - Attempts to trim excess by breaking unlocked squads first
-  - Falls back to breaking locked squads if necessary
-  - Performs final safety checks to ensure cap enforcement
 
 ## Developer Mode
 
