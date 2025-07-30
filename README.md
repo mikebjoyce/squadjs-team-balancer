@@ -84,6 +84,7 @@ Add this to your `config.json` plugins array:
 | `!teambalancer status` | View win streak and plugin status |
 | `!teambalancer dryrun on\|off` | Enable/disable dry-run (manual only) |
 | `!teambalancer scramble` | Manually trigger scramble |
+| `!teambalancer diag` | Run diagnostic analysis with 3 dry-run simulations |
 | `!scramble` | Shorthand for manual scramble |
 
 ## Configuration Options
