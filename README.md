@@ -55,7 +55,7 @@ The plugin uses a sophisticated **squad-preserving team scramble** algorithm des
 
 ## Installation
 
-Add this to your `config.json` plugins array:
+Add this to your `config.txt` plugins array:
 
 ```json
 {
