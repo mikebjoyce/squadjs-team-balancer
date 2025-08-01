@@ -231,6 +231,12 @@ export default class TeamBalancer extends BasePlugin {
       discordIncludeServerName: {
         default: true,
         type: 'boolean'
+      },
+      discordClient: {
+        required: true,
+        connector: 'discord',
+        default: 'discord',
+        description: 'The Discord connector name to use.'
       }
     };
   }
@@ -262,6 +268,7 @@ export default class TeamBalancer extends BasePlugin {
     super(server, options, connectors);
     this.devMode = false; // <-- DEV MODE TOGGLE
     CommandHandlers.register(this);
+    this.server.discordClient = connectors.discord;
     DiscordIntegration.register(this);
     this.winStreakTeam = null;
     this.winStreakCount = 0;
@@ -1726,8 +1733,8 @@ export const Scrambler = {
 
 /**
  * ╔═══════════════════════════════════════════════════════════════╗
- * ║                DISCORD COMMUNICATION MODULE                  ║
- * ║               TeamBalancer Integration by Slacker            ║
+ * ║                DISCORD COMMUNICATION MODULE                   ║
+ * ║                                                               ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
  * OVERVIEW:
@@ -1890,7 +1897,7 @@ export const DiscordIntegration = {
     }
 
     try {
-      // Add server name to embed if enabled
+      // Add server name to embed footer if enabled
       if (tb.options.discordIncludeServerName && tb.server?.serverName) {
         embed.footer = embed.footer || {};
         embed.footer.text = embed.footer.text
@@ -1898,18 +1905,21 @@ export const DiscordIntegration = {
           : tb.server.serverName;
       }
 
-      await tb.server.rcon.execute(`AdminBroadcast "Discord embed sent to channel ${channelID}"`);
+      if (!tb.server?.discordClient) {
+        tb.logWarning('[Discord] No Discord client available on server object. Message not sent.');
+        return false;
+      }
 
-      // Here you would integrate with your Discord bot/webhook
-      // This is a placeholder for the actual Discord API call
-      tb.logDebug(
-        `[Discord] Would send embed to channel ${channelID}:`,
-        JSON.stringify(embed, null, 2)
-      );
+      const channel = await tb.server.discordClient.channels.fetch(channelID);
+      if (!channel) {
+        tb.logWarning(`[Discord] Failed to fetch channel with ID ${channelID}.`);
+        return false;
+      }
 
+      await channel.send({ embeds: [embed] });
       return true;
     } catch (error) {
-      tb.logWarning(`[Discord] Failed to send message to channel ${channelID}:`, error.message);
+      tb.logWarning(`[Discord] Failed to send message to channel ${channelID}: ${error.message}`);
       return false;
     }
   },
