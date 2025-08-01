@@ -1725,39 +1725,56 @@ export const Scrambler = {
 };
 
 /**
- * ============================================
- *         DISCORD COMMUNICATION MODULE
- * ============================================
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║                DISCORD COMMUNICATION MODULE                  ║
+ * ║               TeamBalancer Integration by Slacker            ║
+ * ╚═══════════════════════════════════════════════════════════════╝
  *
  * OVERVIEW:
- * Handles all Discord integration for TeamBalancer plugin, including
- * win streak notifications, scramble announcements, and admin command
- * responses. Designed to work alongside the existing RCON messaging
- * system without conflicts.
+ * Handles all Discord integration for the TeamBalancer plugin, including
+ * win streak notifications, scramble countdowns, and admin command responses.
+ * Designed to coexist cleanly with RCON messaging without overlap or conflicts.
  *
  * FEATURES:
- * - Win streak progression notifications with dynamic embeds
- * - Scramble countdown and completion announcements
- * - Admin command confirmations and status reports
- * - Configurable embed colors and channel routing
- * - Automatic fallback when Discord is unavailable
- * - Rich embed formatting with game context (teams, tickets, margins)
+ * - Win streak progression announcements with dynamic embed colors
+ * - Scramble countdown and completion alerts
+ * - Admin command confirmations and plugin status reports
+ * - Game-aware formatting (teams, tickets, margins, game mode)
+ * - Configurable color scheme and Discord channel routing
+ * - Automatic fallback when Discord is unavailable or misconfigured
  *
- * INTEGRATION:
- * Add this module to your TeamBalancer by calling:
- * DiscordIntegration.register(this) in the constructor
+ * INSTALLATION REQUIREMENTS:
+ * 1. Create a bot at https://discord.com/developers
+ * 2. Enable MESSAGE CONTENT intent and invite it to your server
+ * 3. Set the DISCORD_BOT_TOKEN environment variable before launching SquadJS
+ * 4. Ensure your target channels are visible and writable by the bot
  *
- * CONFIGURATION:
- * Add these options to your TeamBalancer optionsSpecification:
- * - discordEnabled: Enable/disable Discord notifications
- * - discordChannelID: Channel for general notifications
- * - discordAdminChannelID: Channel for admin command responses
- * - discordEmbedColor: Default embed color (hex or decimal)
- * - discordScrambleColor: Color for scramble-related embeds
- * - discordWinStreakColor: Color for win streak embeds
- * - discordIncludeServerName: Include server name in embeds
+ * INTEGRATION INSTRUCTIONS:
+ * 1. Register the module in your plugin constructor:
+ *      DiscordIntegration.register(this);
  *
- * AUTHOR: Integration module for TeamBalancer by Slacker
+ * 2. Add the following options to your plugin config:
+ *      "discordEnabled": true,
+ *      "discordChannelID": "PUBLIC_CHANNEL_ID",
+ *      "discordAdminChannelID": "ADMIN_CHANNEL_ID",
+ *      "discordEmbedColor": "#888888",
+ *      "discordScrambleColor": "#E67E22",
+ *      "discordWinStreakColor": "#3498DB",
+ *      "discordIncludeServerName": true
+ *
+ * CONFIGURATION OPTIONS (in optionsSpecification):
+ * - discordEnabled              → Enable/disable Discord notifications
+ * - discordChannelID           → Channel for general notifications
+ * - discordAdminChannelID      → Channel for admin command responses
+ * - discordEmbedColor          → Default embed color (hex or decimal)
+ * - discordScrambleColor       → Color for scramble-related embeds
+ * - discordWinStreakColor      → Color for win streak embeds
+ * - discordIncludeServerName   → Include server name in all embeds
+ *
+ * AUTHOR:
+ *   Slacker (Discord: real_slacker)
+ *
+ * ════════════════════════════════════════════════════════════════
  */
 
 export const DiscordIntegration = {
