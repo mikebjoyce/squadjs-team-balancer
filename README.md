@@ -6,7 +6,7 @@
 
 Tracks dominant win streaks and rebalances teams using a squad-preserving scramble algorithm. Designed for Squad servers to avoid steamrolling, reduce churn, and maintain match fairness over time.
 
-Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion. Includes dry-run mode, configurable thresholds, fallback logic, a reliable retry system, and optional Discord integration for real-time match notifications.
+Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion. Includes dry-run mode, configurable thresholds, fallback logic, and a reliable retry system with comprehensive logging.
 
 ## Core Features
 
@@ -15,7 +15,6 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 - **Multi-Mode Support**: Handles RAAS, AAS, and Invasion with separate logic  
 - **Dry-Run Diagnostics**: Simulate scrambles without affecting players  
 - **Player Notifications**: Sends RCON warnings to swapped players (optional)  
-- **Discord Integration**: Broadcasts win streaks, scrambles, and admin messages  
 - **Reliable Swap System**: Retries failed swaps until timeout expires  
 - **Emergency Enforcement**: Breaks squads only if needed to enforce 50-player cap  
 
@@ -60,9 +59,9 @@ Add to your `config.json`:
 
 | Command | Description |
 |--------|-------------|
-| `!teambalancer on|off` | Enable/disable auto-tracking |
+| `!teambalancer on\|off` | Enable/disable auto-tracking |
 | `!teambalancer status` | Show plugin config, streak, and stats |
-| `!teambalancer dryrun on|off` | Toggle dry-run mode |
+| `!teambalancer dryrun on\|off` | Toggle dry-run mode |
 | `!teambalancer scramble` | Manual scramble with delay |
 | `!teambalancer cancel` | Cancel countdown |
 | `!teambalancer diag` | Run 3 dry-run simulations |
@@ -100,50 +99,6 @@ Add to your `config.json`:
 - `scrambleCompletionTimeout` minimum: 5000 ms  
 - All options validated on startup  
 
-## Discord Integration
-
-Send win streaks, scramble announcements, and admin responses to Discord via embeds.
-
-### Setup
-
-1. **Create a Discord Bot** at [discord.com/developers](https://discord.com/developers/applications)  
-2. Enable **MESSAGE CONTENT** intent  
-3. Invite bot with:  
-   ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_CLIENT_ID&permissions=2048&scope=bot
-   ```
-
-4. **Set environment token** before starting SquadJS:
-   ```bash
-   export DISCORD_BOT_TOKEN=your_token_here
-   ```
-
-5. **Update config.json**:
-
-```json
-{
-  "discordEnabled": true,
-  "discordChannelID": "PUBLIC_CHANNEL_ID",
-  "discordAdminChannelID": "ADMIN_CHANNEL_ID",
-  "discordEmbedColor": "#888888",
-  "discordScrambleColor": "#E67E22",
-  "discordWinStreakColor": "#3498DB",
-  "discordIncludeServerName": true
-}
-```
-
-### Discord Config Options
-
-| Key | Description |
-|-----|-------------|
-| `discordEnabled` | Enable Discord output |
-| `discordChannelID` | Channel for public posts |
-| `discordAdminChannelID` | Channel for admin confirmations |
-| `discordEmbedColor` | Default embed color |
-| `discordScrambleColor` | Color for scramble notices |
-| `discordWinStreakColor` | Color for streak notifications |
-| `discordIncludeServerName` | Adds server name to embed title |
-
 ## Game Mode Support
 
 - **RAAS / AAS**: Uses standard ticket diff threshold  
@@ -162,6 +117,35 @@ Set `devMode = true` in the constructor to allow commands from all chat (not jus
 - Team/squad distribution  
 - 3 dry-run scramble simulations  
 - Debug logs (if enabled)  
+
+## Logging and Monitoring
+
+The plugin provides comprehensive logging for debugging and monitoring:
+
+- **Debug Logs**: Enable with `debugLogs: true` for verbose output
+- **Console Output**: All major actions logged to server console
+- **Player Warnings**: Optional RCON warnings sent to swapped players
+- **Scramble Tracking**: Detailed retry attempts and completion status
+
+## Troubleshooting
+
+### Common Issues
+
+- **Scramble not triggering**: Check if `enableWinStreakTracking` is true and plugin not manually disabled
+- **Players not moving**: Verify RCON connection and check retry logs in console
+- **Timeout errors**: Increase `scrambleCompletionTimeout` for slower servers
+
+### Debug Mode
+
+Enable debug logging to see detailed scramble execution:
+
+```json
+{
+  "debugLogs": true
+}
+```
+
+This will show squad selection logic, player move attempts, and retry status in the console.
 
 ## Author
 
