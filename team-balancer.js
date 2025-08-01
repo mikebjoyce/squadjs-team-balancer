@@ -33,7 +33,6 @@ export default class TeamBalancer extends BasePlugin {
      * - Tracks and retries failed swaps over configurable timeouts.
      * - Fills or trims teams after swaps to achieve near 50-player parity.
      * - Breaks squads only if necessary to enforce hard team caps.
-     * - Fully supports lobbies with only unassigned players.
      *
      * INSTALLATION:
      * Add this to your `config.json` plugins array:
@@ -1335,7 +1334,6 @@ const CommandHandlers = {
  *        → Final safety check ensures cap enforcement or logs critical failure.
  *
  * NOTES:
- *  - Unassigned-only matches are fully supported via pseudo-squads.
  *  - If no squads are found, the algorithm still runs using solo pseudo-squads.
  *  - All state changes are done via injected callbacks (log, switchTeam).
  *  - The logic avoids repeating squad selections between attempts.
