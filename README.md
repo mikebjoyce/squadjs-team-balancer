@@ -150,12 +150,6 @@ Send win streaks, scramble announcements, and admin responses to Discord via emb
 - **Invasion**: Uses separate thresholds for attackers and defenders  
 - Mode-aware streak logic and messaging  
 
-## Reliability
-
-- Retries failed moves until `scrambleCompletionTimeout`  
-- Handles player disconnects and locked squads  
-- Breaks squads only as a last resort  
-
 ## Developer Mode
 
 Set `devMode = true` in the constructor to allow commands from all chat (not just admins).
