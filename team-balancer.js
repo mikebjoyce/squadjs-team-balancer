@@ -605,57 +605,144 @@ export default class TeamBalancer extends BasePlugin {
     return true;
   }
 
-  async executeScramble(isSimulated = false, steamID = null, player = null) {
-    if (this._scrambleInProgress) {
-      this.logWarning('Scramble already in progress.');
-      return false;
-    }
+    transformSquadJSData(squads, players) {
+        this.logDebug('Transforming SquadJS data for scrambler...');
 
-    this._scrambleInProgress = true;
-    const adminName = player?.name || (steamID ? `admin ${steamID}` : 'system');
-    this.logDebug(`Scramble started by ${adminName}`);
+        // Normalize and validate input
+        const normalizedSquads = (squads || []).filter(squad =>
+            squad &&
+            squad.squadID &&
+            squad.teamID &&
+            typeof squad.squadID !== 'undefined' &&
+            typeof squad.teamID !== 'undefined'
+        );
 
-    try {
-      if (!isSimulated) {
-        const msg = `${
-          this.RconMessages.prefix
-        } ${this.RconMessages.executeScrambleMessage.trim()}`;
-        this.logDebug(`Broadcasting: "${msg}"`);
-        await this.server.rcon.broadcast(msg);
-        console.log(`[TeamBalancer] Executing scramble initiated by ${adminName}`);
-      } else {
-        this.logDebug(`Executing dry run scramble initiated by ${adminName}`);
-      }
+        const normalizedPlayers = (players || []).filter(player =>
+            player &&
+            player.steamID &&
+            player.teamID &&
+            typeof player.steamID === 'string' &&
+            typeof player.teamID !== 'undefined'
+        );
 
-      await Scrambler.scrambleTeamsPreservingSquads({
-        squads: this.server.squads,
-        players: this.server.players,
-        winStreakTeam: this.winStreakTeam,
-        log: (...args) => console.log(...args),
-        switchTeam: async (steamID, newTeamID) => {
-          await this.reliablePlayerMove(steamID, newTeamID, isSimulated);
+        this.logDebug(`Input validation: ${normalizedSquads.length} valid squads, ${normalizedPlayers.length} valid players`);
+
+        // Create a map of squadID -> array of player steamIDs
+        const squadPlayerMap = new Map();
+
+        for (const player of normalizedPlayers) {
+            if (player.squadID) {
+                const squadKey = String(player.squadID);
+                if (!squadPlayerMap.has(squadKey)) {
+                    squadPlayerMap.set(squadKey, []);
+                }
+                squadPlayerMap.get(squadKey).push(player.steamID);
+            }
         }
-      });
 
-      const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`;
-      if (!isSimulated) {
-        this.logDebug(`Broadcasting: "${msg}"`);
-        await this.server.rcon.broadcast(msg);
-        this.lastScrambleTime = Date.now();
-        this.resetStreak('Post-scramble cleanup');
-      } else {
-        this.logDebug(msg);
-      }
+        this.logDebug(`Squad-player mapping created for ${squadPlayerMap.size} squads`);
 
-      return true;
-    } catch (error) {
-      console.log(`[TeamBalancer] Error during scramble execution:`, error);
-      return false;
-    } finally {
-      this._scrambleInProgress = false;
-      this.logDebug('Scramble finished');
+        // Transform squads to expected format
+        const transformedSquads = normalizedSquads.map(squad => {
+            const squadKey = String(squad.squadID);
+            const playersInSquad = squadPlayerMap.get(squadKey) || [];
+
+            const transformed = {
+                id: squadKey,
+                teamID: String(squad.teamID), // Ensure string format
+                players: playersInSquad,
+                locked: squad.locked === 'True' || squad.locked === true // Handle both string and boolean
+            };
+
+            this.logDebug(`Transformed squad ${squadKey}: ${playersInSquad.length} players, team ${transformed.teamID}, locked: ${transformed.locked}`);
+
+            return transformed;
+        });
+
+        // Transform players to expected format
+        const transformedPlayers = normalizedPlayers.map(player => ({
+            steamID: player.steamID,
+            teamID: String(player.teamID), // Ensure string format
+            squadID: player.squadID ? String(player.squadID) : null
+        }));
+
+        this.logDebug(`Transformation complete: ${transformedSquads.length} squads, ${transformedPlayers.length} players`);
+
+        // Log sample data for debugging
+        if (transformedSquads.length > 0) {
+            this.logDebug(`Sample transformed squad:`, JSON.stringify(transformedSquads[0], null, 2));
+        }
+        if (transformedPlayers.length > 0) {
+            this.logDebug(`Sample transformed player:`, JSON.stringify(transformedPlayers[0], null, 2));
+        }
+
+        return {
+            squads: transformedSquads,
+            players: transformedPlayers
+        };
     }
-  }
+
+    async executeScramble(isSimulated = false, steamID = null, player = null) {
+        if (this._scrambleInProgress) {
+            this.logWarning('Scramble already in progress.');
+            return false;
+        }
+
+        this._scrambleInProgress = true;
+        const adminName = player?.name || (steamID ? `admin ${steamID}` : 'system');
+        this.logDebug(`Scramble started by ${adminName}`);
+
+        try {
+            if (!isSimulated) {
+                const msg = `${this.RconMessages.prefix
+                    } ${this.RconMessages.executeScrambleMessage.trim()}`;
+                this.logDebug(`Broadcasting: "${msg}"`);
+                await this.server.rcon.broadcast(msg);
+                console.log(`[TeamBalancer] Executing scramble initiated by ${adminName}`);
+            } else {
+                this.logDebug(`Executing dry run scramble initiated by ${adminName}`);
+            }
+
+            // Transform SquadJS data to expected format
+            const { squads: transformedSquads, players: transformedPlayers } = this.transformSquadJSData(
+                this.server.squads,
+                this.server.players
+            );
+
+            this.logDebug(`Calling scrambler with ${transformedSquads.length} squads and ${transformedPlayers.length} players`);
+
+            await Scrambler.scrambleTeamsPreservingSquads({
+                squads: transformedSquads,
+                players: transformedPlayers,
+                winStreakTeam: this.winStreakTeam,
+                log: (...args) => console.log(...args),
+                switchTeam: async (steamID, newTeamID) => {
+                    await this.reliablePlayerMove(steamID, newTeamID, isSimulated);
+                }
+            });
+
+            const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`;
+            if (!isSimulated) {
+                this.logDebug(`Broadcasting: "${msg}"`);
+                await this.server.rcon.broadcast(msg);
+                this.lastScrambleTime = Date.now();
+                this.resetStreak('Post-scramble cleanup');
+            } else {
+                this.logDebug(msg);
+            }
+
+            return true;
+        } catch (error) {
+            console.log(`[TeamBalancer] Error during scramble execution:`, error);
+            // Log additional debugging info on error
+            this.logDebug(`Squad data at error:`, JSON.stringify(this.server.squads, null, 2));
+            this.logDebug(`Player data at error:`, JSON.stringify(this.server.players, null, 2));
+            return false;
+        } finally {
+            this._scrambleInProgress = false;
+            this.logDebug('Scramble finished');
+        }
+    }
 
   async cancelPendingScramble(steamID, player = null, isAutomatic = false) {
     if (!this._scramblePending) {
