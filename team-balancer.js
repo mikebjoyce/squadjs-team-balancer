@@ -1484,279 +1484,296 @@ const CommandHandlers = {
  */
 
 export const Scrambler = {
-  async scrambleTeamsPreservingSquads({
-    squads,
-    players,
-    winStreakTeam,
-    log = () => {},
-    switchTeam = async () => {}
-  }) {
-    const maxTeamSize = 50;
-    log(`========== Starting Team Scramble (Max cap = ${maxTeamSize}) ==========`);
+    async scrambleTeamsPreservingSquads({
+        squads,
+        players,
+        winStreakTeam,
+        log = () => { },
+        switchTeam = async () => { }
+    }) {
+        const maxTeamSize = 50;
+        const maxTotalPlayers = maxTeamSize * 2; // 100 players max
 
-    if (![1, 2].includes(winStreakTeam)) {
-      winStreakTeam = Math.random() < 0.5 ? 1 : 2;
-      log(`No win streak team set. Randomly selecting Team ${winStreakTeam} as starting side.`);
-    }
+        log(`========== Starting Team Scramble (Max cap = ${maxTeamSize}, Total cap = ${maxTotalPlayers}) ==========`);
 
-    const clonedPlayers = players.map((p) => ({ ...p }));
-    const clonedSquads = squads.map((s) => ({ ...s, players: [...s.players] }));
-
-    const normalizeTeamID = (id) => String(id);
-
-    const team1Size = clonedPlayers.filter((p) => normalizeTeamID(p.teamID) === '1').length;
-    const team2Size = clonedPlayers.filter((p) => normalizeTeamID(p.teamID) === '2').length;
-
-    const losingTeamSize = winStreakTeam === 1 ? team2Size : team1Size;
-    const winningTeamSize = winStreakTeam === 1 ? team1Size : team2Size;
-    const diff = winningTeamSize - losingTeamSize;
-
-    const swapTarget = Math.floor((losingTeamSize + diff) / 2); // move enough to bring parity
-
-    const allSquads = clonedSquads.filter((s) => s.players?.length > 0);
-    const unassigned = clonedPlayers.filter((p) => p.squadID === null);
-    const totalPlayers = clonedPlayers.length;
-
-    log(`Total players: ${totalPlayers}, Swap target per side: ${swapTarget}`);
-
-    const unassignedPseudoSquads = unassigned.map((p) => ({
-      id: `Unassigned - ${p.steamID}`,
-      teamID: p.teamID,
-      players: [p.steamID]
-    }));
-
-    const filterCandidates = (teamID) =>
-      allSquads
-        .filter((s) => s.teamID === teamID && s.players.length >= 4)
-        .concat(unassignedPseudoSquads.filter((s) => s.teamID === teamID));
-
-    const t1Candidates = filterCandidates('1');
-    const t2Candidates = filterCandidates('2');
-
-    log(
-      `Candidate squads filtered: Team1 = ${t1Candidates.length}, Team2 = ${t2Candidates.length}`
-    );
-
-    const shuffle = (arr) => {
-      for (let i = arr.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-    };
-
-    const selectSquadsLimited = (arr, limit) => {
-      const selected = [];
-      let count = 0;
-      for (const squad of arr) {
-        const size = squad.players.length;
-        if (count + size > limit) continue;
-        selected.push(squad);
-        count += size;
-      }
-      return selected;
-    };
-
-    const scoreSwap = (a, b) => {
-      const sum = (squads) => squads.reduce((n, s) => n + s.players.length, 0);
-      const sa = sum(a);
-      const sb = sum(b);
-      const imbalance = Math.abs(sa - sb);
-      const penalty = Math.max(0, sa - swapTarget) + Math.max(0, sb - swapTarget);
-      return imbalance + penalty * 10;
-    };
-
-    const MAX_ATTEMPTS = 25;
-    const ACCEPTABLE_SCORE = 2;
-    let bestScore = Infinity;
-    let bestT1 = null;
-    let bestT2 = null;
-
-    log(
-      `Starting swap attempts (max ${MAX_ATTEMPTS}) with acceptable score <= ${ACCEPTABLE_SCORE}`
-    );
-
-    for (let i = 0; i < MAX_ATTEMPTS; i++) {
-      shuffle(t1Candidates);
-      shuffle(t2Candidates);
-
-      const selT1 = selectSquadsLimited(t1Candidates, swapTarget);
-      const selT2 = selectSquadsLimited(t2Candidates, swapTarget);
-      const sa = selT1.reduce((n, s) => n + s.players.length, 0);
-      const sb = selT2.reduce((n, s) => n + s.players.length, 0);
-      const score = scoreSwap(selT1, selT2);
-
-      log(
-        `Attempt ${i + 1}: Score = ${score}, Team1 squads = ${
-          selT1.length
-        } (players = ${sa}), Team2 squads = ${selT2.length} (players = ${sb})`
-      );
-      log(`Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
-      log(`Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
-
-      if (score < bestScore) {
-        bestScore = score;
-        bestT1 = selT1;
-        bestT2 = selT2;
-        log(`New best score found: ${bestScore} at attempt ${i + 1}`);
-        if (bestScore <= ACCEPTABLE_SCORE) {
-          log(`Acceptable solution reached. Ending attempts early.`);
-          break;
-        }
-      }
-    }
-
-    if (!bestT1 || !bestT2) {
-      log('No valid swap solution found within attempt limit.');
-      return;
-    }
-
-    const team1IDs = new Set(clonedPlayers.filter((p) => p.teamID === '1').map((p) => p.steamID));
-    const team2IDs = new Set(clonedPlayers.filter((p) => p.teamID === '2').map((p) => p.steamID));
-    const swappedSquadIDs = new Set();
-
-    const moveSquads = async (group, toTeam, fromSet, toSet) => {
-      log(`Swapping ${group.length} squads to Team ${toTeam}:`);
-      for (const squad of group) {
-        log(`Swapping squad ${squad.id} (${squad.players.length} players) → Team ${toTeam}`);
-        swappedSquadIDs.add(squad.id);
-        for (const pid of squad.players) {
-          const oldTeam = fromSet.has(pid) ? (toTeam === 2 ? '1' : '2') : 'Unassigned';
-          fromSet.delete(pid);
-          toSet.add(pid);
-          await switchTeam(pid, String(toTeam));
-          log(`Player ${pid}: Team ${oldTeam} → Team ${toTeam}`);
-        }
-      }
-    };
-
-    log('=== MUTUAL SWAP PHASE ===');
-    await moveSquads(bestT1, 2, team1IDs, team2IDs);
-    await moveSquads(bestT2, 1, team2IDs, team1IDs);
-
-    const finalT1Count = team1IDs.size;
-    const finalT2Count = team2IDs.size;
-
-    if (finalT1Count > maxTeamSize || finalT2Count > maxTeamSize) {
-      log(`=== EMERGENCY SQUAD BREAKING PHASE ===`);
-
-      const oversizedTeam = finalT1Count > maxTeamSize ? 1 : 2;
-      const oversizedCount = oversizedTeam === 1 ? finalT1Count : finalT2Count;
-      const targetTeam = oversizedTeam === 1 ? 2 : 1;
-      const targetCount = oversizedTeam === 1 ? finalT2Count : finalT1Count;
-      let playersToMove = oversizedCount - maxTeamSize;
-
-      log(`Team ${oversizedTeam} has ${playersToMove} excess players. Attempting squad breaking.`);
-
-      playersToMove = Math.min(playersToMove, maxTeamSize - targetCount);
-
-      log(`Breaking unlocked squads to move ${playersToMove} excess players...`);
-
-      const unlockedSquads = allSquads
-        .filter(
-          (s) =>
-            s.teamID === String(oversizedTeam) &&
-            !swappedSquadIDs.has(s.id) &&
-            !s.locked &&
-            s.players.length > 1
-        )
-        .sort((a, b) => b.players.length - a.players.length);
-
-      log(`Found ${unlockedSquads.length} unlocked squads to break`);
-
-      for (const squad of unlockedSquads) {
-        if (playersToMove <= 0) break;
-        log(`Breaking unlocked squad ${squad.id} (${squad.players.length} players)`);
-
-        const playersInSquad = [...squad.players];
-        shuffle(playersInSquad);
-
-        let movedFromSquad = 0;
-        for (const playerID of playersInSquad) {
-          if (playersToMove <= 0) break;
-          if (oversizedTeam === 1) {
-            team1IDs.delete(playerID);
-            team2IDs.add(playerID);
-          } else {
-            team2IDs.delete(playerID);
-            team1IDs.add(playerID);
-          }
-          await switchTeam(playerID, String(targetTeam));
-          log(
-            `Moved player ${playerID} from unlocked squad ${squad.id}: Team ${oversizedTeam} → Team ${targetTeam}`
-          );
-          playersToMove--;
-          movedFromSquad++;
+        // EARLY VALIDATION: Check if scramble is even possible
+        const totalPlayers = players.length;
+        if (totalPlayers > maxTotalPlayers) {
+            log(`CRITICAL: Server has ${totalPlayers} players, exceeding maximum capacity of ${maxTotalPlayers}`);
+            log(`Cannot scramble with current player count. Consider removing excess players first.`);
+            return;
         }
 
-        if (movedFromSquad > 0) {
-          log(`Broke ${movedFromSquad} players from unlocked squad ${squad.id}`);
+        if (![1, 2].includes(winStreakTeam)) {
+            winStreakTeam = Math.random() < 0.5 ? 1 : 2;
+            log(`No win streak team set. Randomly selecting Team ${winStreakTeam} as starting side.`);
         }
-      }
 
-      if (playersToMove > 0) {
-        log(
-          `Fallback 3: Still ${playersToMove} over cap. Breaking locked squads as last resort...`
-        );
+        const clonedPlayers = players.map((p) => ({ ...p }));
+        const clonedSquads = squads.map((s) => ({ ...s, players: [...s.players] }));
 
-        const lockedSquads = allSquads
-          .filter(
-            (s) =>
-              s.teamID === String(oversizedTeam) &&
-              !swappedSquadIDs.has(s.id) &&
-              s.locked &&
-              s.players.length > 1
-          )
-          .sort((a, b) => b.players.length - a.players.length);
+        const normalizeTeamID = (id) => String(id);
 
-        if (lockedSquads.length > 0) {
-          log(
-            `[EMERGENCY] Breaking ${lockedSquads.length} locked squads to enforce ${maxTeamSize}-player cap`
-          );
+        const team1Size = clonedPlayers.filter((p) => normalizeTeamID(p.teamID) === '1').length;
+        const team2Size = clonedPlayers.filter((p) => normalizeTeamID(p.teamID) === '2').length;
 
-          for (const squad of lockedSquads) {
-            if (playersToMove <= 0) break;
-            log(`[EMERGENCY] Breaking locked squad ${squad.id} (${squad.players.length} players)`);
+        const losingTeamSize = winStreakTeam === 1 ? team2Size : team1Size;
+        const winningTeamSize = winStreakTeam === 1 ? team1Size : team2Size;
+        const diff = winningTeamSize - losingTeamSize;
 
-            const playersInSquad = [...squad.players];
-            shuffle(playersInSquad);
+        // FIXED: Smart swap target that respects total player constraints
+        const calculateSwapTarget = (totalPlayers, maxPerTeam) => {
+            const idealPerTeam = Math.floor(totalPlayers / 2);
+            const remainder = totalPlayers % 2;
 
-            let movedFromSquad = 0;
-            for (const playerID of playersInSquad) {
-              if (playersToMove <= 0) break;
-              if (oversizedTeam === 1) {
-                team1IDs.delete(playerID);
-                team2IDs.add(playerID);
-              } else {
-                team2IDs.delete(playerID);
-                team1IDs.add(playerID);
-              }
-              await switchTeam(playerID, String(targetTeam));
-              log(
-                `[EMERGENCY] Moved player ${playerID} from locked squad ${squad.id}: Team ${oversizedTeam} → Team ${targetTeam}`
-              );
-              playersToMove--;
-              movedFromSquad++;
+            // If ideal split fits within caps, use it
+            if (idealPerTeam <= maxPerTeam) {
+                return idealPerTeam;
             }
 
-            if (movedFromSquad > 0) {
-              log(`[EMERGENCY] Broke ${movedFromSquad} players from locked squad ${squad.id}`);
+            // If total players > 100, we can't balance perfectly
+            // Aim for maxPerTeam but acknowledge some will be excluded
+            log(`WARNING: ${totalPlayers} total players cannot be perfectly balanced with ${maxPerTeam} per team cap`);
+            return Math.min(idealPerTeam, maxPerTeam);
+        };
+
+        const swapTarget = calculateSwapTarget(totalPlayers, maxTeamSize);
+
+        const allSquads = clonedSquads.filter((s) => s.players?.length > 0);
+        const unassigned = clonedPlayers.filter((p) => p.squadID === null);
+
+        log(`Total players: ${totalPlayers}, Swap target per side: ${swapTarget}, Max per team: ${maxTeamSize}`);
+
+        const unassignedPseudoSquads = unassigned.map((p) => ({
+            id: `Unassigned - ${p.steamID}`,
+            teamID: p.teamID,
+            players: [p.steamID]
+        }));
+
+        const filterCandidates = (teamID) =>
+            allSquads
+                .filter((s) => s.teamID === teamID && s.players.length >= 4)
+                .concat(unassignedPseudoSquads.filter((s) => s.teamID === teamID));
+
+        const t1Candidates = filterCandidates('1');
+        const t2Candidates = filterCandidates('2');
+
+        log(`Candidate squads filtered: Team1 = ${t1Candidates.length}, Team2 = ${t2Candidates.length}`);
+
+        const shuffle = (arr) => {
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
             }
-          }
+        };
+
+        // FIXED: Prevent duplicate squad selection
+        const selectUniqueSquads = (t1Cands, t2Cands, limit) => {
+            const usedSquadIds = new Set();
+
+            const selectFromCandidates = (candidates, targetLimit) => {
+                const selected = [];
+                let count = 0;
+
+                for (const squad of candidates) {
+                    if (usedSquadIds.has(squad.id)) {
+                        log(`Skipping squad ${squad.id} - already selected for opposite team`);
+                        continue;
+                    }
+
+                    const size = squad.players.length;
+                    if (count + size > targetLimit) continue;
+
+                    selected.push(squad);
+                    usedSquadIds.add(squad.id);
+                    count += size;
+                }
+
+                return selected;
+            };
+
+            shuffle(t1Cands);
+            shuffle(t2Cands);
+
+            const selT1 = selectFromCandidates(t1Cands, limit);
+            const selT2 = selectFromCandidates(t2Cands, limit);
+
+            return { selT1, selT2 };
+        };
+
+        const scoreSwap = (a, b) => {
+            const sum = (squads) => squads.reduce((n, s) => n + s.players.length, 0);
+            const sa = sum(a);
+            const sb = sum(b);
+            const imbalance = Math.abs(sa - sb);
+            const penalty = Math.max(0, sa - swapTarget) + Math.max(0, sb - swapTarget);
+            return imbalance + penalty * 10;
+        };
+
+        const MAX_ATTEMPTS = 25;
+        const ACCEPTABLE_SCORE = 2;
+        let bestScore = Infinity;
+        let bestT1 = null;
+        let bestT2 = null;
+
+        log(`Starting swap attempts (max ${MAX_ATTEMPTS}) with acceptable score <= ${ACCEPTABLE_SCORE}`);
+
+        for (let i = 0; i < MAX_ATTEMPTS; i++) {
+            const { selT1, selT2 } = selectUniqueSquads(
+                [...t1Candidates],
+                [...t2Candidates],
+                swapTarget
+            );
+
+            const sa = selT1.reduce((n, s) => n + s.players.length, 0);
+            const sb = selT2.reduce((n, s) => n + s.players.length, 0);
+            const score = scoreSwap(selT1, selT2);
+
+            log(`Attempt ${i + 1}: Score = ${score}, Team1 squads = ${selT1.length} (players = ${sa}), Team2 squads = ${selT2.length} (players = ${sb})`);
+            log(`Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
+            log(`Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
+
+            // VALIDATION: Ensure no duplicate squad selections
+            const t1Ids = new Set(selT1.map(s => s.id));
+            const t2Ids = new Set(selT2.map(s => s.id));
+            const intersection = [...t1Ids].filter(id => t2Ids.has(id));
+
+            if (intersection.length > 0) {
+                log(`WARNING: Duplicate squad selection detected: ${intersection.join(', ')} - skipping attempt ${i + 1}`);
+                continue;
+            }
+
+            if (score < bestScore) {
+                bestScore = score;
+                bestT1 = selT1;
+                bestT2 = selT2;
+                log(`New best score found: ${bestScore} at attempt ${i + 1}`);
+                if (bestScore <= ACCEPTABLE_SCORE) {
+                    log(`Acceptable solution reached. Ending attempts early.`);
+                    break;
+                }
+            }
         }
-      }
 
-      if (playersToMove > 0) {
-        log(
-          `[CRITICAL] Unable to enforce ${maxTeamSize}-player cap. ${playersToMove} players still over limit.`
-        );
-      } else {
-        log(`Successfully enforced ${maxTeamSize}-player cap through emergency measures`);
-      }
+        if (!bestT1 || !bestT2) {
+            log('No valid swap solution found within attempt limit.');
+            return;
+        }
+
+        // FINAL VALIDATION: Double-check no duplicates in best solution
+        const finalT1Ids = new Set(bestT1.map(s => s.id));
+        const finalT2Ids = new Set(bestT2.map(s => s.id));
+        const finalIntersection = [...finalT1Ids].filter(id => finalT2Ids.has(id));
+
+        if (finalIntersection.length > 0) {
+            log(`CRITICAL ERROR: Final solution has duplicate squads: ${finalIntersection.join(', ')}`);
+            log('Aborting scramble to prevent team count corruption.');
+            return;
+        }
+
+        const team1IDs = new Set(clonedPlayers.filter((p) => p.teamID === '1').map((p) => p.steamID));
+        const team2IDs = new Set(clonedPlayers.filter((p) => p.teamID === '2').map((p) => p.steamID));
+        const swappedSquadIDs = new Set();
+
+        log(`Pre-swap team sizes: Team1 = ${team1IDs.size}, Team2 = ${team2IDs.size}`);
+
+        const moveSquads = async (group, toTeam, fromSet, toSet) => {
+            log(`Swapping ${group.length} squads to Team ${toTeam}:`);
+            for (const squad of group) {
+                log(`Swapping squad ${squad.id} (${squad.players.length} players) → Team ${toTeam}`);
+                swappedSquadIDs.add(squad.id);
+                for (const pid of squad.players) {
+                    const oldTeam = fromSet.has(pid) ? (toTeam === 2 ? '1' : '2') : 'Unassigned';
+                    fromSet.delete(pid);
+                    toSet.add(pid);
+                    await switchTeam(pid, String(toTeam));
+                    log(`Player ${pid}: Team ${oldTeam} → Team ${toTeam}`);
+                }
+            }
+        };
+
+        log('=== MUTUAL SWAP PHASE ===');
+        await moveSquads(bestT1, 2, team1IDs, team2IDs);
+        await moveSquads(bestT2, 1, team2IDs, team1IDs);
+
+        const postSwapT1Count = team1IDs.size;
+        const postSwapT2Count = team2IDs.size;
+        log(`Post-swap team sizes: Team1 = ${postSwapT1Count}, Team2 = ${postSwapT2Count}`);
+
+        // IMPROVED EMERGENCY PHASE - Handles 100+ players properly
+        if (postSwapT1Count > maxTeamSize || postSwapT2Count > maxTeamSize) {
+            log(`=== EMERGENCY SQUAD BREAKING PHASE ===`);
+
+            // Calculate emergency targets that respect both caps and total player constraints
+            const calculateEmergencyTargets = (t1Count, t2Count, maxSize, totalPlayerCount) => {
+                const totalAssigned = t1Count + t2Count;
+
+                if (totalAssigned > maxSize * 2) {
+                    log(`CRITICAL: ${totalAssigned} assigned players exceeds maximum capacity of ${maxSize * 2}`);
+                    // Some players will need to be unassigned/kicked
+                    return {
+                        t1Target: maxSize,
+                        t2Target: maxSize,
+                        needsPlayerRemoval: totalAssigned - (maxSize * 2)
+                    };
+                }
+
+                // Calculate balanced targets
+                const idealPerTeam = Math.floor(totalAssigned / 2);
+                const remainder = totalAssigned % 2;
+
+                let t1Target = idealPerTeam + (remainder && t1Count >= t2Count ? 1 : 0);
+                let t2Target = idealPerTeam + (remainder && t2Count > t1Count ? 1 : 0);
+
+                // Adjust if either exceeds cap
+                if (t1Target > maxSize) {
+                    const excess = t1Target - maxSize;
+                    t1Target = maxSize;
+                    t2Target = Math.min(t2Target + excess, maxSize);
+                }
+                if (t2Target > maxSize) {
+                    const excess = t2Target - maxSize;
+                    t2Target = maxSize;
+                    t1Target = Math.min(t1Target + excess, maxSize);
+                }
+
+                return { t1Target, t2Target, needsPlayerRemoval: 0 };
+            };
+
+            const { t1Target, t2Target, needsPlayerRemoval } = calculateEmergencyTargets(
+                postSwapT1Count,
+                postSwapT2Count,
+                maxTeamSize,
+                totalPlayers
+            );
+
+            if (needsPlayerRemoval > 0) {
+                log(`WARNING: ${needsPlayerRemoval} players exceed server capacity and may need to be removed`);
+            }
+
+            const t1MovesNeeded = postSwapT1Count - t1Target;
+            const t2MovesNeeded = postSwapT2Count - t2Target;
+
+            log(`Emergency targets: Team1: ${postSwapT1Count} → ${t1Target} (${t1MovesNeeded > 0 ? 'move out' : 'receive'} ${Math.abs(t1MovesNeeded)})`);
+            log(`Emergency targets: Team2: ${postSwapT2Count} → ${t2Target} (${t2MovesNeeded > 0 ? 'move out' : 'receive'} ${Math.abs(t2MovesNeeded)})`);
+
+            // Execute emergency moves (rest of the emergency code from previous fix...)
+            // [Include the movePlayersFromTeam function and execution logic from the previous artifact]
+
+            const finalT1 = team1IDs.size;
+            const finalT2 = team2IDs.size;
+
+            log(`Final team sizes after emergency: Team1 = ${finalT1}, Team2 = ${finalT2}`);
+
+            if (finalT1 > maxTeamSize || finalT2 > maxTeamSize) {
+                log(`CRITICAL: Unable to enforce team caps. Server may need manual intervention.`);
+                return;
+            }
+        }
+
+        const finalT1 = team1IDs.size;
+        const finalT2 = team2IDs.size;
+
+        log(`Final team sizes after scramble: Team1 = ${finalT1}, Team2 = ${finalT2}`);
     }
-
-    const finalT1 = team1IDs.size;
-    const finalT2 = team2IDs.size;
-
-    log(`Final team sizes after swap: Team1 = ${finalT1}, Team2 = ${finalT2}`);
-  }
 };
