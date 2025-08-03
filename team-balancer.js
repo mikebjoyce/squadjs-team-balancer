@@ -1206,65 +1206,67 @@ const CommandHandlers = {
             }
             break;
           }
-          case 'diag': {
-            const t1Players = this.server.players.filter((p) => p.teamID === '1');
-            const t2Players = this.server.players.filter((p) => p.teamID === '2');
-            const unassignedPlayers = this.server.players.filter((p) => p.squadID === null);
+            case 'diag': {
+                const players = this.server.players;
+                const squads = this.server.squads;
 
-            const t1Squads = this.server.squads.filter((s) => s.teamID === '1');
-            const t2Squads = this.server.squads.filter((s) => s.teamID === '2');
+                // Defensive sanity checks
+                const t1Players = players.filter(p => p.teamID === 1);
+                const t2Players = players.filter(p => p.teamID === 2);
+                const unassignedPlayers = players.filter(p => p.teamID !== 1 && p.teamID !== 2);
 
-            const scrambleInfo =
-              this.pendingPlayerMoves.size > 0
-                ? `${this.pendingPlayerMoves.size} pending player moves`
-                : 'No active scramble';
+                const t1Squads = squads.filter(s => s.teamID === 1);
+                const t2Squads = squads.filter(s => s.teamID === 2);
 
-            const diagMsg = [
-              '[TeamBalancer Diagnostics]',
-              `Dry run mode: ${this.options.dryRunMode ? 'ON' : 'OFF'}`,
-              `Win streak: Team ${this.winStreakTeam ?? 'N/A'} with ${this.winStreakCount} win(s)`,
-              `Scramble pending: ${this._scramblePending}`,
-              `Scramble in progress: ${this._scrambleInProgress}`,
-              `Players: Total = ${this.server.players.length}, Team1 = ${t1Players.length}, Team2 = ${t2Players.length}, Unassigned = ${unassignedPlayers.length}`,
-              `Squads: Total = ${this.server.squads.length}, Team1 = ${t1Squads.length}, Team2 = ${t2Squads.length}`,
-              `Scramble system: ${scrambleInfo}`,
-              `Scramble config: Check interval = ${this.options.scrambleRetryInterval}ms, Completion timeout = ${this.options.scrambleCompletionTimeout}ms`
-            ].join('\n');
+                const scrambleInfo =
+                    this.pendingPlayerMoves.size > 0
+                        ? `${this.pendingPlayerMoves.size} pending player moves`
+                        : 'No active scramble';
 
-            console.log(`[TeamBalancer] Diagnostics requested by ${player?.name || steamID}`);
-            console.log(diagMsg);
-            this.respond(steamID, 'Diagnostics sent to server console.');
+                const diagMsg = [
+                    '[TeamBalancer Diagnostics]',
+                    `Dry run mode: ${this.options.dryRunMode ? 'ON' : 'OFF'}`,
+                    `Win streak: Team ${this.winStreakTeam ?? 'N/A'} with ${this.winStreakCount} win(s)`,
+                    `Scramble pending: ${this._scramblePending}`,
+                    `Scramble in progress: ${this._scrambleInProgress}`,
+                    `Players: Total = ${players.length}, Team1 = ${t1Players.length}, Team2 = ${t2Players.length}, Unassigned = ${unassignedPlayers.length}`,
+                    `Squads: Total = ${squads.length}, Team1 = ${t1Squads.length}, Team2 = ${t2Squads.length}`,
+                    `Scramble system: ${scrambleInfo}`,
+                    `Scramble config: Check interval = ${this.options.scrambleRetryInterval}ms, Completion timeout = ${this.options.scrambleCompletionTimeout}ms`
+                ].join('\n');
 
-            const runs = 3;
-            console.log(
-              `[TeamBalancer Diagnostics] Running ${runs} dry-run simulations on current server state:`
-            );
+                console.log(`[TeamBalancer] Diagnostics requested by ${player?.name || steamID}`);
+                console.log(diagMsg);
+                this.respond(steamID, 'Diagnostics sent to server console.');
 
-            for (let i = 0; i < runs; i++) {
-              console.log(`[Dry Run ${i + 1}]`);
+                if (players.length < 10) {
+                    console.warn('[TeamBalancer] Warning: Player count < 10. Team data may not be reliable yet.');
+                }
 
-              if (this._scramblePending || this._scrambleInProgress) {
-                const status = this._scrambleInProgress ? 'executing' : 'pending';
-                console.warn(`[Dry Run ${i + 1}] Skipped: scramble already ${status}`);
-                this.respond(
-                  steamID,
-                  `[Dry Run ${
-                    i + 1
-                  }] Skipped: scramble already ${status}. Use "!scramble cancel" if needed.`
-                );
+                const runs = 3;
+                console.log(`[TeamBalancer Diagnostics] Running ${runs} dry-run simulations on current server state:`);
+
+                for (let i = 0; i < runs; i++) {
+                    console.log(`[Dry Run ${i + 1}]`);
+
+                    if (this._scramblePending || this._scrambleInProgress) {
+                        const status = this._scrambleInProgress ? 'executing' : 'pending';
+                        console.warn(`[Dry Run ${i + 1}] Skipped: scramble already ${status}`);
+                        this.respond(steamID, `[Dry Run ${i + 1}] Skipped: scramble already ${status}. Use "!scramble cancel" if needed.`);
+                        break;
+                    }
+
+                    try {
+                        await this.initiateScramble(true, true, steamID, player); // dryRun=true
+                        await this.waitForScrambleToFinish();
+                    } catch (err) {
+                        console.warn(`[Dry Run ${i + 1}] Error during scramble: ${err.message}`);
+                    }
+                }
+
                 break;
-              }
-
-              try {
-                await this.initiateScramble(true, true, steamID, player);
-                await this.waitForScrambleToFinish();
-              } catch (err) {
-                console.warn(`[Dry Run ${i + 1}] Error during scramble: ${err.message}`);
-              }
             }
 
-            break;
-          }
 
           default:
             this.respond(
@@ -1692,33 +1694,213 @@ export const Scrambler = {
 
         const moveSquads = async (group, toTeam, description) => {
             log(`${description} ${group.length} squads to Team ${toTeam}:`);
+
+            // Collect all players that need to be moved
+            const playersToMove = [];
             for (const squad of group) {
-                log(`Swapping squad ${squad.id} (${squad.players.length} players) → Team ${toTeam}`);
+                log(`Preparing squad ${squad.id} (${squad.players.length} players) for Team ${toTeam}`);
                 swappedSquadIDs.add(squad.id);
 
                 for (const steamID of squad.players) {
                     const currentPlayer = workingPlayers.find(p => p.steamID === steamID);
                     const oldTeam = currentPlayer ? currentPlayer.teamID : 'Unknown';
 
-                    // Update our working data
-                    updatePlayerTeam(steamID, toTeam);
-
-                    // Call the actual server function
-                    await switchTeam(steamID, String(toTeam));
-
-                    log(`Player ${steamID}: Team ${oldTeam} → Team ${toTeam}`);
+                    playersToMove.push({
+                        steamID,
+                        oldTeam,
+                        newTeam: toTeam,
+                        squadId: squad.id
+                    });
                 }
             }
+
+            return playersToMove;
+        };
+
+
+        const executeAlternatingSwaps = async (team1Players, team2Players) => {
+            log(`=== ALTERNATING SWAP EXECUTION ===`);
+            log(`Team1→2 players: ${team1Players.length}, Team2→1 players: ${team2Players.length}`);
+
+            const maxLength = Math.max(team1Players.length, team2Players.length);
+            const swapResults = {
+                successful: 0,
+                failed: 0,
+                details: []
+            };
+
+            // Helper function to verify a player swap was successful
+            const verifySwap = async (steamID, expectedTeam, maxRetries = 3, retryDelay = 500) => {
+                for (let attempt = 1; attempt <= maxRetries; attempt++) {
+                    // Wait a bit for the server to process the move
+                    if (attempt > 1) {
+                        await new Promise(resolve => setTimeout(resolve, retryDelay));
+                    }
+
+                    // Check current player state on server
+                    const currentPlayer = workingPlayers.find(p => p.steamID === steamID);
+                    if (currentPlayer && currentPlayer.teamID === String(expectedTeam)) {
+                        log(`✅ Swap verified: Player ${steamID} successfully moved to Team ${expectedTeam} (attempt ${attempt})`);
+                        return true;
+                    }
+
+                    log(`⏳ Verification attempt ${attempt}/${maxRetries}: Player ${steamID} not yet on Team ${expectedTeam}`);
+                }
+
+                log(`❌ Swap verification failed: Player ${steamID} did not reach Team ${expectedTeam} after ${maxRetries} attempts`);
+                return false;
+            };
+
+            // Execute swaps alternating between teams
+            for (let i = 0; i < maxLength; i++) {
+                const team1Player = team1Players[i];
+                const team2Player = team2Players[i];
+
+                // Swap Team1 player to Team2 (if available)
+                if (team1Player) {
+                    try {
+                        log(`Swapping player ${team1Player.steamID} (Squad: ${team1Player.squadId}): Team ${team1Player.oldTeam} → Team ${team1Player.newTeam}`);
+
+                        // Execute the swap
+                        await switchTeam(team1Player.steamID, String(team1Player.newTeam));
+
+                        // Update our working data immediately
+                        updatePlayerTeam(team1Player.steamID, team1Player.newTeam);
+
+                        // Verify the swap was successful
+                        const verified = await verifySwap(team1Player.steamID, team1Player.newTeam);
+
+                        if (verified) {
+                            swapResults.successful++;
+                            swapResults.details.push({
+                                steamID: team1Player.steamID,
+                                from: team1Player.oldTeam,
+                                to: team1Player.newTeam,
+                                status: 'success',
+                                squad: team1Player.squadId
+                            });
+                        } else {
+                            swapResults.failed++;
+                            swapResults.details.push({
+                                steamID: team1Player.steamID,
+                                from: team1Player.oldTeam,
+                                to: team1Player.newTeam,
+                                status: 'failed_verification',
+                                squad: team1Player.squadId
+                            });
+
+                            // Revert our working data if verification failed
+                            updatePlayerTeam(team1Player.steamID, team1Player.oldTeam);
+                        }
+
+                    } catch (error) {
+                        log(`❌ Swap failed for player ${team1Player.steamID}: ${error.message}`);
+                        swapResults.failed++;
+                        swapResults.details.push({
+                            steamID: team1Player.steamID,
+                            from: team1Player.oldTeam,
+                            to: team1Player.newTeam,
+                            status: 'failed_execution',
+                            error: error.message,
+                            squad: team1Player.squadId
+                        });
+                    }
+                }
+
+                // Swap Team2 player to Team1 (if available)
+                if (team2Player) {
+                    try {
+                        log(`Swapping player ${team2Player.steamID} (Squad: ${team2Player.squadId}): Team ${team2Player.oldTeam} → Team ${team2Player.newTeam}`);
+
+                        // Execute the swap
+                        await switchTeam(team2Player.steamID, String(team2Player.newTeam));
+
+                        // Update our working data immediately
+                        updatePlayerTeam(team2Player.steamID, team2Player.newTeam);
+
+                        // Verify the swap was successful
+                        const verified = await verifySwap(team2Player.steamID, team2Player.newTeam);
+
+                        if (verified) {
+                            swapResults.successful++;
+                            swapResults.details.push({
+                                steamID: team2Player.steamID,
+                                from: team2Player.oldTeam,
+                                to: team2Player.newTeam,
+                                status: 'success',
+                                squad: team2Player.squadId
+                            });
+                        } else {
+                            swapResults.failed++;
+                            swapResults.details.push({
+                                steamID: team2Player.steamID,
+                                from: team2Player.oldTeam,
+                                to: team2Player.newTeam,
+                                status: 'failed_verification',
+                                squad: team2Player.squadId
+                            });
+
+                            // Revert our working data if verification failed
+                            updatePlayerTeam(team2Player.steamID, team2Player.oldTeam);
+                        }
+
+                    } catch (error) {
+                        log(`❌ Swap failed for player ${team2Player.steamID}: ${error.message}`);
+                        swapResults.failed++;
+                        swapResults.details.push({
+                            steamID: team2Player.steamID,
+                            from: team2Player.oldTeam,
+                            to: team2Player.newTeam,
+                            status: 'failed_execution',
+                            error: error.message,
+                            squad: team2Player.squadId
+                        });
+                    }
+                }
+
+                // Add a small delay between swaps to avoid overwhelming the server
+                if (i < maxLength - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 250));
+                }
+            }
+
+            // Log swap summary
+            log(`=== SWAP SUMMARY ===`);
+            log(`Total players processed: ${swapResults.successful + swapResults.failed}`);
+            log(`Successful swaps: ${swapResults.successful}`);
+            log(`Failed swaps: ${swapResults.failed}`);
+
+            if (swapResults.failed > 0) {
+                log(`Failed swap details:`);
+                swapResults.details
+                    .filter(d => d.status !== 'success')
+                    .forEach(detail => {
+                        log(`  - Player ${detail.steamID} (${detail.squad}): ${detail.from}→${detail.to} - ${detail.status}${detail.error ? ': ' + detail.error : ''}`);
+                    });
+            }
+
+            return swapResults;
         };
 
         log('=== MUTUAL SWAP PHASE ===');
-        await moveSquads(bestT1, 2, 'Swapping');
-        await moveSquads(bestT2, 1, 'Swapping');
 
+        // Prepare player lists for both teams
+        const team1PlayersToMove = await moveSquads(bestT1, 2, 'Preparing Team1 squads for swap to');
+        const team2PlayersToMove = await moveSquads(bestT2, 1, 'Preparing Team2 squads for swap to');
+
+        // Execute alternating swaps with verification
+        const swapResults = await executeAlternatingSwaps(team1PlayersToMove, team2PlayersToMove);
+
+        // Update counts based on actual successful swaps
         const postSwapCounts = getCurrentTeamCounts();
         log(`Post-swap team sizes: Team1 = ${postSwapCounts.team1Count}, Team2 = ${postSwapCounts.team2Count}`);
 
-        // FIXED EMERGENCY PHASE - Now uses consistent data
+        // If we had significant swap failures, log a warning
+        if (swapResults.failed > 0) {
+            const failureRate = (swapResults.failed / (swapResults.successful + swapResults.failed)) * 100;
+            log(`WARNING: ${failureRate.toFixed(1)}% of swaps failed. Team balance may not be optimal.`);
+        }
+
         if (postSwapCounts.team1Count > maxTeamSize || postSwapCounts.team2Count > maxTeamSize) {
             log(`=== EMERGENCY SQUAD BREAKING PHASE ===`);
 
@@ -1803,6 +1985,7 @@ export const Scrambler = {
                 return playersToMove.length;
             };
 
+
             // Execute emergency moves
             let actuallyMoved = 0;
 
@@ -1836,5 +2019,6 @@ export const Scrambler = {
         } else {
             log(`❌ WARNING: Final team sizes exceed caps`);
         }
+
     }
 };
