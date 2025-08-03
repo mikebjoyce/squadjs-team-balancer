@@ -1509,38 +1509,52 @@ export const Scrambler = {
             log(`No win streak team set. Randomly selecting Team ${winStreakTeam} as starting side.`);
         }
 
-        const clonedPlayers = players.map((p) => ({ ...p }));
-        const clonedSquads = squads.map((s) => ({ ...s, players: [...s.players] }));
+        // Create working copy with normalized team IDs
+        const workingPlayers = players.map((p) => ({
+            ...p,
+            teamID: String(p.teamID)
+        }));
+        const workingSquads = squads.map((s) => ({
+            ...s,
+            teamID: String(s.teamID),
+            players: [...s.players]
+        }));
 
-        const normalizeTeamID = (id) => String(id);
+        // Helper function to update player team assignments consistently
+        const updatePlayerTeam = (steamID, newTeamID) => {
+            const player = workingPlayers.find(p => p.steamID === steamID);
+            if (player) {
+                player.teamID = String(newTeamID);
+            }
+        };
 
-        const team1Size = clonedPlayers.filter((p) => normalizeTeamID(p.teamID) === '1').length;
-        const team2Size = clonedPlayers.filter((p) => normalizeTeamID(p.teamID) === '2').length;
+        // Helper function to get current team counts
+        const getCurrentTeamCounts = () => {
+            const team1Count = workingPlayers.filter(p => p.teamID === '1').length;
+            const team2Count = workingPlayers.filter(p => p.teamID === '2').length;
+            const unassignedCount = workingPlayers.filter(p => !['1', '2'].includes(p.teamID)).length;
+            return { team1Count, team2Count, unassignedCount };
+        };
 
-        const losingTeamSize = winStreakTeam === 1 ? team2Size : team1Size;
-        const winningTeamSize = winStreakTeam === 1 ? team1Size : team2Size;
-        const diff = winningTeamSize - losingTeamSize;
+        const initialCounts = getCurrentTeamCounts();
+        log(`Initial team sizes: Team1 = ${initialCounts.team1Count}, Team2 = ${initialCounts.team2Count}, Unassigned = ${initialCounts.unassignedCount}`);
 
         // FIXED: Smart swap target that respects total player constraints
         const calculateSwapTarget = (totalPlayers, maxPerTeam) => {
             const idealPerTeam = Math.floor(totalPlayers / 2);
-            const remainder = totalPlayers % 2;
 
-            // If ideal split fits within caps, use it
             if (idealPerTeam <= maxPerTeam) {
                 return idealPerTeam;
             }
 
-            // If total players > 100, we can't balance perfectly
-            // Aim for maxPerTeam but acknowledge some will be excluded
             log(`WARNING: ${totalPlayers} total players cannot be perfectly balanced with ${maxPerTeam} per team cap`);
             return Math.min(idealPerTeam, maxPerTeam);
         };
 
         const swapTarget = calculateSwapTarget(totalPlayers, maxTeamSize);
 
-        const allSquads = clonedSquads.filter((s) => s.players?.length > 0);
-        const unassigned = clonedPlayers.filter((p) => p.squadID === null);
+        const allSquads = workingSquads.filter((s) => s.players?.length > 0);
+        const unassigned = workingPlayers.filter((p) => p.squadID === null);
 
         log(`Total players: ${totalPlayers}, Swap target per side: ${swapTarget}, Max per team: ${maxTeamSize}`);
 
@@ -1671,46 +1685,49 @@ export const Scrambler = {
             return;
         }
 
-        const team1IDs = new Set(clonedPlayers.filter((p) => p.teamID === '1').map((p) => p.steamID));
-        const team2IDs = new Set(clonedPlayers.filter((p) => p.teamID === '2').map((p) => p.steamID));
+        const preSwapCounts = getCurrentTeamCounts();
+        log(`Pre-swap team sizes: Team1 = ${preSwapCounts.team1Count}, Team2 = ${preSwapCounts.team2Count}`);
+
         const swappedSquadIDs = new Set();
 
-        log(`Pre-swap team sizes: Team1 = ${team1IDs.size}, Team2 = ${team2IDs.size}`);
-
-        const moveSquads = async (group, toTeam, fromSet, toSet) => {
-            log(`Swapping ${group.length} squads to Team ${toTeam}:`);
+        const moveSquads = async (group, toTeam, description) => {
+            log(`${description} ${group.length} squads to Team ${toTeam}:`);
             for (const squad of group) {
                 log(`Swapping squad ${squad.id} (${squad.players.length} players) → Team ${toTeam}`);
                 swappedSquadIDs.add(squad.id);
-                for (const pid of squad.players) {
-                    const oldTeam = fromSet.has(pid) ? (toTeam === 2 ? '1' : '2') : 'Unassigned';
-                    fromSet.delete(pid);
-                    toSet.add(pid);
-                    await switchTeam(pid, String(toTeam));
-                    log(`Player ${pid}: Team ${oldTeam} → Team ${toTeam}`);
+
+                for (const steamID of squad.players) {
+                    const currentPlayer = workingPlayers.find(p => p.steamID === steamID);
+                    const oldTeam = currentPlayer ? currentPlayer.teamID : 'Unknown';
+
+                    // Update our working data
+                    updatePlayerTeam(steamID, toTeam);
+
+                    // Call the actual server function
+                    await switchTeam(steamID, String(toTeam));
+
+                    log(`Player ${steamID}: Team ${oldTeam} → Team ${toTeam}`);
                 }
             }
         };
 
         log('=== MUTUAL SWAP PHASE ===');
-        await moveSquads(bestT1, 2, team1IDs, team2IDs);
-        await moveSquads(bestT2, 1, team2IDs, team1IDs);
+        await moveSquads(bestT1, 2, 'Swapping');
+        await moveSquads(bestT2, 1, 'Swapping');
 
-        const postSwapT1Count = team1IDs.size;
-        const postSwapT2Count = team2IDs.size;
-        log(`Post-swap team sizes: Team1 = ${postSwapT1Count}, Team2 = ${postSwapT2Count}`);
+        const postSwapCounts = getCurrentTeamCounts();
+        log(`Post-swap team sizes: Team1 = ${postSwapCounts.team1Count}, Team2 = ${postSwapCounts.team2Count}`);
 
-        // IMPROVED EMERGENCY PHASE - Handles 100+ players properly
-        if (postSwapT1Count > maxTeamSize || postSwapT2Count > maxTeamSize) {
+        // FIXED EMERGENCY PHASE - Now uses consistent data
+        if (postSwapCounts.team1Count > maxTeamSize || postSwapCounts.team2Count > maxTeamSize) {
             log(`=== EMERGENCY SQUAD BREAKING PHASE ===`);
 
             // Calculate emergency targets that respect both caps and total player constraints
-            const calculateEmergencyTargets = (t1Count, t2Count, maxSize, totalPlayerCount) => {
+            const calculateEmergencyTargets = (t1Count, t2Count, maxSize) => {
                 const totalAssigned = t1Count + t2Count;
 
                 if (totalAssigned > maxSize * 2) {
                     log(`CRITICAL: ${totalAssigned} assigned players exceeds maximum capacity of ${maxSize * 2}`);
-                    // Some players will need to be unassigned/kicked
                     return {
                         t1Target: maxSize,
                         t2Target: maxSize,
@@ -1741,39 +1758,83 @@ export const Scrambler = {
             };
 
             const { t1Target, t2Target, needsPlayerRemoval } = calculateEmergencyTargets(
-                postSwapT1Count,
-                postSwapT2Count,
-                maxTeamSize,
-                totalPlayers
+                postSwapCounts.team1Count,
+                postSwapCounts.team2Count,
+                maxTeamSize
             );
 
             if (needsPlayerRemoval > 0) {
                 log(`WARNING: ${needsPlayerRemoval} players exceed server capacity and may need to be removed`);
             }
 
-            const t1MovesNeeded = postSwapT1Count - t1Target;
-            const t2MovesNeeded = postSwapT2Count - t2Target;
+            const t1MovesNeeded = postSwapCounts.team1Count - t1Target;
+            const t2MovesNeeded = postSwapCounts.team2Count - t2Target;
 
-            log(`Emergency targets: Team1: ${postSwapT1Count} → ${t1Target} (${t1MovesNeeded > 0 ? 'move out' : 'receive'} ${Math.abs(t1MovesNeeded)})`);
-            log(`Emergency targets: Team2: ${postSwapT2Count} → ${t2Target} (${t2MovesNeeded > 0 ? 'move out' : 'receive'} ${Math.abs(t2MovesNeeded)})`);
+            log(`Emergency targets: Team1: ${postSwapCounts.team1Count} → ${t1Target} (${t1MovesNeeded > 0 ? 'move out' : 'receive'} ${Math.abs(t1MovesNeeded)})`);
+            log(`Emergency targets: Team2: ${postSwapCounts.team2Count} → ${t2Target} (${t2MovesNeeded > 0 ? 'move out' : 'receive'} ${Math.abs(t2MovesNeeded)})`);
 
-            // Execute emergency moves (rest of the emergency code from previous fix...)
-            // [Include the movePlayersFromTeam function and execution logic from the previous artifact]
+            // Helper function to move individual players between teams
+            const movePlayersFromTeam = async (fromTeam, toTeam, count, reason) => {
+                if (count <= 0) return;
 
-            const finalT1 = team1IDs.size;
-            const finalT2 = team2IDs.size;
+                log(`${reason}: Moving ${count} players from Team ${fromTeam} to Team ${toTeam}`);
 
-            log(`Final team sizes after emergency: Team1 = ${finalT1}, Team2 = ${finalT2}`);
+                // Get players from the source team, prioritizing unassigned players from swapped squads
+                const fromTeamPlayers = workingPlayers.filter(p => p.teamID === String(fromTeam));
 
-            if (finalT1 > maxTeamSize || finalT2 > maxTeamSize) {
-                log(`CRITICAL: Unable to enforce team caps. Server may need manual intervention.`);
-                return;
+                // Sort by priority: unassigned squad members first, then regular players
+                fromTeamPlayers.sort((a, b) => {
+                    const aInSwappedSquad = a.squadID && swappedSquadIDs.has(String(a.squadID));
+                    const bInSwappedSquad = b.squadID && swappedSquadIDs.has(String(b.squadID));
+
+                    if (aInSwappedSquad && !bInSwappedSquad) return -1;
+                    if (!aInSwappedSquad && bInSwappedSquad) return 1;
+                    return 0; // Keep original order if same priority
+                });
+
+                const playersToMove = fromTeamPlayers.slice(0, count);
+
+                for (const player of playersToMove) {
+                    log(`Emergency move: Player ${player.steamID} Team ${fromTeam} → Team ${toTeam}`);
+                    updatePlayerTeam(player.steamID, toTeam);
+                    await switchTeam(player.steamID, String(toTeam));
+                }
+
+                return playersToMove.length;
+            };
+
+            // Execute emergency moves
+            let actuallyMoved = 0;
+
+            if (t1MovesNeeded > 0) {
+                actuallyMoved += await movePlayersFromTeam(1, 2, t1MovesNeeded, "Team1 overcap fix");
+            }
+
+            if (t2MovesNeeded > 0) {
+                actuallyMoved += await movePlayersFromTeam(2, 1, t2MovesNeeded, "Team2 overcap fix");
+            }
+
+            const finalCounts = getCurrentTeamCounts();
+            log(`Final team sizes after emergency: Team1 = ${finalCounts.team1Count}, Team2 = ${finalCounts.team2Count}`);
+
+            if (finalCounts.team1Count > maxTeamSize || finalCounts.team2Count > maxTeamSize) {
+                log(`CRITICAL: Unable to enforce team caps. Team1=${finalCounts.team1Count}, Team2=${finalCounts.team2Count}`);
+                log(`Server may need manual intervention.`);
+            } else {
+                log(`Emergency phase completed successfully. Moved ${actuallyMoved} players.`);
             }
         }
 
-        const finalT1 = team1IDs.size;
-        const finalT2 = team2IDs.size;
+        const finalCounts = getCurrentTeamCounts();
+        log(`========== Final Scramble Results ==========`);
+        log(`Final team sizes: Team1 = ${finalCounts.team1Count}, Team2 = ${finalCounts.team2Count}, Unassigned = ${finalCounts.unassignedCount}`);
+        log(`Team balance: ${Math.abs(finalCounts.team1Count - finalCounts.team2Count)} player difference`);
+        log(`Squads swapped: ${swappedSquadIDs.size} squads total`);
 
-        log(`Final team sizes after scramble: Team1 = ${finalT1}, Team2 = ${finalT2}`);
+        if (finalCounts.team1Count <= maxTeamSize && finalCounts.team2Count <= maxTeamSize) {
+            log(`✅ Scramble completed successfully within team caps`);
+        } else {
+            log(`❌ WARNING: Final team sizes exceed caps`);
+        }
     }
 };
