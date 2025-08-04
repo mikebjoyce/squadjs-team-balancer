@@ -47,7 +47,7 @@ import BasePlugin from './base-plugin.js';
                 "invasionDefenceTeamThreshold": 650,
                 "scrambleAnnouncementDelay": 12,
                 "scramblePercentage": 0.5,
-                "changeTeamRetryInterval ": 200,
+                "changeTeamRetryInterval": 200,
                 "maxScrambleCompletionTime": 15000,
                 "showWinStreakMessages": true,
                 "warnOnSwap": true,
