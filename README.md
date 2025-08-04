@@ -39,7 +39,7 @@ Add to your `config.json`:
   "options": {
     "enableWinStreakTracking": true,
     "maxWinStreak": 2,
-    "minTicketsToCountAsDominantWin": 175,
+    "minTicketsToCountAsDominantWin": 150,
     "invasionAttackTeamThreshold": 300,
     "invasionDefenceTeamThreshold": 650,
     "scrambleAnnouncementDelay": 12,
@@ -47,8 +47,8 @@ Add to your `config.json`:
     "warnOnSwap": true,
     "dryRunMode": true,
     "debugLogs": false,
-    "scrambleRetryInterval": 1000,
-    "scrambleCompletionTimeout": 10000
+    "changeTeamRetryInterval": 50,
+    "maxScrambleCompletionTime": 15000
   }
 }
 ```
