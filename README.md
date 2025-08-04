@@ -10,23 +10,35 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 ## Core Features
 
-- **Win Streak Detection**: Detects dominant win streaks based on ticket margins  
-- **Automatic/Manual Scrambling**: Triggers squad-preserving scrambles automatically or via admin command  
-- **Multi-Mode Support**: Handles RAAS, AAS, and Invasion with separate logic  
-- **Dry-Run Diagnostics**: Simulate scrambles without affecting players  
-- **Player Notifications**: Sends RCON warnings to swapped players (optional)  
-- **Reliable Swap System**: Retries failed swaps until timeout expires  
-- **Emergency Enforcement**: Breaks squads only if needed to enforce 50-player cap  
+* **Win Streak Detection**: Detects dominant win streaks based on ticket margins
+
+* **Automatic/Manual Scrambling**: Triggers squad-preserving scrambles automatically or via admin command
+
+* **Multi-Mode Support**: Handles RAAS, AAS, and Invasion with separate logic
+
+* **Dry-Run Diagnostics**: Simulate scrambles without affecting players
+
+* **Player Notifications**: Sends RCON warnings to swapped players (optional)
+
+* **Reliable Swap System**: Retries failed swaps until timeout expires
+
+* **Emergency Enforcement**: Breaks squads only if needed to enforce 50-player cap
+
+* **Generic Team Names**: Option to use "Team 1" / "Team 2" instead of faction names in broadcasts
 
 ## Scramble Algorithm
 
 Operates in 5 stages using randomized backtracking:
 
-1. **Data Prep**: Normalizes squad data, converts lone players to pseudo-squads  
-2. **Target Calc**: Computes ideal player swap count from imbalance  
-3. **Backtracked Swaps**: Attempts multiple squad combinations with scoring  
-4. **Execution**: Performs mutual swaps with retry tracking  
-5. **Post-Fix**: Trims or breaks squads if over hard cap  
+1. **Data Prep**: Normalizes squad data, converts lone players to pseudo-squads
+
+2. **Target Calc**: Computes ideal player swap count from imbalance
+
+3. **Backtracked Swaps**: Attempts multiple squad combinations with scoring
+
+4. **Execution**: Performs mutual swaps with retry tracking
+
+5. **Post-Fix**: Trims or breaks squads if over hard cap
 
 ## Installation
 
@@ -47,10 +59,12 @@ Add to your `config.json`:
     "warnOnSwap": true,
     "dryRunMode": true,
     "debugLogs": false,
-    "changeTeamRetryInterval": 50,
-    "maxScrambleCompletionTime": 15000
+    "changeTeamRetryInterval": 200,
+    "maxScrambleCompletionTime": 15000,
+    "useGenericTeamNamesInBroadcasts": false
   }
 }
+
 ```
 
 ## Commands
@@ -58,10 +72,10 @@ Add to your `config.json`:
 ### Admin
 
 | Command | Description |
-|--------|-------------|
-| `!teambalancer on\|off` | Enable/disable auto-tracking |
+|---|---|
+| `!teambalancer on|off` | Enable/disable auto-tracking |
 | `!teambalancer status` | Show plugin config, streak, and stats |
-| `!teambalancer dryrun on\|off` | Toggle dry-run mode |
+| `!teambalancer dryrun on|off` | Toggle dry-run mode |
 | `!teambalancer scramble` | Manual scramble with delay |
 | `!teambalancer cancel` | Cancel countdown |
 | `!teambalancer diag` | Run 3 dry-run simulations |
@@ -72,16 +86,16 @@ Add to your `config.json`:
 ### Player
 
 | Command | Description |
-|---------|-------------|
+|---|---|
 | `!teambalancer` | Show win streak, last scramble, plugin state |
 
 ## Configuration Options
 
 | Key | Description | Default |
-|-----|-------------|---------|
+|---|---|---|
 | `enableWinStreakTracking` | Auto-scramble trigger system | `true` |
 | `maxWinStreak` | Wins before scramble | `2` |
-| `minTicketsToCountAsDominantWin` | Margin threshold (non-Invasion) | `175` |
+| `minTicketsToCountAsDominantWin` | Margin threshold (non-Invasion) | `150` |
 | `invasionAttackTeamThreshold` | Margin for attackers | `300` |
 | `invasionDefenceTeamThreshold` | Margin for defenders | `650` |
 | `scrambleAnnouncementDelay` | Delay before scramble (s) | `12` |
@@ -89,21 +103,22 @@ Add to your `config.json`:
 | `showWinStreakMessages` | Broadcast streak messages | `true` |
 | `warnOnSwap` | Notify swapped players | `true` |
 | `debugLogs` | Enable debug logging | `false` |
-| `scrambleRetryInterval` | Retry delay (ms) | `1000` |
-| `scrambleCompletionTimeout` | Total retry timeout (ms) | `10000` |
+| `changeTeamRetryInterval` | Milliseconds between swap retry attempts | `200` |
+| `maxScrambleCompletionTime` | Total time to retry swaps (ms) | `15000` |
+| `useGenericTeamNamesInBroadcasts` | Use "Team 1" / "Team 2" instead of faction names in broadcasts | `true` |
 
 ### Notes
 
-- `scrambleAnnouncementDelay` minimum: 10 sec  
-- `scrambleRetryInterval` minimum: 500 ms  
-- `scrambleCompletionTimeout` minimum: 5000 ms  
-- All options validated on startup  
+- `scrambleAnnouncementDelay` minimum: 10 sec
+- `changeTeamRetryInterval` minimum: 50 ms
+- `maxScrambleCompletionTime` minimum: 5000 ms
+- All options validated on startup
 
 ## Game Mode Support
 
-- **RAAS / AAS**: Uses standard ticket diff threshold  
-- **Invasion**: Uses separate thresholds for attackers and defenders  
-- Mode-aware streak logic and messaging  
+-   **RAAS / AAS**: Uses standard ticket diff threshold
+-   **Invasion**: Uses separate thresholds for attackers and defenders
+-   Mode-aware streak logic and messaging
 
 ## Developer Mode
 
@@ -113,27 +128,27 @@ Set `devMode = true` in the constructor to allow commands from all chat (not jus
 
 `!teambalancer diag` provides:
 
-- Current plugin status  
-- Team/squad distribution  
-- 3 dry-run scramble simulations  
-- Debug logs (if enabled)  
+-   Current plugin status
+-   Team/squad distribution
+-   3 dry-run scramble simulations
+-   Debug logs (if enabled)
 
 ## Logging and Monitoring
 
 The plugin provides comprehensive logging for debugging and monitoring:
 
-- **Debug Logs**: Enable with `debugLogs: true` for verbose output
-- **Console Output**: All major actions logged to server console
-- **Player Warnings**: Optional RCON warnings sent to swapped players
-- **Scramble Tracking**: Detailed retry attempts and completion status
+-   **Debug Logs**: Enable with `debugLogs: true` for verbose output
+-   **Console Output**: All major actions logged to server console
+-   **Player Warnings**: Optional RCON warnings sent to swapped players
+-   **Scramble Tracking**: Detailed retry attempts and completion status
 
 ## Troubleshooting
 
 ### Common Issues
 
-- **Scramble not triggering**: Check if `enableWinStreakTracking` is true and plugin not manually disabled
-- **Players not moving**: Verify RCON connection and check retry logs in console
-- **Timeout errors**: Increase `scrambleCompletionTimeout` for slower servers
+-   **Scramble not triggering**: Check if `enableWinStreakTracking` is true and plugin not manually disabled
+-   **Players not moving**: Verify RCON connection and check retry logs in console
+-   **Timeout errors**: Increase `maxScrambleCompletionTime` for slower servers
 
 ### Debug Mode
 
@@ -149,8 +164,8 @@ This will show squad selection logic, player move attempts, and retry status in 
 
 ## Author
 
-**Slacker**  
-Discord: `real_slacker`  
+**Slacker**
+Discord: `real_slacker`
 Email: `mike.b.joyce@gmail.com`
 
 ---
