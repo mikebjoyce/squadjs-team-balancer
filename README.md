@@ -4,41 +4,41 @@
 
 ## Overview
 
-Tracks dominant win streaks and rebalances teams using a squad-preserving scramble algorithm. Designed for Squad servers to avoid steamrolling, reduce churn, and maintain match fairness over time [cite: uploaded:team-balancer.js].
+Tracks dominant win streaks and rebalances teams using a squad-preserving scramble algorithm. Designed for Squad servers to avoid steamrolling, reduce churn, and maintain match fairness over time.
 
-Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion [cite: uploaded:team-balancer.js]. Includes dry-run mode, configurable thresholds, and fallback logic for emergency breaking if needed [cite: uploaded:team-balancer.js].
+Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion. Includes dry-run mode, configurable thresholds, and fallback logic for emergency breaking if needed.
 
 ## Core Features
 
-* **Win Streak Detection**: Detects dominant win streaks based on ticket difference thresholds [cite: uploaded:team-balancer.js].
+* **Win Streak Detection**: Detects dominant win streaks based on ticket difference thresholds.
 
-* **Automatic/Manual Scrambling**: Triggers squad-preserving scrambles automatically or via admin command [cite: uploaded:team-balancer.js].
+* **Automatic/Manual Scrambling**: Triggers squad-preserving scrambles automatically or via admin command.
 
 * **Multi-Mode Support**: Handles RAAS, AAS, and Invasion with separate logic.
 
-* **Dry-Run Diagnostics**: Simulate scrambles without affecting players via chat commands [cite: uploaded:team-balancer.js].
+* **Dry-Run Diagnostics**: Simulate scrambles without affecting players via chat commands.
 
-* **Player Notifications**: Sends RCON warnings to swapped players (optional) [cite: uploaded:team-balancer.js].
+* **Player Notifications**: Sends RCON warnings to swapped players (optional).
 
-* **Reliable Swap System**: Retries failed swaps until timeout expires [cite: uploaded:team-balancer.js].
+* **Reliable Swap System**: Retries failed swaps until timeout expires.
 
-* **Emergency Enforcement**: Breaks squads only if needed to enforce 50-player cap [cite: uploaded:team-balancer.js].
+* **Emergency Enforcement**: Breaks squads only if needed to enforce 50-player cap.
 
-* **Generic Team Names**: Option to use "Team 1" / "Team 2" instead of faction names in broadcasts [cite: uploaded:team-balancer.js].
+* **Generic Team Names**: Option to use "Team 1" / "Team 2" instead of faction names in broadcasts.
 
 ## Scramble Algorithm
 
-Operates in 5 stages using randomized backtracking [cite: uploaded:team-balancer.js]:
+Operates in 5 stages using randomized backtracking:
 
-1.  **Data Prep**: Normalizes squad data, converts lone players to pseudo-squads [cite: uploaded:team-balancer.js].
+1.  **Data Prep**: Normalizes squad data, converts lone players to pseudo-squads.
 
 2.  **Target Calc**: Computes ideal player swap count from imbalance.
 
-3.  **Backtracked Swaps**: Attempts multiple squad combinations with scoring [cite: uploaded:team-balancer.js].
+3.  **Backtracked Swaps**: Attempts multiple squad combinations with scoring.
 
-4.  **Execution**: Performs mutual swaps with retry tracking [cite: uploaded:team-balancer.js].
+4.  **Execution**: Performs mutual swaps with retry tracking.
 
-5.  **Post-Fix**: Trims or breaks squads if over hard cap [cite: uploaded:team-balancer.js].
+5.  **Post-Fix**: Trims or breaks squads if over hard cap.
 
 ## Installation
 
@@ -73,21 +73,21 @@ Add to your `config.json`:
 
 | Command | Description |
 |---|---|
-| `!teambalancer on|off` | Enable/disable auto-tracking [cite: uploaded:team-balancer.js]|
-| `!teambalancer status` | Show plugin config, streak, and stats [cite: uploaded:team-balancer.js]|
-| `!teambalancer debug on|off` | Enable/disable debug logging [cite: uploaded:team-balancer.js]|
-| `!teambalancer diag` | Run 3 dry-run simulations [cite: uploaded:team-balancer.js]|
-| `!teambalancer scramble` | Manual scramble with delay [cite: uploaded:team-balancer.js]|
-| `!teambalancer cancel` | Cancel countdown [cite: uploaded:team-balancer.js]|
-| `!scramble` | Alias for `!teambalancer scramble` [cite: uploaded:team-balancer.js]|
-| `!scramble now` | Immediate scramble (no delay) [cite: uploaded:team-balancer.js]|
-| `!scramble cancel` | Cancel pending countdown [cite: uploaded:team-balancer.js]|
+| `!teambalancer on|off` | Enable/disable auto-tracking |
+| `!teambalancer status` | Show plugin config, streak, and stats |
+| `!teambalancer debug on|off` | Enable/disable debug logging |
+| `!teambalancer diag` | Run 3 dry-run simulations |
+| `!teambalancer scramble` | Manual scramble with delay |
+| `!teambalancer cancel` | Cancel countdown |
+| `!scramble` | Alias for `!teambalancer scramble` |
+| `!scramble now` | Immediate scramble (no delay) |
+| `!scramble cancel` | Cancel pending countdown |
 
 ### Player
 
 | Command | Description |
 |---|---|
-| `!teambalancer` | Show win streak, last scramble, plugin state [cite: uploaded:team-balancer.js]|
+| `!teambalancer` | Show win streak, last scramble, plugin state |
 
 ## Configuration Options
 
@@ -128,7 +128,7 @@ Set `devMode = true` in the constructor to allow commands from all chat (not jus
 
 ## Diagnostics
 
-`!teambalancer diag` provides [cite: uploaded:team-balancer.js]:
+`!teambalancer diag` provides:
 
 -   Current plugin status
 -   Team/squad distribution
@@ -137,7 +137,7 @@ Set `devMode = true` in the constructor to allow commands from all chat (not jus
 
 ## Logging and Monitoring
 
-The plugin provides comprehensive logging for debugging and monitoring [cite: uploaded:team-balancer.js]:
+The plugin provides comprehensive logging for debugging and monitoring:
 
 -   **Debug Logs**: Enable with `debugLogs: true` for verbose output
 -   **Console Output**: All major actions logged to server console
@@ -154,7 +154,7 @@ The plugin provides comprehensive logging for debugging and monitoring [cite: up
 
 ### Debug Mode
 
-Enable debug logging to see detailed scramble execution [cite: uploaded:team-balancer.js]:
+Enable debug logging to see detailed scramble execution:
 
 ```json
 {
@@ -162,7 +162,7 @@ Enable debug logging to see detailed scramble execution [cite: uploaded:team-bal
 }
 ```
 
-This will show squad selection logic, player move attempts, and retry status in the console [cite: uploaded:team-balancer.js].
+This will show squad selection logic, player move attempts, and retry status in the console.
 
 ## Author
 
