@@ -48,23 +48,22 @@ Add to your `config.json`:
 {
   "plugin": "TeamBalancer",
   "enabled": true,
-  "options": {
-    "enableWinStreakTracking": true,
-    "maxWinStreak": 2,
-    "minTicketsToCountAsDominantWin": 150,
-    "invasionAttackTeamThreshold": 300,
-    "invasionDefenceTeamThreshold": 650,
-    "scrambleAnnouncementDelay": 12,
-    "scramblePercentage": 0.5,
-    "changeTeamRetryInterval": 200,
-    "maxScrambleCompletionTime": 15000,
-    "showWinStreakMessages": true,
-    "warnOnSwap": true,
-    "useGenericTeamNamesInBroadcasts": true,
-    "debugLogs": false,
-    "dryRunMode": true
-  }
-}
+  "database": "sqlite",
+  "enableWinStreakTracking": true,
+  "maxWinStreak": 2,
+  "minTicketsToCountAsDominantWin": 150,
+  "invasionAttackTeamThreshold": 300,
+  "invasionDefenceTeamThreshold": 650,
+  "scrambleAnnouncementDelay": 12,
+  "scramblePercentage": 0.5,
+  "changeTeamRetryInterval": 200,
+  "maxScrambleCompletionTime": 15000,
+  "showWinStreakMessages": true,
+  "warnOnSwap": true,
+  "useGenericTeamNamesInBroadcasts": false,
+  "debugLogs": false,
+  "dryRunMode": true
+},
 ```
 
 ## Commands
@@ -143,14 +142,6 @@ The plugin provides comprehensive logging for debugging and monitoring:
 -   **Console Output**: All major actions logged to server console
 -   **Player Warnings**: Optional RCON warnings sent to swapped players
 -   **Scramble Tracking**: Detailed retry attempts and completion status
-
-## Troubleshooting
-
-### Common Issues
-
--   **Scramble not triggering**: Check if `enableWinStreakTracking` is true and plugin not manually disabled
--   **Players not moving**: Verify RCON connection and check retry logs in console
--   **Timeout errors**: Increase `maxScrambleCompletionTime` for slower servers
 
 ### Debug Mode
 
