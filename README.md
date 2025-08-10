@@ -45,6 +45,15 @@ Operates in 5 stages using randomized backtracking:
 Add to your `config.json`:
 
 ```json
+  "connectors": {
+    "sqlite": {
+      "dialect": "sqlite",
+      "storage": "squad-server.sqlite"
+    }
+  },
+
+...
+
 {
   "plugin": "TeamBalancer",
   "enabled": true,
