@@ -103,7 +103,7 @@ Add to your `config.json`:
 | `maxScrambleCompletionTime` | The maximum total time in milliseconds allowed for all player swaps to complete during a scramble. | `15000` |
 | `showWinStreakMessages` | Controls whether messages about win streaks are broadcast to the server. | `true` |
 | `warnOnSwap` | Controls whether players receive a warning message when they are swapped between teams. | `true` |
-| `useGenericTeamNamesInBroadcasts` | If true, broadcasts will use "Team 1" and "Team 2" instead of faction names. | `true` |
+| `useGenericTeamNamesInBroadcasts` | If true, broadcasts will use "Team 1" and "Team 2" instead of faction names. | `false` |
 | `debugLogs` | Enables verbose debug logging to the server console. | `false` |
 | `dryRunMode` | If true, manual scrambles will only simulate the moves without actually executing them via RCON. | `true` |
 
