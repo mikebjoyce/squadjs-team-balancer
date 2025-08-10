@@ -37,6 +37,16 @@ const { DataTypes } = Sequelize;
  * INSTALLATION:
  * Add this to your `config.json` plugins array:
  *
+
+  "connectors": {
+    "sqlite": {
+      "dialect": "sqlite",
+      "storage": "squad-server.sqlite"
+    }
+  },
+  
+ ...
+ 
     {
       "plugin": "TeamBalancer",
       "enabled": true,
@@ -56,6 +66,7 @@ const { DataTypes } = Sequelize;
       "debugLogs": false,
       "dryRunMode": true
     },
+    
  *
  * ADMIN COMMANDS:
  * !teambalancer on|off           → Enable/disable win streak tracking system
