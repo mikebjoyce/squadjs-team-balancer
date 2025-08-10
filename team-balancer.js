@@ -238,7 +238,7 @@ export default class TeamBalancer extends BasePlugin {
             warn: (...args) => console.warn('[TeamBalancer][WARN]', ...args),
             error: (...args) => console.error('[TeamBalancer][ERROR]', ...args)
         };
-        this.devMode = true; // <-- DEV MODE TOGGLE
+        this.devMode = false; // <-- DEV MODE TOGGLE
         CommandHandlers.register(this);
 
         // DB integration
