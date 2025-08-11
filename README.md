@@ -81,9 +81,9 @@ Add to your `config.json`:
 
 | Command | Description |
 |---|---|
-| `!teambalancer on|off` | Enable/disable auto-tracking |
+| `!teambalancer on\|off` | Enable/disable auto-tracking |
 | `!teambalancer status` | Show plugin config, streak, and stats |
-| `!teambalancer debug on|off` | Enable/disable debug logging |
+| `!teambalancer debug on\|off` | Enable/disable debug logging |
 | `!teambalancer diag` | Run 3 dry-run simulations |
 | `!teambalancer scramble` | Manual scramble with delay |
 | `!teambalancer cancel` | Cancel countdown |
