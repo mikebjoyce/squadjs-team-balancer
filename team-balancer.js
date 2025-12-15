@@ -3,6 +3,7 @@ import Scrambler from './tb-scrambler.js';
 import SwapExecutor from './tb-swap-executor.js';
 import CommandHandlers from './tb-commands.js';
 import TBDatabase from './tb-database.js';
+import Logger from '../SquadJS-4.1.0/core/logger.js';
 
 /**
  * ╔═══════════════════════════════════════════════════════════════╗
@@ -46,10 +47,9 @@ import TBDatabase from './tb-database.js';
       "storage": "squad-server.sqlite"
     }
   },
-  
- ...
- 
-    {
+...
+
+  {
       "plugin": "TeamBalancer",
       "enabled": true,
       "database": "sqlite",
@@ -68,7 +68,6 @@ import TBDatabase from './tb-database.js';
       "debugLogs": false,
       "dryRunMode": true
     },
-    
  *
  * ADMIN COMMANDS:
  * !teambalancer on|off           → Enable/disable win streak tracking system
@@ -215,46 +214,32 @@ export default class TeamBalancer extends BasePlugin {
   validateOptions() {
     // If scrambleAnnouncementDelay is less than 10s, admins have no time to react and the RCON broadcast might overlap in game.
     if (this.options.scrambleAnnouncementDelay < 10) {
-      this.logWarning(
-        `scrambleAnnouncementDelay (${this.options.scrambleAnnouncementDelay}s) too low. Enforcing minimum 10 seconds.`
-      );
+      Logger.verbose('TeamBalancer', 1, `scrambleAnnouncementDelay (${this.options.scrambleAnnouncementDelay}s) too low. Enforcing minimum 10 seconds.`);
       this.options.scrambleAnnouncementDelay = 10;
     }
 
     // If changeTeamRetryInterval is less than 200ms then the server might be spammed too quickly and time out.
     if (this.options.changeTeamRetryInterval < 200) {
-      this.logWarning(
-        `changeTeamRetryInterval (${this.options.changeTeamRetryInterval}ms) too low. Enforcing minimum 200ms.`
-      );
+      Logger.verbose('TeamBalancer', 1, `changeTeamRetryInterval (${this.options.changeTeamRetryInterval}ms) too low. Enforcing minimum 200ms.`);
       this.options.changeTeamRetryInterval = 200;
     }
 
     // If maxScrambleCompletionTime is too short, there might not be enough time to swap all the players.
     if (this.options.maxScrambleCompletionTime < 5000) {
-      this.logWarning(
-        `maxScrambleCompletionTime (${this.options.maxScrambleCompletionTime}ms) too low. Enforcing minimum 5000ms.`
-      );
+      Logger.verbose('TeamBalancer', 1, `maxScrambleCompletionTime (${this.options.maxScrambleCompletionTime}ms) too low. Enforcing minimum 5000ms.`);
       this.options.maxScrambleCompletionTime = 5000;
     }
 
     // Ensure scramblePercentage is within a valid range (0.0 to 1.0).
     if (this.options.scramblePercentage < 0.0 || this.options.scramblePercentage > 1.0) {
-      this.logWarning(
-        `scramblePercentage (${this.options.scramblePercentage}) is outside the valid range (0.0 to 1.0). Enforcing 0.5.`
-      );
+      Logger.verbose('TeamBalancer', 1, `scramblePercentage (${this.options.scramblePercentage}) is outside the valid range (0.0 to 1.0). Enforcing 0.5.`);
       this.options.scramblePercentage = 0.5;
     }
   }
 
   constructor(server, options, connectors) {
     super(server, options, connectors);
-    // Ensure this.log is always available, even if BasePlugin's setup is delayed or inconsistent
-    this.log = this.log || {
-      debug: (...args) => console.log('[TeamBalancer][DEBUG]', ...args),
-      info: (...args) => console.log('[TeamBalancer][INFO]', ...args),
-      warn: (...args) => console.warn('[TeamBalancer][WARN]', ...args),
-      error: (...args) => console.error('[TeamBalancer][ERROR]', ...args)
-    };
+    // Logging centralized via Logger.verbose; no per-instance wrapper needed.
     this.devMode = false; // <-- DEV MODE TOGGLE
     CommandHandlers.register(this);
 
@@ -294,34 +279,26 @@ export default class TeamBalancer extends BasePlugin {
     this.cachedAbbreviations = {};
   }
 
-  logDebug(...args) {
-    if (this.options.debugLogs) {
-      console.log('[TeamBalancer]', ...args);
-    }
-  }
-
-  logWarning(...args) {
-    console.log('[WARNING] [TeamBalancer]', ...args);
-  }
+  // Note: direct Logger.verbose calls are used throughout; helper methods removed.
 
   async mount() {
-    this.logDebug('Mounting plugin and adding listeners.');
+    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Mounting plugin and adding listeners.');
     // Initialize database helper and load state
     try {
-      const dbState = await this.db.initDB(this.log);
+      const dbState = await this.db.initDB();
       if (dbState && !dbState.isStale) {
         this.winStreakTeam = dbState.winStreakTeam;
         this.winStreakCount = dbState.winStreakCount;
         this.lastSyncTimestamp = dbState.lastSyncTimestamp;
         this.lastScrambleTime = dbState.lastScrambleTime;
-        this.logDebug(`[DB] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}`);
+        if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}`);
       } else if (dbState) {
-        this.logDebug('[DB] State stale; resetting.');
+        if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
         this.lastScrambleTime = dbState.lastScrambleTime;
-        await this.db.saveState(null, 0, this.log);
+        await this.db.saveState(null, 0);
       }
     } catch (err) {
-      this.logWarning(`[DB] mount/initDB failed: ${err.message}`);
+      Logger.verbose('TeamBalancer', 1, `[DB] mount/initDB failed: ${err.message}`);
     }
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.on('NEW_GAME', this.listeners.onNewGame);
@@ -334,7 +311,7 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   async unmount() {
-    this.logDebug('Unmounting plugin and removing listeners.');
+    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Unmounting plugin and removing listeners.');
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.removeListener('NEW_GAME', this.listeners.onNewGame);
     this.server.removeListener('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
@@ -354,7 +331,7 @@ export default class TeamBalancer extends BasePlugin {
   // ╚═══════════════════════════════════════╝
 
   async startPollingGameInfo() {
-    this.logDebug('Starting game info polling.');
+    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Starting game info polling.');
 
     // An async function to get the game mode and update the cache.
     const pollGameInfo = async () => {
@@ -365,19 +342,19 @@ export default class TeamBalancer extends BasePlugin {
         // Check if the layer and its gamemode property are available.
         if (layer && layer.gamemode) {
           this.gameModeCached = layer.gamemode;
-          this.logDebug(`Game mode resolved and cached: ${this.gameModeCached}`);
+          if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `Game mode resolved and cached: ${this.gameModeCached}`);
 
           // Clear the polling interval once the game mode is successfully retrieved.
           if (this.gameInfoPollInterval) {
             clearInterval(this.gameInfoPollInterval);
             this.gameInfoPollInterval = null;
-            this.logDebug('Game info polling stopped.');
+            if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Game info polling stopped.');
           }
         } else {
-          this.logDebug('Game info not yet available. Retrying...');
+          if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Game info not yet available. Retrying...');
         }
       } catch (err) {
-        this.logDebug(`Error during game info polling: ${err.message}`);
+        if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `Error during game info polling: ${err.message}`);
       }
     };
 
@@ -390,7 +367,7 @@ export default class TeamBalancer extends BasePlugin {
 
   stopPollingGameInfo() {
     if (this._gameInfoPollingInterval) {
-      this.logDebug('Stopping game info polling.');
+      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Stopping game info polling.');
       clearInterval(this._gameInfoPollingInterval);
       this._gameInfoPollingInterval = null;
     }
@@ -404,56 +381,50 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   startPollingTeamAbbreviations() {
-    this.logDebug('Starting team abbreviation polling.');
+    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Starting team abbreviation polling.');
     this.stopPollingTeamAbbreviations();
     this._teamAbbreviationPollingInterval = setInterval(() => this.pollTeamAbbreviations(), 5000);
   }
 
   stopPollingTeamAbbreviations() {
     if (this._teamAbbreviationPollingInterval) {
-      this.logDebug('Stopping team abbreviation polling.');
+      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Stopping team abbreviation polling.');
       clearInterval(this._teamAbbreviationPollingInterval);
       this._teamAbbreviationPollingInterval = null;
     }
   }
 
   pollTeamAbbreviations() {
-    this.logDebug('Running periodic team abbreviation poll.');
+    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Running periodic team abbreviation poll.');
     const newAbbreviations = this.extractTeamAbbreviationsFromRoles();
 
     // Only update cache if new abbreviations are found.
     if (Object.keys(newAbbreviations).length > 0) {
       this.cachedAbbreviations = Object.assign({}, this.cachedAbbreviations, newAbbreviations);
-      this.logDebug(`Updated cached abbreviations: ${JSON.stringify(this.cachedAbbreviations)}`);
+      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `Updated cached abbreviations: ${JSON.stringify(this.cachedAbbreviations)}`);
     }
 
     const hasBothTeams = Object.keys(this.cachedAbbreviations).length === 2;
 
     // Stop polling once two teams are found in the cache.
     if (hasBothTeams) {
-      this.logDebug(
-        `Polling successful! Cached abbreviations: ${JSON.stringify(this.cachedAbbreviations)}`
-      );
+      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `Polling successful! Cached abbreviations: ${JSON.stringify(this.cachedAbbreviations)}`);
       this.stopPollingTeamAbbreviations();
     }
   }
 
   extractTeamAbbreviationsFromRoles() {
-    this.logDebug('extractTeamAbbreviationsFromRoles: Starting extraction from player roles.');
+    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'extractTeamAbbreviationsFromRoles: Starting extraction from player roles.');
     const abbreviations = {};
     for (const player of this.server.players) {
       const teamID = player.teamID;
       if (!teamID) {
-        this.logDebug(
-          `extractTeamAbbreviationsFromRoles: Skipping player ${player.name} with no teamID.`
-        );
+        if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Skipping player ${player.name} with no teamID.`);
         continue;
       }
 
       if (abbreviations[teamID]) {
-        this.logDebug(
-          `extractTeamAbbreviationsFromRoles: Skipping player ${player.name}, abbreviation for Team ${teamID} already found.`
-        );
+        if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Skipping player ${player.name}, abbreviation for Team ${teamID} already found.`);
         continue;
       }
 
@@ -462,26 +433,16 @@ export default class TeamBalancer extends BasePlugin {
         // New regex to match abbreviations like "PLANMC" at the start of the string
         const match = role.match(/^([A-Z]{2,6})_/);
         if (match) {
-          this.logDebug(
-            `extractTeamAbbreviationsFromRoles: Found abbreviation ${match[1]} for Team ${teamID} from role ${role}.`
-          );
+          if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Found abbreviation ${match[1]} for Team ${teamID} from role ${role}.`);
           abbreviations[teamID] = match[1];
         } else {
-          this.logDebug(
-            `extractTeamAbbreviationsFromRoles: No abbreviation found in role ${role} for player ${player.name}.`
-          );
+          if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: No abbreviation found in role ${role} for player ${player.name}.`);
         }
       } else {
-        this.logDebug(
-          `extractTeamAbbreviationsFromRoles: No role found for player ${player.name}.`
-        );
+        if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: No role found for player ${player.name}.`);
       }
     }
-    this.logDebug(
-      `extractTeamAbbreviationsFromRoles: Finished extraction. Result: ${JSON.stringify(
-        abbreviations
-      )}`
-    );
+    Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Finished extraction. Result: ${JSON.stringify(abbreviations)}`);
     return abbreviations;
   }
 
@@ -493,7 +454,7 @@ export default class TeamBalancer extends BasePlugin {
 
   async onNewGame() {
     try {
-      this.logDebug('[onNewGame] Event triggered');
+      Logger.verbose('TeamBalancer', 4, '[onNewGame] Event triggered');
 
       // Reset cached game and team info
       this.gameModeCached = null;
@@ -509,27 +470,27 @@ export default class TeamBalancer extends BasePlugin {
       // This flip maintains streak continuity and prevents incorrect resets.
       try {
         const flippedTeam = this.winStreakTeam === 1 ? 2 : this.winStreakTeam === 2 ? 1 : null;
-        const dbRes = await this.db.saveState(flippedTeam, this.winStreakCount, this.log);
+        const dbRes = await this.db.saveState(flippedTeam, this.winStreakCount);
         if (dbRes) {
           this.winStreakTeam = dbRes.winStreakTeam;
           this.winStreakCount = dbRes.winStreakCount;
           this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
         }
       } catch (err) {
-        this.logWarning(`[DB] onNewGame saveState failed: ${err.message}`);
+        Logger.verbose('TeamBalancer', 1, `[DB] onNewGame saveState failed: ${err.message}`);
       }
     } catch (err) {
-      this.log.error(`[TeamBalancer] Error in onNewGame: ${err.message}`);
+      Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error in onNewGame: ${err.message}`);
       // Fallback: Attempt to reset state to prevent cascading issues
       this.winStreakTeam = null;
       this.winStreakCount = 0;
       try {
-        const dbRes = await this.db.saveState(null, 0, this.log);
+        const dbRes = await this.db.saveState(null, 0);
         this.winStreakTeam = null;
         this.winStreakCount = 0;
         if (dbRes) this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
       } catch (err) {
-        this.logWarning(`[DB] onNewGame fallback saveState failed: ${err.message}`);
+        Logger.verbose('TeamBalancer', 1, `[DB] onNewGame fallback saveState failed: ${err.message}`);
       }
       this._scrambleInProgress = false;
       this._scramblePending = false;
@@ -539,7 +500,7 @@ export default class TeamBalancer extends BasePlugin {
 
   async onRoundEnded(data) {
     try {
-      this.logDebug(`Round ended event received: ${JSON.stringify(data)}`);
+      Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
 
       // Stop both polling loops after a round ends.
       this.stopPollingGameInfo();
@@ -551,13 +512,11 @@ export default class TeamBalancer extends BasePlugin {
       const margin = winnerTickets - loserTickets;
 
       if (isNaN(winnerID) || isNaN(winnerTickets) || isNaN(loserTickets)) {
-        this.logWarning('Could not parse round end data, skipping evaluation.');
+        Logger.verbose('TeamBalancer', 1, 'Could not parse round end data, skipping evaluation.');
         return;
       }
 
-      this.logDebug(
-        `Parsed winnerID=${winnerID}, winnerTickets=${winnerTickets}, loserTickets=${loserTickets}, margin=${margin}`
-      );
+      Logger.verbose('TeamBalancer', 4, `Parsed winnerID=${winnerID}, winnerTickets=${winnerTickets}, loserTickets=${loserTickets}, margin=${margin}`);
 
       const isInvasion = this.gameModeCached?.toLowerCase().includes('invasion') ?? false;
       const dominantThreshold = this.options.minTicketsToCountAsDominantWin ?? 175;
@@ -565,7 +524,7 @@ export default class TeamBalancer extends BasePlugin {
       const closeGameMargin = Math.floor(dominantThreshold * 0.34);
       const moderateWinThreshold = Math.floor((dominantThreshold + closeGameMargin) / 2);
 
-      this.logDebug(`Thresholds computed: {
+      Logger.verbose('TeamBalancer', 4, `Thresholds computed: {
     gameMode: ${this.gameModeCached},
     isInvasion: ${isInvasion},
     dominantThreshold: ${dominantThreshold},
@@ -594,13 +553,11 @@ export default class TeamBalancer extends BasePlugin {
         isDominant = margin >= dominantThreshold;
         isStomp = margin >= stompThreshold;
       }
-      this.logDebug(`Dominance state: isDominant=${isDominant}, isStomp=${isStomp}`);
+      Logger.verbose('TeamBalancer', 4, `Dominance state: isDominant=${isDominant}, isStomp=${isStomp}`);
 
       const nextStreakCount = this.winStreakTeam === winnerID ? this.winStreakCount + 1 : 1;
       const maxStreakReached = nextStreakCount >= this.options.maxWinStreak;
-      this.logDebug(
-        `Streak info: nextStreakCount=${nextStreakCount}, maxStreakReached=${maxStreakReached}`
-      );
+      Logger.verbose('TeamBalancer', 4, `Streak info: nextStreakCount=${nextStreakCount}, maxStreakReached=${maxStreakReached}`);
 
       const winnerName =
         (this.options.useGenericTeamNamesInBroadcasts
@@ -611,7 +568,7 @@ export default class TeamBalancer extends BasePlugin {
           ? `Team ${3 - winnerID}`
           : this.getTeamName(3 - winnerID)) || `Team ${3 - winnerID}`;
 
-      this.logDebug(`Team names for broadcast: winnerName=${winnerName}, loserName=${loserName}`);
+      Logger.verbose('TeamBalancer', 4, `Team names for broadcast: winnerName=${winnerName}, loserName=${loserName}`);
 
       // The prefixing logic below is only applicable when using faction names
       // and should be skipped for generic team names.
@@ -627,12 +584,10 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       const teamNames = { winnerName: broadcastWinnerName, loserName: broadcastLoserName };
-      this.logDebug(
-        `Final team names for broadcast: winnerName=${teamNames.winnerName}, loserName=${teamNames.loserName}`
-      );
+      Logger.verbose('TeamBalancer', 4, `Final team names for broadcast: winnerName=${teamNames.winnerName}, loserName=${teamNames.loserName}`);
 
       if (!isDominant) {
-        this.logDebug('Handling non-dominant win branch.');
+        Logger.verbose('TeamBalancer', 4, 'Handling non-dominant win branch.');
         if (this.options.showWinStreakMessages) {
           let template;
 
@@ -660,50 +615,46 @@ export default class TeamBalancer extends BasePlugin {
               template = this.RconMessages.nonDominant.operationalSuperiority;
             }
           }
-          this.logDebug(`Using template for non-dominant win: ${template}`);
+            Logger.verbose('TeamBalancer', 4, `Using template for non-dominant win: ${template}`);
 
           const message = `${this.RconMessages.prefix} ${this.formatMessage(template, {
             team: teamNames.winnerName,
             loser: teamNames.loserName,
             margin
           })}`;
-          this.logDebug(`Broadcasting non-dominant message: ${message}`);
+          Logger.verbose('TeamBalancer', 4, `Broadcasting non-dominant message: ${message}`);
           try {
             await this.server.rcon.broadcast(message);
           } catch (broadcastErr) {
-            this.logWarning(`Failed to broadcast non-dominant message: ${broadcastErr.message}`);
+            Logger.verbose('TeamBalancer', 1, `Failed to broadcast non-dominant message: ${broadcastErr.message}`);
           }
         }
         return await this.resetStreak(`Non-dominant win by team ${winnerID}`);
       }
 
-      this.logDebug('Dominant win detected under standard mode.');
-      this.logDebug(
-        `Current streak: winStreakTeam=${this.winStreakTeam}, winStreakCount=${this.winStreakCount}`
-      );
+      Logger.verbose('TeamBalancer', 4, 'Dominant win detected under standard mode.');
+      Logger.verbose('TeamBalancer', 4, `Current streak: winStreakTeam=${this.winStreakTeam}, winStreakCount=${this.winStreakCount}`);
 
       const streakBroken = this.winStreakTeam && this.winStreakTeam !== winnerID;
       if (streakBroken) {
-        this.logDebug(`Streak broken. Previous streak team: ${this.winStreakTeam}`);
+        Logger.verbose('TeamBalancer', 4, `Streak broken. Previous streak team: ${this.winStreakTeam}`);
         await this.resetStreak('Streak broken by opposing team');
       }
 
       try {
-        const dbRes = await this.db.saveState(winnerID, nextStreakCount, this.log);
+        const dbRes = await this.db.saveState(winnerID, nextStreakCount);
         if (dbRes) {
           this.winStreakTeam = dbRes.winStreakTeam;
           this.winStreakCount = dbRes.winStreakCount;
           this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
         }
-        this.logDebug(`New win streak started: team ${this.winStreakTeam}, count ${this.winStreakCount}`);
+        Logger.verbose('TeamBalancer', 4, `New win streak started: team ${this.winStreakTeam}, count ${this.winStreakCount}`);
       } catch (err) {
-        this.logWarning(`[DB] saveState failed: ${err.message}`);
+        Logger.verbose('TeamBalancer', 1, `[DB] saveState failed: ${err.message}`);
       }
 
       const scrambleComing = this.winStreakCount >= this.options.maxWinStreak;
-      this.logDebug(
-        `Scramble check: winStreakCount=${this.winStreakCount}, maxWinStreak=${this.options.maxWinStreak}, scrambleComing=${scrambleComing}`
-      );
+      Logger.verbose('TeamBalancer', 4, `Scramble check: winStreakCount=${this.winStreakCount}, maxWinStreak=${this.options.maxWinStreak}, scrambleComing=${scrambleComing}`);
 
       if (this.options.showWinStreakMessages && !scrambleComing) {
         let template;
@@ -718,48 +669,44 @@ export default class TeamBalancer extends BasePlugin {
         } else {
           template = this.RconMessages.dominant.steamrolled;
         }
-        this.logDebug(`Using template for dominant win: ${template}`);
+        Logger.verbose('TeamBalancer', 4, `Using template for dominant win: ${template}`);
 
         const message = `${this.RconMessages.prefix} ${this.formatMessage(template, {
           team: teamNames.winnerName,
           loser: teamNames.loserName,
           margin
         })}`;
-        this.logDebug(`Broadcasting dominant win message: ${message}`);
+        Logger.verbose('TeamBalancer', 4, `Broadcasting dominant win message: ${message}`);
         try {
           await this.server.rcon.broadcast(message);
         } catch (broadcastErr) {
-          this.logWarning(`Failed to broadcast dominant win message: ${broadcastErr.message}`);
+          Logger.verbose('TeamBalancer', 1, `Failed to broadcast dominant win message: ${broadcastErr.message}`);
         }
       }
 
-      this.logDebug(
-        `Evaluating scramble trigger: streakCount=${this.winStreakCount}, streakTeam=${this.winStreakTeam}, margin=${margin}`
-      );
-      this.logDebug(
-        `_scramblePending=${this._scramblePending}, _scrambleInProgress=${this._scrambleInProgress}`
-      );
+      Logger.verbose('TeamBalancer', 4, `Evaluating scramble trigger: streakCount=${this.winStreakCount}, streakTeam=${this.winStreakTeam}, margin=${margin}`);
+      Logger.verbose('TeamBalancer', 4, `_scramblePending=${this._scramblePending}, _scrambleInProgress=${this._scrambleInProgress}`);
 
       if (this._scramblePending || this._scrambleInProgress) return;
 
       if (this.winStreakCount >= this.options.maxWinStreak) {
-        this.logDebug(`Scramble condition met. Preparing to broadcast announcement.`);
+        Logger.verbose('TeamBalancer', 4, `Scramble condition met. Preparing to broadcast announcement.`);
         const message = this.formatMessage(this.RconMessages.scrambleAnnouncement, {
           team: teamNames.winnerName,
           count: this.winStreakCount,
           margin,
           delay: this.options.scrambleAnnouncementDelay
         });
-        this.logDebug(`Scramble announcement message: ${message}`);
+        Logger.verbose('TeamBalancer', 4, `Scramble announcement message: ${message}`);
         try {
           await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${message}`);
         } catch (broadcastErr) {
-          this.logWarning(`Failed to broadcast scramble announcement: ${broadcastErr.message}`);
+          Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble announcement: ${broadcastErr.message}`);
         }
         this.initiateScramble(false, false);
       }
     } catch (err) {
-      this.log.error(`[TeamBalancer] Error in onRoundEnded: ${err.message}`);
+      Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error in onRoundEnded: ${err.message}`);
       // Fallback: Attempt to reset state to prevent cascading issues
       this.winStreakTeam = null;
       this.winStreakCount = 0;
@@ -770,14 +717,14 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   async resetStreak(reason = 'unspecified') {
-    this.logDebug(`Resetting streak: ${reason}`);
+    Logger.verbose('TeamBalancer', 4, `Resetting streak: ${reason}`);
     try {
-      const dbRes = await this.db.saveState(null, 0, this.log);
+      const dbRes = await this.db.saveState(null, 0);
       this.winStreakTeam = null;
       this.winStreakCount = 0;
       if (dbRes) this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
     } catch (err) {
-      this.logWarning(`[DB] resetStreak saveState failed: ${err.message}`);
+      Logger.verbose('TeamBalancer', 1, `[DB] resetStreak saveState failed: ${err.message}`);
     }
     this._scramblePending = false;
   }
@@ -788,14 +735,14 @@ export default class TeamBalancer extends BasePlugin {
 
   async initiateScramble(isSimulated = false, immediate = false, steamID = null, player = null) {
     if (this._scramblePending || this._scrambleInProgress) {
-      this.logDebug('Scramble initiation blocked: scramble already pending or in progress.');
+      Logger.verbose('TeamBalancer', 4, 'Scramble initiation blocked: scramble already pending or in progress.');
       return false;
     }
     const adminName = player?.name || (steamID ? `admin ${steamID}` : 'system');
 
     // If it's a simulated scramble (dry run), force immediate execution and no public broadcast.
     if (isSimulated) {
-      console.log(`[TeamBalancer] Simulating immediate scramble initiated by ${adminName}`);
+      Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Simulating immediate scramble initiated by ${adminName}`);
       await this.executeScramble(true, steamID, player); // Always pass true for isSimulated
       return true;
     }
@@ -806,20 +753,20 @@ export default class TeamBalancer extends BasePlugin {
       this._scramblePending = true;
       const delaySeconds = this.options.scrambleAnnouncementDelay;
       this._scrambleCountdownTimeout = setTimeout(async () => {
-        this.logDebug('Scramble countdown finished, executing scramble.');
+        Logger.verbose('TeamBalancer', 4, 'Scramble countdown finished, executing scramble.');
         await this.executeScramble(false, steamID, player); // Always pass false for isSimulated (live)
       }, delaySeconds * 1000);
       return true;
     } else {
       // This means it's an immediate LIVE scramble (!scramble now)
-      console.log(`[TeamBalancer] Immediate live scramble initiated by ${adminName}`);
+      Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Immediate live scramble initiated by ${adminName}`);
       await this.executeScramble(false, steamID, player); // Always pass false for isSimulated (live)
       return true;
     }
   }
 
   transformSquadJSData(squads, players) {
-    this.logDebug('Transforming SquadJS data for scrambler...');
+    Logger.verbose('TeamBalancer', 4, 'Transforming SquadJS data for scrambler...');
 
     // Normalize and validate input
     const normalizedSquads = (squads || []).filter(
@@ -840,9 +787,7 @@ export default class TeamBalancer extends BasePlugin {
         typeof player.teamID !== 'undefined'
     );
 
-    this.logDebug(
-      `Input validation: ${normalizedSquads.length} valid squads, ${normalizedPlayers.length} valid players`
-    );
+    Logger.verbose('TeamBalancer', 4, `Input validation: ${normalizedSquads.length} valid squads, ${normalizedPlayers.length} valid players`);
 
     // Create a map of squadID -> array of player steamIDs
     const squadPlayerMap = new Map();
@@ -857,7 +802,7 @@ export default class TeamBalancer extends BasePlugin {
       }
     }
 
-    this.logDebug(`Squad-player mapping created for ${squadPlayerMap.size} squads`);
+    Logger.verbose('TeamBalancer', 4, `Squad-player mapping created for ${squadPlayerMap.size} squads`);
 
     // Transform squads to expected format
     const transformedSquads = normalizedSquads.map((squad) => {
@@ -871,9 +816,7 @@ export default class TeamBalancer extends BasePlugin {
         locked: squad.locked === 'True' || squad.locked === true // Handle both string and boolean
       };
 
-      this.logDebug(
-        `Transformed squad ${squadKey}: ${playersInSquad.length} players, team ${transformed.teamID}, locked: ${transformed.locked}`
-      );
+      Logger.verbose('TeamBalancer', 4, `Transformed squad ${squadKey}: ${playersInSquad.length} players, team ${transformed.teamID}, locked: ${transformed.locked}`);
 
       return transformed;
     });
@@ -885,16 +828,14 @@ export default class TeamBalancer extends BasePlugin {
       squadID: player.squadID ? String(player.squadID) : null
     }));
 
-    this.logDebug(
-      `Transformation complete: ${transformedSquads.length} squads, ${transformedPlayers.length} players`
-    );
+    Logger.verbose('TeamBalancer', 4, `Transformation complete: ${transformedSquads.length} squads, ${transformedPlayers.length} players`);
 
     // Log sample data for debugging
     if (transformedSquads.length > 0) {
-      this.logDebug(`Sample transformed squad:`, JSON.stringify(transformedSquads[0], null, 2));
+      Logger.verbose('TeamBalancer', 4, `Sample transformed squad:`, JSON.stringify(transformedSquads[0], null, 2));
     }
     if (transformedPlayers.length > 0) {
-      this.logDebug(`Sample transformed player:`, JSON.stringify(transformedPlayers[0], null, 2));
+      Logger.verbose('TeamBalancer', 4, `Sample transformed player:`, JSON.stringify(transformedPlayers[0], null, 2));
     }
 
     return {
@@ -905,44 +846,37 @@ export default class TeamBalancer extends BasePlugin {
 
   async executeScramble(isSimulated = false, steamID = null, player = null) {
     if (this._scrambleInProgress) {
-      this.logWarning('Scramble already in progress.');
+      Logger.verbose('TeamBalancer', 1, 'Scramble already in progress.');
       return false;
     }
 
     this._scrambleInProgress = true;
     // Prioritize player name for adminName
     const adminName = player?.name || (steamID ? `admin ${steamID}` : 'system');
-    this.logDebug(`Scramble started by ${adminName}`);
+    Logger.verbose('TeamBalancer', 4, `Scramble started by ${adminName}`);
 
     try {
       let broadcastMessage;
       if (isSimulated) {
-        broadcastMessage = `${
-          this.RconMessages.prefix
-        } ${this.RconMessages.executeDryRunMessage.trim()}`;
-        console.log(`[TeamBalancer] Simulating scramble initiated by ${adminName}`);
+        broadcastMessage = `${this.RconMessages.prefix} ${this.RconMessages.executeDryRunMessage.trim()}`;
+        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Simulating scramble initiated by ${adminName}`);
       } else {
-        broadcastMessage = `${
-          this.RconMessages.prefix
-        } ${this.RconMessages.executeScrambleMessage.trim()}`;
-        console.log(`[TeamBalancer] Executing scramble initiated by ${adminName}`);
+        broadcastMessage = `${this.RconMessages.prefix} ${this.RconMessages.executeScrambleMessage.trim()}`;
+        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Executing scramble initiated by ${adminName}`);
       }
 
-      this.logDebug(`Broadcasting: "${broadcastMessage}"`);
+      Logger.verbose('TeamBalancer', 4, `Broadcasting: "${broadcastMessage}"`);
       // Only broadcast if it's not a simulated dry run
       if (!isSimulated) {
         try {
           await this.server.rcon.broadcast(broadcastMessage);
         } catch (broadcastErr) {
-          this.logWarning(
-            `Failed to broadcast scramble execution message: ${broadcastErr.message}`
-          );
+          Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble execution message: ${broadcastErr.message}`);
           // Continue execution even if broadcast fails
         }
       }
 
-      // Determine which logger to use for the Scrambler based on simulation mode
-      const scramblerLogger = isSimulated ? this.log.info.bind(this) : this.logDebug.bind(this);
+      // Scrambler uses the central Logger internally now; no logger needs passing.
 
       // Transform SquadJS data to expected format
       const { squads: transformedSquads, players: transformedPlayers } = this.transformSquadJSData(
@@ -950,21 +884,19 @@ export default class TeamBalancer extends BasePlugin {
         this.server.players
       );
 
-      this.logDebug(
-        `Calling scrambler with ${transformedSquads.length} squads and ${transformedPlayers.length} players`
-      );
+      Logger.verbose('TeamBalancer', 4, `Calling scrambler with ${transformedSquads.length} squads and ${transformedPlayers.length} players`);
 
       // Call the Scrambler and get the swap plan
       const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
         squads: transformedSquads,
         players: transformedPlayers,
         winStreakTeam: this.winStreakTeam,
-        log: scramblerLogger, // Use the selected logger
-        scramblePercentage: this.options.scramblePercentage
+        scramblePercentage: this.options.scramblePercentage,
+        debug: this.options.debugLogs
       });
 
       if (swapPlan && swapPlan.length > 0) {
-        this.log.info(`Dry run: Scrambler returned ${swapPlan.length} player moves.`); // Changed from logDebug
+        Logger.verbose('TeamBalancer', 2, `Dry run: Scrambler returned ${swapPlan.length} player moves.`);
         if (!isSimulated) {
           // Queue all player moves into the reliablePlayerMove system
           for (const move of swapPlan) {
@@ -974,50 +906,49 @@ export default class TeamBalancer extends BasePlugin {
           // Wait for all queued moves to complete
           await this.waitForScrambleToFinish(this.options.maxScrambleCompletionTime);
         } else {
-          // Changed from logDebug to log.info for dry run output
-          this.log.info(`Dry run: Would have queued ${swapPlan.length} player moves.`);
+          Logger.verbose('TeamBalancer', 2, `Dry run: Would have queued ${swapPlan.length} player moves.`);
           for (const move of swapPlan) {
-            this.log.info(`  [Dry Run] Player ${move.steamID} to Team ${move.targetTeamID}`);
+            Logger.verbose('TeamBalancer', 2, `  [Dry Run] Player ${move.steamID} to Team ${move.targetTeamID}`);
           }
         }
       } else {
-        this.log.info('Scrambler returned no player moves or an empty plan.'); // Changed from logDebug
+        Logger.verbose('TeamBalancer', 2, 'Scrambler returned no player moves or an empty plan.');
       }
 
       const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`;
       if (!isSimulated) {
-        this.logDebug(`Broadcasting: "${msg}"`);
+        Logger.verbose('TeamBalancer', 4, `Broadcasting: "${msg}"`);
         try {
           await this.server.rcon.broadcast(msg);
         } catch (broadcastErr) {
-          this.logWarning(`Failed to broadcast scramble complete message: ${broadcastErr.message}`);
+          Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble complete message: ${broadcastErr.message}`);
         }
         const scrambleTimestamp = Date.now();
         this.lastScrambleTime = scrambleTimestamp;
         try {
-          const res = await this.db.saveScrambleTime(scrambleTimestamp, this.log);
+          const res = await this.db.saveScrambleTime(scrambleTimestamp);
           if (res && res.lastScrambleTime) this.lastScrambleTime = res.lastScrambleTime;
         } catch (err) {
-          this.logWarning(`[DB] saveScrambleTime failed: ${err.message}`);
+          Logger.verbose('TeamBalancer', 1, `[DB] saveScrambleTime failed: ${err.message}`);
         }
         await this.resetStreak('Post-scramble cleanup');
       } else {
-        this.log.info(msg);
+        Logger.verbose('TeamBalancer', 2, msg);
       }
 
       return true;
     } catch (error) {
-      console.error(`[TeamBalancer] Critical error during scramble execution:`, error);
+    Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Critical error during scramble execution: ${error?.message || error}`);
       // Log additional debugging info on error
-      this.logDebug(`Squad data at error:`, JSON.stringify(this.server.squads, null, 2));
-      this.logDebug(`Player data at error:`, JSON.stringify(this.server.players, null, 2));
+      Logger.verbose('TeamBalancer', 4, `Squad data at error:`, JSON.stringify(this.server.squads, null, 2));
+      Logger.verbose('TeamBalancer', 4, `Player data at error:`, JSON.stringify(this.server.players, null, 2));
       // Fallback: Attempt to clean up and reset state to prevent stuck state
       this.cleanupScrambleTracking();
       await this.resetStreak('Scramble execution failed');
       return false;
     } finally {
       this._scrambleInProgress = false;
-      this.logDebug('Scramble finished');
+      Logger.verbose('TeamBalancer', 4, 'Scramble finished');
     }
   }
 
@@ -1029,9 +960,7 @@ export default class TeamBalancer extends BasePlugin {
     if (this._scrambleInProgress) {
       if (!isAutomatic) {
         const adminName = player?.name || steamID;
-        console.log(
-          `[TeamBalancer] ${adminName} attempted to cancel scramble, but it's already executing`
-        );
+        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ${adminName} attempted to cancel scramble, but it's already executing`);
       }
       return false;
     }
@@ -1046,15 +975,15 @@ export default class TeamBalancer extends BasePlugin {
     const adminName = player?.name || steamID; // Prioritize player name
     const cancelReason = isAutomatic ? 'automatically' : `by admin ${adminName}`;
 
-    console.log(`[TeamBalancer] Scramble countdown cancelled ${cancelReason}`);
+    Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Scramble countdown cancelled ${cancelReason}`);
 
-    if (!isAutomatic) {
+      if (!isAutomatic) {
       const msg = `${this.RconMessages.prefix} Scramble cancelled by admin.`;
-      this.logDebug(`Broadcasting: "${msg}"`);
+      Logger.verbose('TeamBalancer', 4, `Broadcasting: "${msg}"`);
       try {
         await this.server.rcon.broadcast(msg);
       } catch (err) {
-        this.logWarning(`Failed to broadcast scramble cancellation message: ${err.message}`);
+        Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble cancellation message: ${err.message}`);
       }
     }
 
@@ -1065,20 +994,20 @@ export default class TeamBalancer extends BasePlugin {
     if (this.swapExecutor) {
       await this.swapExecutor.waitForCompletion(timeoutMs, intervalMs);
     } else {
-      this.logDebug('No swapExecutor present; nothing to wait for.');
+      Logger.verbose('TeamBalancer', 4, 'No swapExecutor present; nothing to wait for.');
     }
-    this.logDebug('All player moves processed or timeout reached.');
+    Logger.verbose('TeamBalancer', 4, 'All player moves processed or timeout reached.');
   }
 
   // Swap execution delegated to SwapExecutor for clarity and modularity.
   async reliablePlayerMove(steamID, targetTeamID, isSimulated = false) {
     if (isSimulated) {
-      this.logDebug?.(`[Dry Run] Would queue player move for ${steamID} to team ${targetTeamID}`);
+      Logger.verbose('TeamBalancer', 4, `[Dry Run] Would queue player move for ${steamID} to team ${targetTeamID}`);
       return;
     }
 
     if (!this.swapExecutor) {
-      this.swapExecutor = new SwapExecutor(this.server, this.options, this.log, this.RconMessages);
+      this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages);
     }
 
     return this.swapExecutor.queueMove(steamID, targetTeamID, isSimulated);

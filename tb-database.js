@@ -1,4 +1,5 @@
 import Sequelize from 'sequelize';
+import Logger from '../SquadJS-4.1.0/core/logger.js';
 const { DataTypes } = Sequelize;
 
 export default class TBDatabase extends BasePlugin {
@@ -9,10 +10,10 @@ export default class TBDatabase extends BasePlugin {
   }
 
   // Initialize DB and return plain state object. Accepts an external logger.
-  async initDB(logger) {
+  async initDB() {
     try {
       if (!this.sequelize) {
-        logger?.warn('[DB] No sequelize connector available.');
+        Logger.verbose('TeamBalancer', 1, '[DB] No sequelize connector available.');
         return { winStreakTeam: null, winStreakCount: 0, lastSyncTimestamp: null, lastScrambleTime: null, isStale: true };
       }
 
@@ -44,7 +45,7 @@ export default class TBDatabase extends BasePlugin {
       const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > staleCutoff;
 
       if (!isStale) {
-        logger?.debug(`[DB] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);
+        if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);
         return {
           winStreakTeam: record.winStreakTeam,
           winStreakCount: record.winStreakCount,
@@ -55,7 +56,7 @@ export default class TBDatabase extends BasePlugin {
       }
 
       // If stale, reset streak but preserve lastScrambleTime
-      logger?.debug('[DB] State stale; resetting.');
+      if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
       const lastScrambleTime = record.lastScrambleTime;
       record.winStreakTeam = null;
       record.winStreakCount = 0;
@@ -70,28 +71,28 @@ export default class TBDatabase extends BasePlugin {
         isStale: true
       };
     } catch (err) {
-      logger?.warn(`[DB] initDB failed: ${err.message}`);
+      Logger.verbose('TeamBalancer', 1, `[DB] initDB failed: ${err.message}`);
       return { winStreakTeam: null, winStreakCount: 0, lastSyncTimestamp: null, lastScrambleTime: null, isStale: true };
     }
   }
 
   // Save win-streak state and return plain object representation
-  async saveState(team, count, logger) {
+  async saveState(team, count) {
     try {
       if (!this.TeamBalancerStateModel) {
-        logger?.warn('[DB] saveState called before initDB.');
+        Logger.verbose('TeamBalancer', 1, '[DB] saveState called before initDB.');
         return null;
       }
       const record = await this.TeamBalancerStateModel.findByPk(1);
       if (!record) {
-        logger?.warn('[DB] saveState: state record missing.');
+        Logger.verbose('TeamBalancer', 1, '[DB] saveState: state record missing.');
         return null;
       }
       record.winStreakTeam = team;
       record.winStreakCount = count;
       record.lastSyncTimestamp = Date.now();
       await record.save();
-      logger?.debug(`[DB] Updated: team=${team}, count=${count}`);
+      if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, `[DB] Updated: team=${team}, count=${count}`);
       return {
         winStreakTeam: record.winStreakTeam,
         winStreakCount: record.winStreakCount,
@@ -99,26 +100,26 @@ export default class TBDatabase extends BasePlugin {
         lastScrambleTime: record.lastScrambleTime
       };
     } catch (err) {
-      logger?.warn(`[DB] saveState failed: ${err.message}`);
+      Logger.verbose('TeamBalancer', 1, `[DB] saveState failed: ${err.message}`);
       return null;
     }
   }
 
   // Save last scramble timestamp and return plain object
-  async saveScrambleTime(timestamp, logger) {
+  async saveScrambleTime(timestamp) {
     try {
       if (!this.TeamBalancerStateModel) {
-        logger?.warn('[DB] saveScrambleTime called before initDB.');
+        Logger.verbose('TeamBalancer', 1, '[DB] saveScrambleTime called before initDB.');
         return null;
       }
       const record = await this.TeamBalancerStateModel.findByPk(1);
       if (!record) return null;
       record.lastScrambleTime = timestamp;
       await record.save();
-      logger?.debug(`[DB] Updated lastScrambleTime: ${timestamp}`);
+      if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, `[DB] Updated lastScrambleTime: ${timestamp}`);
       return { lastScrambleTime: record.lastScrambleTime };
     } catch (err) {
-      logger?.warn(`[DB] saveScrambleTime failed: ${err.message}`);
+      Logger.verbose('TeamBalancer', 1, `[DB] saveScrambleTime failed: ${err.message}`);
       return null;
     }
   }

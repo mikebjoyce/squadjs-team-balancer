@@ -14,7 +14,7 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 * **Automatic/Manual Scrambling**: Triggers squad-preserving scrambles automatically or via admin command.
 
-* **Multi-Mode Support**: Handles RAAS, AAS, and Invasion with separate logic. 
+* **Multi-Mode Support**: Handles RAAS, AAS, and Invasion with separate logic.
 
 * **Dry-Run Diagnostics**: Simulate scrambles without affecting players via chat commands.
 

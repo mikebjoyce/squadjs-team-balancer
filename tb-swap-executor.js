@@ -1,8 +1,9 @@
+import Logger from '../SquadJS-4.1.0/core/logger.js';
+
 export default class SwapExecutor {
-  constructor(server, options = {}, log = console, RconMessages = {}) {
+  constructor(server, options = {}, RconMessages = {}) {
     this.server = server;
     this.options = options;
-    this.log = log || console;
     this.RconMessages = RconMessages;
 
     this.pendingPlayerMoves = new Map();
@@ -13,8 +14,7 @@ export default class SwapExecutor {
 
   async queueMove(steamID, targetTeamID, isSimulated = false) {
     if (isSimulated) {
-      this.log.debug?.(`[SwapExecutor][Dry Run] Would queue ${steamID} -> ${targetTeamID}`) ||
-        console.log(`[SwapExecutor][Dry Run] Would queue ${steamID} -> ${targetTeamID}`);
+      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor][Dry Run] Would queue ${steamID} -> ${targetTeamID}`);
       return;
     }
 
@@ -24,14 +24,13 @@ export default class SwapExecutor {
       startTime: Date.now()
     });
 
-    this.log.debug?.(`[SwapExecutor] Queued move for ${steamID} -> ${targetTeamID}`) ||
-      console.log(`[SwapExecutor] Queued move for ${steamID} -> ${targetTeamID}`);
+    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor] Queued move for ${steamID} -> ${targetTeamID}`);
 
     if (!this.scrambleRetryTimer) this.startMonitoring();
   }
 
   startMonitoring() {
-    this.log.debug?.('[SwapExecutor] Starting monitoring') || console.log('[SwapExecutor] Starting monitoring');
+    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, '[SwapExecutor] Starting monitoring');
 
     this.activeSession = {
       startTime: Date.now(),
@@ -42,7 +41,7 @@ export default class SwapExecutor {
 
     this.scrambleRetryTimer = setInterval(() => {
       this.processRetries().catch((err) => {
-        (this.log.error || console.error)(`[SwapExecutor] Error in retry loop: ${err?.message || err}`);
+        Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Error in retry loop: ${err?.message || err}`);
         this.completeSession();
       });
     }, this.options.changeTeamRetryInterval || 200);
@@ -60,7 +59,7 @@ export default class SwapExecutor {
     for (const [steamID, moveData] of this.pendingPlayerMoves.entries()) {
       try {
         if (now - moveData.startTime > (this.options.maxScrambleCompletionTime || 15000)) {
-          (this.log.warn || console.warn)(`[SwapExecutor] Move timeout for ${steamID}`);
+          Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Move timeout for ${steamID}`);
           this.activeSession.failedMoves++;
           playersToRemove.push(steamID);
           continue;
@@ -83,13 +82,13 @@ export default class SwapExecutor {
             playersToRemove.push(steamID);
             if (this.options.warnOnSwap) {
               try {
-                await this.server.rcon.warn(steamID, this.RconMessages.playerScrambledWarning);
-              } catch (err) {
-                this.log.debug?.(`[SwapExecutor] warn failed for ${steamID}: ${err}`) || console.log(err);
+                  await this.server.rcon.warn(steamID, this.RconMessages.playerScrambledWarning);
+                } catch (err) {
+                  if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor] warn failed for ${steamID}: ${err}`);
               }
             }
           } catch (err) {
-            (this.log.warn || console.warn)(`[SwapExecutor] Move attempt ${moveData.attempts} failed for ${steamID}: ${err?.message || err}`);
+            Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Move attempt ${moveData.attempts} failed for ${steamID}: ${err?.message || err}`);
             if (moveData.attempts >= maxRconAttempts) {
               this.activeSession.failedMoves++;
               playersToRemove.push(steamID);
@@ -100,7 +99,7 @@ export default class SwapExecutor {
           playersToRemove.push(steamID);
         }
       } catch (err) {
-        (this.log.error || console.error)(`[SwapExecutor] Error processing ${steamID}: ${err?.message || err}`);
+        Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Error processing ${steamID}: ${err?.message || err}`);
         this.activeSession.failedMoves++;
         playersToRemove.push(steamID);
       }
@@ -128,10 +127,10 @@ export default class SwapExecutor {
 
     const successRate = totalMoves > 0 ? Math.round((completedMoves / totalMoves) * 100) : 100;
 
-    console.log(`[SwapExecutor] Session complete in ${duration}ms: ${completedMoves}/${totalMoves} (${successRate}%), ${failedMoves} failed`);
+    Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Session complete in ${duration}ms: ${completedMoves}/${totalMoves} (${successRate}%), ${failedMoves} failed`);
 
     if (failedMoves > 0) {
-      (this.log.warn || console.warn)(`[SwapExecutor] ${failedMoves} players failed to move; manual action may be required.`);
+      Logger.verbose('TeamBalancer', 1, `[SwapExecutor] ${failedMoves} players failed to move; manual action may be required.`);
     }
 
     this.pendingPlayerMoves.clear();
@@ -142,7 +141,7 @@ export default class SwapExecutor {
     const start = Date.now();
     while (this.pendingPlayerMoves.size > 0) {
       if (Date.now() - start > timeoutMs) {
-        (this.log.warn || console.warn)(`[SwapExecutor] waitForCompletion timed out after ${timeoutMs}ms`);
+        Logger.verbose('TeamBalancer', 1, `[SwapExecutor] waitForCompletion timed out after ${timeoutMs}ms`);
         break;
       }
       await new Promise((res) => setTimeout(res, intervalMs));
