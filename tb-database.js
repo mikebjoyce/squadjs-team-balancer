@@ -9,7 +9,6 @@ export default class TBDatabase extends BasePlugin {
     this.TeamBalancerStateModel = null;
   }
 
-  // Initialize DB and return plain state object. Accepts an external logger.
   async initDB() {
     try {
       if (!this.sequelize) {
@@ -55,7 +54,6 @@ export default class TBDatabase extends BasePlugin {
         };
       }
 
-      // If stale, reset streak but preserve lastScrambleTime
       if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
       const lastScrambleTime = record.lastScrambleTime;
       record.winStreakTeam = null;
@@ -76,7 +74,6 @@ export default class TBDatabase extends BasePlugin {
     }
   }
 
-  // Save win-streak state and return plain object representation
   async saveState(team, count) {
     try {
       if (!this.TeamBalancerStateModel) {
@@ -105,7 +102,6 @@ export default class TBDatabase extends BasePlugin {
     }
   }
 
-  // Save last scramble timestamp and return plain object
   async saveScrambleTime(timestamp) {
     try {
       if (!this.TeamBalancerStateModel) {

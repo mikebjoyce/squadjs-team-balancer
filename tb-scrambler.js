@@ -33,12 +33,10 @@ export const Scrambler = {
     debug = false
   }) {
     const maxTeamSize = 50;
-    // Allow for slight overcap due to admin moves, etc.
     const maxTotalPlayersAllowed = maxTeamSize * 2 + 2;
 
     if (debug) Logger.verbose('TeamBalancer', 2, `========== Starting Team Scramble (Max cap = ${maxTeamSize}, Total cap = ${maxTotalPlayersAllowed}) ==========`);
 
-    // EARLY VALIDATION: Check if scramble is even possible
     const totalPlayers = players.length;
     if (totalPlayers > maxTotalPlayersAllowed) {
       Logger.verbose('TeamBalancer', 1, `CRITICAL: Server has ${totalPlayers} players, exceeding maximum allowed capacity of ${maxTotalPlayersAllowed}`);
@@ -51,7 +49,6 @@ export const Scrambler = {
       if (debug) Logger.verbose('TeamBalancer', 4, `No win streak team set. Randomly selecting Team ${winStreakTeam} as starting side.`);
     }
 
-    // Create working copy with normalized team IDs
     const workingPlayers = players.map((p) => ({
       ...p,
       teamID: String(p.teamID)
@@ -62,7 +59,6 @@ export const Scrambler = {
       players: [...s.players]
     }));
 
-    // Helper function to update player team assignments consistently in the working copy
     const updatePlayerTeam = (steamID, newTeamID) => {
       const player = workingPlayers.find((p) => p.steamID === steamID);
       if (player) {
@@ -70,14 +66,12 @@ export const Scrambler = {
       }
     };
 
-    // Helper function to get current team counts, given that all players are on Team 1 or Team 2
     const getCurrentTeamCounts = () => {
       const team1Players = workingPlayers.filter((p) => p.teamID === '1');
       const team2Players = workingPlayers.filter((p) => p.teamID === '2');
 
       const team1Count = team1Players.length;
       const team2Count = team2Players.length;
-      // Unassigned players are those on team 1 or 2 but with squadID === null
       const unassignedCount = workingPlayers.filter((p) => p.squadID === null).length;
       return { team1Count, team2Count, unassignedCount };
     };
@@ -85,7 +79,6 @@ export const Scrambler = {
     const initialCounts = getCurrentTeamCounts();
     if (debug) Logger.verbose('TeamBalancer', 4, `Initial team sizes: Team1 = ${initialCounts.team1Count}, Team2 = ${initialCounts.team2Count}, Unassigned (no squad) = ${initialCounts.unassignedCount}`);
 
-    // Calculate the target number of players to be moved based on scramblePercentage
     const targetPlayersToMove = Math.round(totalPlayers * scramblePercentage);
     if (debug) Logger.verbose('TeamBalancer', 4, `Target players to move (total): ${targetPlayersToMove} (${scramblePercentage * 100}%)`);
 
@@ -93,15 +86,11 @@ export const Scrambler = {
     const unassigned = workingPlayers.filter((p) => p.squadID === null);
 
     if (debug) Logger.verbose('TeamBalancer', 4, `Total players: ${totalPlayers}, Max per team: ${maxTeamSize}, Scramble Percentage: ${scramblePercentage * 100}%`);
-
-    // Unassigned players are treated as individual pseudo-squads for selection purposes
     const unassignedPseudoSquads = unassigned.map((p) => ({
       id: `Unassigned - ${p.steamID}`,
       teamID: p.teamID, // Their actual team (1 or 2)
       players: [p.steamID]
     }));
-
-    // All squads are candidates, including pseudo-squads of unassigned players
     const filterCandidates = (teamID) =>
       allSquads
         .filter((s) => s.teamID === teamID)
@@ -119,12 +108,10 @@ export const Scrambler = {
       }
     };
 
-    // Helper function to select squads based on a target player count
     const selectTieredSquads = (candidates, maxPlayersToSelect, usedSquadIds) => {
       const selected = [];
       let currentCount = 0;
-
-      // Sort candidates by size descending, with unassigned (size 1) last
+      
       const sortedCandidates = [...candidates].sort((a, b) => {
         if (a.players.length === 1 && b.players.length !== 1) return 1;
         if (a.players.length !== 1 && b.players.length === 1) return -1;
@@ -141,8 +128,7 @@ export const Scrambler = {
           selected.push(squad);
           usedSquadIds.add(squad.id);
           currentCount += size;
-        } else {
-          // Allow small overshoots if it's the only way to get close to the target
+        } else {          
           if (currentCount < maxPlayersToSelect && currentCount + size - maxPlayersToSelect <= 3) {
             selected.push(squad);
             usedSquadIds.add(squad.id);
@@ -153,7 +139,6 @@ export const Scrambler = {
       return selected;
     };
 
-    // Revised scoreSwap function to prioritize churn AND balance
     const scoreSwap = (
       selectedT1Squads,
       selectedT2Squads,
@@ -165,42 +150,33 @@ export const Scrambler = {
       const sum = (squads) => squads.reduce((n, s) => n + s.players.length, 0);
       const playersMovedFromT1 = sum(selectedT1Squads);
       const playersMovedFromT2 = sum(selectedT2Squads);
-
-      // Total players involved in the swap
+      
       const actualPlayersMoved = playersMovedFromT1 + playersMovedFromT2;
-
-      // Calculate hypothetical new team sizes after the swap
+      
       const hypotheticalNewT1 = initialT1Count - playersMovedFromT1 + playersMovedFromT2;
       const hypotheticalNewT2 = initialT2Count - playersMovedFromT2 + playersMovedFromT1;
-
-      // Score 1: How close are we to the target number of players moved?
+      
       const churnScore = Math.abs(actualPlayersMoved - targetPlayersToMoveOverall);
-
-      // Score 2: How balanced are the final teams?
+      
       const balanceScore = Math.abs(hypotheticalNewT1 - hypotheticalNewT2);
-
-      // Penalties for exceeding maxTeamSize after swap
+      
       const penaltyT1Overcap = Math.max(0, hypotheticalNewT1 - maxTeamSize) * 1000; // High penalty
       const penaltyT2Overcap = Math.max(0, hypotheticalNewT2 - maxTeamSize) * 1000; // High penalty
-
-      // Consider penalties for very small team sizes if total players are high
+      
       const totalPlayers = initialT1Count + initialT2Count;
       const idealTeamSize = totalPlayers / 2;
       let sizeDeviationPenalty = 0;
       if (hypotheticalNewT1 < idealTeamSize - 5 || hypotheticalNewT2 < idealTeamSize - 5) {
         sizeDeviationPenalty += 50; // Moderate penalty for significant underpopulation
       }
-
-      // Combine scores with weights. Churn is important, but balance is also critical.
-      // Overcaps are severely penalized.
+      
       let combinedScore =
         churnScore * 10 + // Increased weight for hitting the churn target
         balanceScore * 5 + // Higher weight for final balance
         penaltyT1Overcap +
         penaltyT2Overcap +
         sizeDeviationPenalty;
-
-      // Additional penalty for very low churn if the target is high
+      
       if (
         targetPlayersToMoveOverall > 10 &&
         actualPlayersMoved < targetPlayersToMoveOverall * 0.5
@@ -220,21 +196,16 @@ export const Scrambler = {
 
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       const currentUsedSquadIds = new Set(); // Reset for each attempt
-
-      // Shuffle candidates before selection to introduce randomness for each attempt
+      
       shuffle(t1Candidates);
       shuffle(t2Candidates);
-
-      // Aim to move half of the targetPlayersToMove from each side,
-      // but allow for slight adjustments to achieve overall balance.
+      
       let targetMoveFromT1 = Math.round(targetPlayersToMove / 2);
       let targetMoveFromT2 = Math.round(targetPlayersToMove / 2);
-
-      // Add some randomness to the target moves to explore different combinations
+      
       targetMoveFromT1 = Math.max(0, targetMoveFromT1 + Math.floor(Math.random() * 5) - 2); // +/- 2 players
       targetMoveFromT2 = Math.max(0, targetMoveFromT2 + Math.floor(Math.random() * 5) - 2); // +/- 2 players
-
-      // Ensure we don't try to move more players than available in candidates
+      
       targetMoveFromT1 = Math.min(
         targetMoveFromT1,
         t1Candidates.reduce((sum, s) => sum + s.players.length, 0)
@@ -243,8 +214,7 @@ export const Scrambler = {
         targetMoveFromT2,
         t2Candidates.reduce((sum, s) => sum + s.players.length, 0)
       );
-
-      // Select squads based on these target move counts
+      
       const selT1 = selectTieredSquads(t1Candidates, targetMoveFromT1, currentUsedSquadIds);
       const selT2 = selectTieredSquads(t2Candidates, targetMoveFromT2, currentUsedSquadIds);
 
@@ -278,10 +248,8 @@ export const Scrambler = {
         bestScore = currentScore;
         bestT1SwapCandidates = selT1;
         bestT2SwapCandidates = selT2;
-        if (debug) Logger.verbose('TeamBalancer', 4, `New best score found: ${bestScore.toFixed(2)} at attempt ${i + 1}`);
-        // Optimization: If a very good score is found, no need to continue
-        if (bestScore <= 5) {
-          // A score of 0-5 indicates very good balance and churn
+        if (debug) Logger.verbose('TeamBalancer', 4, `New best score found: ${bestScore.toFixed(2)} at attempt ${i + 1}`);        
+        if (bestScore <= 5) {          
           if (debug) Logger.verbose('TeamBalancer', 4, `Very good score (${bestScore}) found. Breaking early from swap attempts.`);
           break;
         }
@@ -292,8 +260,7 @@ export const Scrambler = {
       Logger.verbose('TeamBalancer', 2, 'No valid swap solution found within attempt limit.');
       return []; // Return empty array if no solution found
     }
-
-    // FINAL VALIDATION: Double-check no duplicates in best solution
+    
     const finalT1Ids = new Set(bestT1SwapCandidates.map((s) => s.id));
     const finalT2Ids = new Set(bestT2SwapCandidates.map((s) => s.id));
     const finalIntersection = [...finalT1Ids].filter((id) => finalT2Ids.has(id));
@@ -306,11 +273,8 @@ export const Scrambler = {
 
     const preSwapCounts = getCurrentTeamCounts();
     if (debug) Logger.verbose('TeamBalancer', 4, `Pre-swap team sizes: Team1 = ${preSwapCounts.team1Count}, Team2 = ${preSwapCounts.team2Count}`);
+    const finalPlayerMovesMap = new Map();
 
-    // Use a Map to store final player moves to ensure no player is moved twice
-    const finalPlayerMovesMap = new Map(); // Map<steamID, {steamID, targetTeamID}>
-
-    // Collect players from bestT1SwapCandidates to move to Team 2
     for (const squad of bestT1SwapCandidates) {
       for (const steamID of squad.players) {
         finalPlayerMovesMap.set(steamID, { steamID, targetTeamID: '2' });
@@ -318,7 +282,7 @@ export const Scrambler = {
       }
     }
 
-    // Collect players from bestT2SwapCandidates to move to Team 1
+    
     for (const squad of bestT2SwapCandidates) {
       for (const steamID of squad.players) {
         finalPlayerMovesMap.set(steamID, { steamID, targetTeamID: '1' });
@@ -329,8 +293,7 @@ export const Scrambler = {
     const postInitialSwapCounts = getCurrentTeamCounts();
     if (debug) Logger.verbose('TeamBalancer', 4, `Post-initial-swap internal team sizes: Team1 = ${postInitialSwapCounts.team1Count}, Team2 = ${postInitialSwapCounts.team2Count}`);
 
-    // Helper function to get players for trimming, prioritizing unassigned, then unlocked squads, then locked squads
-    // This version EXCLUDES players already in finalPlayerMovesMap
+    
     const getPlayersForTrimming = (
       teamID,
       currentWorkingPlayers,
@@ -339,14 +302,14 @@ export const Scrambler = {
     ) => {
       const playersOnTeam = currentWorkingPlayers.filter((p) => p.teamID === String(teamID));
 
-      // Filter out players who are already part of the main swap plan
+      
       const eligiblePlayers = playersOnTeam.filter((p) => !existingMovesMap.has(p.steamID));
 
       const unassignedPlayers = eligiblePlayers.filter((p) => p.squadID === null);
 
       const playersInSquads = eligiblePlayers.filter((p) => p.squadID !== null);
 
-      // Map players to their squad's locked status
+      
       const playersWithSquadStatus = playersInSquads.map((p) => {
         const squad = currentWorkingSquads.find((s) => s.id === p.squadID);
         return {
@@ -358,21 +321,21 @@ export const Scrambler = {
       const unlockedSquadPlayers = playersWithSquadStatus.filter((p) => !p.isLocked);
       const lockedSquadPlayers = playersWithSquadStatus.filter((p) => p.isLocked);
 
-      // Prioritize: Unassigned -> Unlocked Squad Players -> Locked Squad Players
+      
       return [...unassignedPlayers, ...unlockedSquadPlayers, ...lockedSquadPlayers];
     };
 
     let team1Overcap = postInitialSwapCounts.team1Count - maxTeamSize;
     let team2Overcap = postInitialSwapCounts.team2Count - maxTeamSize;
 
-    // Iteratively trim until no more moves are possible or caps are met
+    
     let madeProgress = true;
     while (madeProgress && (team1Overcap > 0 || team2Overcap > 0)) {
       madeProgress = false;
 
-      // Attempt to trim Team 1 if overcapped
+      
       if (team1Overcap > 0) {
-        // Pass finalPlayerMovesMap to exclude already-moved players
+        
         const playersToConsider = getPlayersForTrimming(
           '1',
           workingPlayers,
@@ -380,7 +343,7 @@ export const Scrambler = {
           finalPlayerMovesMap
         );
         for (const player of playersToConsider) {
-          // Check if target team has space BEFORE attempting to move
+          
           if (getCurrentTeamCounts().team2Count < maxTeamSize) {
             finalPlayerMovesMap.set(player.steamID, { steamID: player.steamID, targetTeamID: '2' });
             updatePlayerTeam(player.steamID, '2');
@@ -391,14 +354,14 @@ export const Scrambler = {
         }
       }
 
-      // Recalculate counts after potential T1->T2 trimming
+      
       const currentCountsAfterT1Trim = getCurrentTeamCounts();
       team1Overcap = currentCountsAfterT1Trim.team1Count - maxTeamSize;
       team2Overcap = currentCountsAfterT1Trim.team2Count - maxTeamSize;
 
-      // Attempt to trim Team 2 if overcapped
+      
       if (team2Overcap > 0) {
-        // Pass finalPlayerMovesMap to exclude already-moved players
+        
         const playersToConsider = getPlayersForTrimming(
           '2',
           workingPlayers,
@@ -406,7 +369,7 @@ export const Scrambler = {
           finalPlayerMovesMap
         );
         for (const player of playersToConsider) {
-          // Check if target team has space BEFORE attempting to move
+          
           if (getCurrentTeamCounts().team1Count < maxTeamSize) {
             finalPlayerMovesMap.set(player.steamID, { steamID: player.steamID, targetTeamID: '1' });
             updatePlayerTeam(player.steamID, '1');
@@ -417,7 +380,7 @@ export const Scrambler = {
         }
       }
 
-      // Recalculate counts for the next iteration
+      
       const currentCounts = getCurrentTeamCounts();
       team1Overcap = currentCounts.team1Count - maxTeamSize;
       team2Overcap = currentCounts.team2Count - maxTeamSize;
@@ -426,7 +389,7 @@ export const Scrambler = {
     const finalInternalCounts = getCurrentTeamCounts();
     if (debug) Logger.verbose('TeamBalancer', 4, `Final internal team sizes after all adjustments: Team1 = ${finalInternalCounts.team1Count}, Team2 = ${finalInternalCounts.team2Count}, Unassigned (no squad) = ${finalInternalCounts.unassignedCount}`);
 
-    // Final check for unresolvable overcaps given the constraints
+    
     const finalTeam1Overcap = finalInternalCounts.team1Count - maxTeamSize;
     const finalTeam2Overcap = finalInternalCounts.team2Count - maxTeamSize;
 
