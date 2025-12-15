@@ -1,0 +1,11 @@
+# Visual Studio 
+.vs/ 
+
+# Databases 
+*.sqlite 
+*.db 
+
+# Node 
+node_modules/ 
+npm-debug.log* 
+yarn-error.log*
