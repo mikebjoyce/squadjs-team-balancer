@@ -1,8 +1,8 @@
 import BasePlugin from './base-plugin.js';
-import Sequelize from 'sequelize';
-const { DataTypes } = Sequelize;
 import Scrambler from './tb-scrambler.js';
+import SwapExecutor from './tb-swap-executor.js';
 import CommandHandlers from './tb-commands.js';
+import TBDatabase from './tb-database.js';
 
 /**
  * ╔═══════════════════════════════════════════════════════════════╗
@@ -117,7 +117,7 @@ import CommandHandlers from './tb-commands.js';
 
 export default class TeamBalancer extends BasePlugin {
   static get version() {
-    return '1.0.0';
+    return '2.0.0';
   }
 
   static get description() {
@@ -262,6 +262,7 @@ export default class TeamBalancer extends BasePlugin {
     this.sequelize = connectors.sqlite;
     this.TeamBalancerStateModel = null;
     this.stateRecord = null;
+    this.db = new TBDatabase(this.server, this.options, connectors);
 
     // Core state
     this.winStreakTeam = null;
@@ -275,9 +276,6 @@ export default class TeamBalancer extends BasePlugin {
     this._flippedAfterScramble = false;
     this.lastScrambleTime = null;
 
-    this.pendingPlayerMoves = new Map();
-    this.scrambleRetryTimer = null;
-    this.activeScrambleSession = null;
     this._scrambleInProgress = false;
 
     // A single place to store bound listeners for easy cleanup
@@ -289,8 +287,7 @@ export default class TeamBalancer extends BasePlugin {
     this.listeners.onChatCommand = this.onChatCommand.bind(this);
     this.listeners.onScrambleCommand = this.onScrambleCommand.bind(this);
     this.listeners.onChatMessage = this.onChatMessage.bind(this);
-    // Explicitly bind processScrambleRetries to ensure 'this' context
-    this.listeners.processScrambleRetries = this.processScrambleRetries.bind(this);
+    // processScrambleRetries moved to SwapExecutor; no binding needed here
 
     this._gameInfoPollingInterval = null;
     this.gameModeCached = null;
@@ -309,7 +306,23 @@ export default class TeamBalancer extends BasePlugin {
 
   async mount() {
     this.logDebug('Mounting plugin and adding listeners.');
-    await this.prepareToMount();
+    // Initialize database helper and load state
+    try {
+      const dbState = await this.db.initDB(this.log);
+      if (dbState && !dbState.isStale) {
+        this.winStreakTeam = dbState.winStreakTeam;
+        this.winStreakCount = dbState.winStreakCount;
+        this.lastSyncTimestamp = dbState.lastSyncTimestamp;
+        this.lastScrambleTime = dbState.lastScrambleTime;
+        this.logDebug(`[DB] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}`);
+      } else if (dbState) {
+        this.logDebug('[DB] State stale; resetting.');
+        this.lastScrambleTime = dbState.lastScrambleTime;
+        await this.db.saveState(null, 0, this.log);
+      }
+    } catch (err) {
+      this.logWarning(`[DB] mount/initDB failed: ${err.message}`);
+    }
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.on('NEW_GAME', this.listeners.onNewGame);
     this.server.on('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
@@ -472,87 +485,7 @@ export default class TeamBalancer extends BasePlugin {
     return abbreviations;
   }
 
-  // ╔═══════════════════════════════════════╗
-  // ║      DATABASE & STATE PERSISTENCE     ║
-  // ╚═══════════════════════════════════════╝
-
-  async prepareToMount() {
-    try {
-      this.TeamBalancerStateModel = this.sequelize.define(
-        'TeamBalancerState',
-        {
-          id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: false, defaultValue: 1 },
-          winStreakTeam: { type: DataTypes.INTEGER, allowNull: true },
-          winStreakCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-          lastSyncTimestamp: { type: DataTypes.BIGINT, allowNull: true },
-          lastScrambleTime: { type: DataTypes.BIGINT, allowNull: true }
-        },
-        { timestamps: false, tableName: 'TeamBalancerState' }
-      );
-
-      await this.TeamBalancerStateModel.sync({ alter: true });
-
-      const [record] = await this.TeamBalancerStateModel.findOrCreate({
-        where: { id: 1 },
-        defaults: {
-          winStreakTeam: null,
-          winStreakCount: 0,
-          lastSyncTimestamp: Date.now(),
-          lastScrambleTime: null
-        }
-      });
-
-      this.stateRecord = record;
-
-      const staleCutoff = 2.5 * 60 * 60 * 1000;
-      const isStale =
-        !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > staleCutoff;
-
-      if (!isStale) {
-        this.winStreakTeam = record.winStreakTeam;
-        this.winStreakCount = record.winStreakCount;
-        this.lastSyncTimestamp = record.lastSyncTimestamp;
-        this.lastScrambleTime = record.lastScrambleTime;
-        this.logDebug(
-          `[DB] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}`
-        );
-      } else {
-        this.logDebug('[DB] State stale; resetting.');
-        this.lastScrambleTime = record.lastScrambleTime;
-        await this.updateDBState(null, 0);
-      }
-    } catch (err) {
-      this.logWarning(`[DB] prepareToMount failed: ${err.message}`);
-    }
-  }
-
-  async updateDBState(team, count) {
-    try {
-      if (!this.stateRecord) return;
-      this.winStreakTeam = team;
-      this.winStreakCount = count;
-      this.lastSyncTimestamp = Date.now();
-      this.stateRecord.winStreakTeam = team;
-      this.stateRecord.winStreakCount = count;
-      this.stateRecord.lastSyncTimestamp = this.lastSyncTimestamp;
-      await this.stateRecord.save();
-      this.logDebug(`[DB] Updated: team=${team}, count=${count}`);
-    } catch (err) {
-      this.logWarning(`[DB] updateDBState failed: ${err.message}`);
-    }
-  }
-
-  async updateLastScrambleTime(timestamp) {
-    try {
-      if (!this.stateRecord) return;
-      this.lastScrambleTime = timestamp;
-      this.stateRecord.lastScrambleTime = timestamp;
-      await this.stateRecord.save();
-      this.logDebug(`[DB] Updated lastScrambleTime: ${timestamp}`);
-    } catch (err) {
-      this.logWarning(`[DB] updateLastScrambleTime failed: ${err.message}`);
-    }
-  }
+  // Database operations moved into tb-database.js (TBDatabase)
 
   // ╔═══════════════════════════════════════╗
   // ║         ROUND EVENT HANDLERS          ║
@@ -574,16 +507,30 @@ export default class TeamBalancer extends BasePlugin {
       // ... (rest of the onNewGame function remains unchanged)
       // Squad servers swap sides between games, so winning team IDs flip.
       // This flip maintains streak continuity and prevents incorrect resets.
-      await this.updateDBState(
-        this.winStreakTeam === 1 ? 2 : this.winStreakTeam === 2 ? 1 : null,
-        this.winStreakCount
-      );
+      try {
+        const flippedTeam = this.winStreakTeam === 1 ? 2 : this.winStreakTeam === 2 ? 1 : null;
+        const dbRes = await this.db.saveState(flippedTeam, this.winStreakCount, this.log);
+        if (dbRes) {
+          this.winStreakTeam = dbRes.winStreakTeam;
+          this.winStreakCount = dbRes.winStreakCount;
+          this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
+        }
+      } catch (err) {
+        this.logWarning(`[DB] onNewGame saveState failed: ${err.message}`);
+      }
     } catch (err) {
       this.log.error(`[TeamBalancer] Error in onNewGame: ${err.message}`);
       // Fallback: Attempt to reset state to prevent cascading issues
       this.winStreakTeam = null;
       this.winStreakCount = 0;
-      await this.updateDBState(null, 0);
+      try {
+        const dbRes = await this.db.saveState(null, 0, this.log);
+        this.winStreakTeam = null;
+        this.winStreakCount = 0;
+        if (dbRes) this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
+      } catch (err) {
+        this.logWarning(`[DB] onNewGame fallback saveState failed: ${err.message}`);
+      }
       this._scrambleInProgress = false;
       this._scramblePending = false;
       this.cleanupScrambleTracking();
@@ -741,10 +688,17 @@ export default class TeamBalancer extends BasePlugin {
         await this.resetStreak('Streak broken by opposing team');
       }
 
-      await this.updateDBState(winnerID, nextStreakCount);
-      this.logDebug(
-        `New win streak started: team ${this.winStreakTeam}, count ${this.winStreakCount}`
-      );
+      try {
+        const dbRes = await this.db.saveState(winnerID, nextStreakCount, this.log);
+        if (dbRes) {
+          this.winStreakTeam = dbRes.winStreakTeam;
+          this.winStreakCount = dbRes.winStreakCount;
+          this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
+        }
+        this.logDebug(`New win streak started: team ${this.winStreakTeam}, count ${this.winStreakCount}`);
+      } catch (err) {
+        this.logWarning(`[DB] saveState failed: ${err.message}`);
+      }
 
       const scrambleComing = this.winStreakCount >= this.options.maxWinStreak;
       this.logDebug(
@@ -815,9 +769,16 @@ export default class TeamBalancer extends BasePlugin {
     }
   }
 
-  resetStreak(reason = 'unspecified') {
+  async resetStreak(reason = 'unspecified') {
     this.logDebug(`Resetting streak: ${reason}`);
-    this.updateDBState(null, 0);
+    try {
+      const dbRes = await this.db.saveState(null, 0, this.log);
+      this.winStreakTeam = null;
+      this.winStreakCount = 0;
+      if (dbRes) this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
+    } catch (err) {
+      this.logWarning(`[DB] resetStreak saveState failed: ${err.message}`);
+    }
     this._scramblePending = false;
   }
 
@@ -1033,7 +994,12 @@ export default class TeamBalancer extends BasePlugin {
         }
         const scrambleTimestamp = Date.now();
         this.lastScrambleTime = scrambleTimestamp;
-        await this.updateLastScrambleTime(scrambleTimestamp);
+        try {
+          const res = await this.db.saveScrambleTime(scrambleTimestamp, this.log);
+          if (res && res.lastScrambleTime) this.lastScrambleTime = res.lastScrambleTime;
+        } catch (err) {
+          this.logWarning(`[DB] saveScrambleTime failed: ${err.message}`);
+        }
         await this.resetStreak('Post-scramble cleanup');
       } else {
         this.log.info(msg);
@@ -1096,222 +1062,33 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   async waitForScrambleToFinish(timeoutMs = 10000, intervalMs = 100) {
-    const start = Date.now();
-
-    while (this.pendingPlayerMoves.size > 0) {
-      // Check if there are still pending moves
-      if (Date.now() - start > timeoutMs) {
-        this.logWarning(
-          'Timeout waiting for scramble to finish. Some player moves may still be pending.'
-        );
-        break; // Break the loop, don't throw, let the process continue
-      }
-      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    if (this.swapExecutor) {
+      await this.swapExecutor.waitForCompletion(timeoutMs, intervalMs);
+    } else {
+      this.logDebug('No swapExecutor present; nothing to wait for.');
     }
     this.logDebug('All player moves processed or timeout reached.');
   }
 
-  // ╔═══════════════════════════════════════╗
-  // ║      RELIABLE PLAYER MOVE SYSTEM      ║
-  // ╚═══════════════════════════════════════╝
-
+  // Swap execution delegated to SwapExecutor for clarity and modularity.
   async reliablePlayerMove(steamID, targetTeamID, isSimulated = false) {
     if (isSimulated) {
-      this.logDebug(`[Dry Run] Would queue player move for ${steamID} to team ${targetTeamID}`);
+      this.logDebug?.(`[Dry Run] Would queue player move for ${steamID} to team ${targetTeamID}`);
       return;
     }
 
-    this.pendingPlayerMoves.set(steamID, {
-      targetTeamID: targetTeamID,
-      attempts: 0,
-      startTime: Date.now()
-    });
-
-    this.logDebug(`Queued player move for ${steamID} to team ${targetTeamID}`);
-
-    if (!this.scrambleRetryTimer) {
-      this.startScrambleMonitoring();
-    }
-  }
-
-  startScrambleMonitoring() {
-    this.logDebug('Starting scramble monitoring system');
-    this.activeScrambleSession = {
-      startTime: Date.now(),
-      totalMoves: this.pendingPlayerMoves.size,
-      completedMoves: 0,
-      failedMoves: 0
-    };
-
-    this.scrambleRetryTimer = setInterval(async () => {
-      // Wrap the interval callback in a try-catch to prevent it from crashing the whole process
-      try {
-        // Use the bound method from this.listeners
-        await this.listeners.processScrambleRetries();
-      } catch (err) {
-        // Defensive check: ensure this.log exists before using it
-        if (this.log && typeof this.log.error === 'function') {
-          this.log.error(`[TeamBalancer] Error in scramble retry interval: ${err.message}`);
-        } else {
-          console.error(
-            `[TeamBalancer] Critical error in scramble retry interval, logger unavailable: ${err.message}`
-          );
-        }
-        // Attempt to clean up if the interval itself is failing repeatedly
-        this.completeScrambleSession();
-      }
-    }, this.options.changeTeamRetryInterval);
-
-    // The overall timeout for the scramble session, after which we give up on remaining moves
-    setTimeout(() => {
-      this.completeScrambleSession();
-    }, this.options.maxScrambleCompletionTime);
-  }
-
-  async processScrambleRetries() {
-    const now = Date.now();
-    const playersToRemove = [];
-
-    // Relying on SquadJS's internal player list update mechanism.
-    const currentServerPlayers = this.server.players;
-
-    for (const [steamID, moveData] of this.pendingPlayerMoves.entries()) {
-      // Each iteration should be robust
-      try {
-        if (now - moveData.startTime > this.options.maxScrambleCompletionTime) {
-          this.logWarning(
-            `Player move timeout exceeded for ${steamID} after ${this.options.maxScrambleCompletionTime}ms, giving up`
-          );
-          this.logDebug(
-            `Player ${steamID} move history: ${moveData.attempts} attempts, target team ${moveData.targetTeamID}`
-          );
-          this.activeScrambleSession.failedMoves++;
-          playersToRemove.push(steamID);
-          continue;
-        }
-
-        const player = currentServerPlayers.find((p) => p.steamID === steamID);
-        if (!player) {
-          this.logDebug(
-            `Player ${steamID} no longer on server, removing from move queue (was targeting team ${moveData.targetTeamID})`
-          );
-          // If player left, consider the move "completed" in terms of our responsibility
-          this.activeScrambleSession.completedMoves++;
-          playersToRemove.push(steamID);
-          continue;
-        }
-
-        // Added debug log to show current player team ID
-        this.logDebug(
-          `Checking player ${steamID} (${player.name}): Current Team = ${player.teamID}, Target Team = ${moveData.targetTeamID}`
-        );
-
-        moveData.attempts++;
-        const maxRconAttempts = 5;
-
-        if (moveData.attempts <= maxRconAttempts) {
-          this.logDebug(
-            `Attempting move for ${steamID} (${player.name}) from team ${player.teamID} to team ${moveData.targetTeamID} (attempt ${moveData.attempts}/${maxRconAttempts})`
-          );
-
-          try {
-            await this.server.rcon.switchTeam(steamID, moveData.targetTeamID);
-            this.logDebug(
-              `RCON switchTeam command sent for ${steamID} (${player.name}) to team ${moveData.targetTeamID}. Assuming success for this attempt.`
-            );
-            // Assume success after sending the RCON command without error
-            this.activeScrambleSession.completedMoves++;
-            playersToRemove.push(steamID);
-            if (this.options.warnOnSwap) {
-              try {
-                await this.server.rcon.warn(steamID, this.RconMessages.playerScrambledWarning); // Use the new succinct message
-              } catch (err) {
-                this.logDebug(`Failed to send move warning to ${steamID} (${player.name}):`, err);
-              }
-            }
-          } catch (err) {
-            this.logWarning(
-              `✗ Move attempt ${moveData.attempts}/${maxRconAttempts} failed for player ${steamID} (${player.name}) to team ${moveData.targetTeamID}:`,
-              err.message || err
-            );
-
-            if (moveData.attempts >= maxRconAttempts) {
-              this.logWarning(
-                `✗ FINAL FAILURE: Player ${steamID} (${player.name}) could not be moved to team ${moveData.targetTeamID} after ${maxRconAttempts} attempts`
-              );
-              this.logDebug(
-                `Failed player details: Currently on team ${player.teamID}, squad ${player.squadID}, role ${player.role}`
-              );
-              this.activeScrambleSession.failedMoves++;
-              playersToRemove.push(steamID);
-            }
-          }
-        } else {
-          this.logDebug(
-            `Player ${steamID} has exceeded max RCON attempts, giving up on this move.`
-          );
-          // If max attempts reached and still not moved (based on previous logic, which we're changing),
-          // mark as failed and remove. This path should now only be hit if the RCON command itself
-          // consistently failed for maxRconAttempts times.
-          this.activeScrambleSession.failedMoves++;
-          playersToRemove.push(steamID);
-        }
-      } catch (iterationErr) {
-        this.log.error(`Error processing move for player ${steamID}: ${iterationErr.message}`); // Removed redundant prefix
-        // If an unexpected error occurs during processing a single player,
-        // mark them as failed and remove them to prevent infinite loops.
-        this.activeScrambleSession.failedMoves++;
-        playersToRemove.push(steamID);
-      }
+    if (!this.swapExecutor) {
+      this.swapExecutor = new SwapExecutor(this.server, this.options, this.log, this.RconMessages);
     }
 
-    playersToRemove.forEach((steamID) => {
-      this.pendingPlayerMoves.delete(steamID);
-    });
-
-    if (this.pendingPlayerMoves.size === 0) {
-      this.logDebug('All player moves completed, finishing scramble session immediately');
-      this.completeScrambleSession();
-    }
-  }
-
-  completeScrambleSession() {
-    if (!this.activeScrambleSession) return;
-
-    const duration = Date.now() - this.activeScrambleSession.startTime;
-    const { totalMoves, completedMoves, failedMoves } = this.activeScrambleSession;
-
-    if (this.scrambleRetryTimer) {
-      clearInterval(this.scrambleRetryTimer);
-      this.scrambleRetryTimer = null;
-    }
-
-    const successRate = totalMoves > 0 ? Math.round((completedMoves / totalMoves) * 100) : 100;
-    // const completionReason =
-    //    this.pendingPlayerMoves.size === 0 ? 'all moves completed' : 'timeout reached';
-
-    // Trimmed this log for conciseness
-    console.log(
-      `[TeamBalancer] Scramble session completed in ${duration}ms: ` +
-        `${completedMoves}/${totalMoves} successful moves (${successRate}%), ${failedMoves} failed`
-    );
-
-    if (failedMoves > 0) {
-      this.logWarning(
-        `${failedMoves} players could not be moved during scramble. They may need manual intervention.`
-      );
-    }
-
-    this.cleanupScrambleTracking();
+    return this.swapExecutor.queueMove(steamID, targetTeamID, isSimulated);
   }
 
   cleanupScrambleTracking() {
-    if (this.scrambleRetryTimer) {
-      clearInterval(this.scrambleRetryTimer);
-      this.scrambleRetryTimer = null;
+    if (this.swapExecutor) {
+      this.swapExecutor.cleanup();
+      this.swapExecutor = null;
     }
-    this.pendingPlayerMoves.clear();
-    this.activeScrambleSession = null;
     this._scrambleInProgress = false;
   }
 }
