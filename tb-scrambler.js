@@ -22,7 +22,7 @@
  * the maximum player limit, prioritizing unassigned or unlocked players for movement.
  */
 
-import Logger from '../SquadJS-4.1.0/core/logger.js';
+import Logger from '../../core/logger.js';
 
 export const Scrambler = {
   async scrambleTeamsPreservingSquads({

@@ -1,4 +1,4 @@
-import Logger from '../SquadJS-4.1.0/core/logger.js';
+import Logger from '../../core/logger.js';
 
 export default class SwapExecutor {
   constructor(server, options = {}, RconMessages = {}) {

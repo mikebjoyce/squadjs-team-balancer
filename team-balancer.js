@@ -1,9 +1,9 @@
 import BasePlugin from './base-plugin.js';
-import Scrambler from './tb-scrambler.js';
-import SwapExecutor from './tb-swap-executor.js';
-import CommandHandlers from './tb-commands.js';
-import TBDatabase from './tb-database.js';
-import Logger from '../SquadJS-4.1.0/core/logger.js';
+import Scrambler from '../utils/tb-scrambler.js';
+import SwapExecutor from '../utils/tb-swap-executor.js';
+import CommandHandlers from '../utils/tb-commands.js';
+import TBDatabase from '../utils/tb-database.js';
+import Logger from '../../core/logger.js';
 
 /**
  * ╔═══════════════════════════════════════════════════════════════╗
@@ -190,6 +190,10 @@ export default class TeamBalancer extends BasePlugin {
       dryRunMode: {
         default: true,
         type: 'boolean'
+      },
+      devMode: {
+        default: false,
+        type: 'boolean'
       }
     };
   }
@@ -215,8 +219,9 @@ export default class TeamBalancer extends BasePlugin {
 
   constructor(server, options, connectors) {
     super(server, options, connectors);
-    this.devMode = false; // <-- DEV MODE TOGGLE
     CommandHandlers.register(this);
+    // Initialize executor immediately so commands (like status) can access pendingPlayerMoves without crashing
+    this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages);
     this.sequelize = connectors.sqlite;
     this.TeamBalancerStateModel = null;
     this.stateRecord = null;
@@ -232,7 +237,6 @@ export default class TeamBalancer extends BasePlugin {
     this._flippedAfterScramble = false;
     this.lastScrambleTime = null;
 
-    this._scrambleInProgress = false;
     this._scrambleInProgress = false;
     this.listeners = {};
     this.listeners.onRoundEnded = this.onRoundEnded.bind(this);
@@ -918,17 +922,12 @@ export default class TeamBalancer extends BasePlugin {
       return;
     }
 
-    if (!this.swapExecutor) {
-      this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages);
-    }
-
     return this.swapExecutor.queueMove(steamID, targetTeamID, isSimulated);
   }
 
   cleanupScrambleTracking() {
     if (this.swapExecutor) {
       this.swapExecutor.cleanup();
-      this.swapExecutor = null;
     }
     this._scrambleInProgress = false;
   }

@@ -1,10 +1,9 @@
 import Sequelize from 'sequelize';
-import Logger from '../SquadJS-4.1.0/core/logger.js';
+import Logger from '../../core/logger.js';
 const { DataTypes } = Sequelize;
 
-export default class TBDatabase extends BasePlugin {
+export default class TBDatabase {
   constructor(server, options, connectors) {
-    super(server, options, connectors);
     this.sequelize = connectors && connectors.sqlite;
     this.TeamBalancerStateModel = null;
   }
