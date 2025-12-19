@@ -219,7 +219,9 @@ export default class TeamBalancer extends BasePlugin {
 
   constructor(server, options, connectors) {
     super(server, options, connectors);
+
     CommandHandlers.register(this);
+
     // Initialize executor immediately so commands (like status) can access pendingPlayerMoves without crashing
     this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages);
     this.sequelize = connectors.sqlite;
@@ -244,6 +246,7 @@ export default class TeamBalancer extends BasePlugin {
     this.listeners.onChatCommand = this.onChatCommand.bind(this);
     this.listeners.onScrambleCommand = this.onScrambleCommand.bind(this);
     this.listeners.onChatMessage = this.onChatMessage.bind(this);
+    
     this._gameInfoPollingInterval = null;
     this.gameModeCached = null;
     this.cachedAbbreviations = {};
@@ -271,6 +274,7 @@ export default class TeamBalancer extends BasePlugin {
     this.server.on('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
     this.server.on('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.on('CHAT_MESSAGE', this.listeners.onChatMessage);
+
     this.startPollingGameInfo();
     this.startPollingTeamAbbreviations();
     this.validateOptions();
@@ -397,6 +401,10 @@ export default class TeamBalancer extends BasePlugin {
     Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Finished extraction. Result: ${JSON.stringify(abbreviations)}`);
     return abbreviations;
   }
+
+  // ╔═══════════════════════════════════════╗
+  // ║          COMMAND HANDLERS             ║
+  // ╚═══════════════════════════════════════╝
 
   // ╔═══════════════════════════════════════╗
   // ║         ROUND EVENT HANDLERS          ║

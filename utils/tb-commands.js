@@ -6,7 +6,8 @@ import Logger from '../../core/logger.js';
 
 const CommandHandlers = {
   register(tb) {
-    // Modified tb.respond to include player name and conditionally SteamID
+    console.log("Command Handlers are being registered");
+
     tb.respond = function (player, msg) {
       const playerName = player?.name || 'Unknown Player';
       const steamID = player?.steamID || 'Unknown SteamID';
@@ -15,7 +16,8 @@ const CommandHandlers = {
       if (this.options.debugLogs) {
         logMessage += ` (${steamID})`;
       }
-      logMessage += `]\n${msg}`; // Added newline here for better formatting
+      logMessage += `]\n${msg}`; 
+      console.log("msg received:" + logMessage);
       Logger.verbose('TeamBalancer', 2, logMessage);
 
       // The RCON warn part (if uncommented in future) would still use steamID
@@ -61,7 +63,7 @@ const CommandHandlers = {
       executeScrambleMessage: 'Executing scramble...',
       executeDryRunMessage: 'Dry Run: Simulating scramble...',
       scrambleCompleteMessage: ' Balance has been restored.',
-      playerScrambledWarning: "You've been scrambled.", // Changed message
+      playerScrambledWarning: "You've been scrambled.", 
 
       system: {
         trackingEnabled: 'Team Balancer has been enabled.',
