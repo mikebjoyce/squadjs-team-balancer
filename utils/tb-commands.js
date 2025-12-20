@@ -53,6 +53,8 @@ const CommandHandlers = {
 
       scrambleAnnouncement:
         '{team} has reached {count} dominant wins ({margin} tickets) | Scrambling in {delay}s...',
+      singleRoundScramble:
+        'Extreme ticket difference detected ({margin} tickets) | Scrambling in {delay}s...',
       manualScrambleAnnouncement:
         'Manual team balance triggered by admin | Scramble in {delay}s...',
       dryRunScrambleAnnouncement:
