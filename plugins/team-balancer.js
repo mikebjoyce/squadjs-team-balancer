@@ -86,10 +86,6 @@ export default class TeamBalancer extends BasePlugin {
         default: false,
         type: 'boolean'
       },      
-      dryRunMode: {
-        default: true,
-        type: 'boolean'
-      },
       devMode: {
         default: false,
         type: 'boolean'

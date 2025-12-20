@@ -57,11 +57,7 @@ const CommandHandlers = {
         'Extreme ticket difference detected ({margin} tickets) | Scrambling in {delay}s...',
       manualScrambleAnnouncement:
         'Manual team balance triggered by admin | Scramble in {delay}s...',
-      dryRunScrambleAnnouncement:
-        'Manual dry run scramble triggered by admin | Simulating scramble in {delay}s...',
       immediateManualScramble: 'Manual team balance triggered by admin | Scrambling teams...',
-      immediateDryRunScramble:
-        'Manual dry run scramble triggered by admin | Simulating immediate scramble...',
       executeScrambleMessage: 'Executing scramble...',
       executeDryRunMessage: 'Dry Run: Simulating scramble...',
       scrambleCompleteMessage: ' Balance has been restored.',
@@ -196,21 +192,6 @@ const CommandHandlers = {
             }
             break;
           }
-          case 'dryrun': {
-            const arg = args[1]?.toLowerCase();
-            if (arg === 'on') {
-              this.options.dryRunMode = true;
-              Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Dry run mode enabled by ${adminName}`);
-              this.respond(player, 'Dry run mode enabled.');
-            } else if (arg === 'off') {
-              this.options.dryRunMode = false;
-              Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Dry run mode disabled by ${adminName}`);
-              this.respond(player, 'Dry run mode disabled.');
-            } else {
-              this.respond(player, 'Usage: !teambalancer dryrun on|off');
-            }
-            break;
-          }
           case 'debug': {
             const arg = args[1]?.toLowerCase();
             if (arg === 'on') {
@@ -274,73 +255,6 @@ const CommandHandlers = {
             this.respond(player, statusMsg);
             break;
           }
-          case 'cancel': {
-            const cancelled = await this.cancelPendingScramble(steamID, player, false);
-            if (cancelled) {
-              Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Scramble cancelled by ${adminName}`);
-              this.respond(player, 'Pending scramble cancelled.');
-            } else if (this._scrambleInProgress) {
-              this.respond(player, 'Cannot cancel scramble - it is already executing.');
-            } else {
-              this.respond(player, 'No pending scramble to cancel.');
-            }
-            break;
-          }
-          case 'scramble': {
-            if (this._scramblePending || this._scrambleInProgress) {
-              const status = this._scrambleInProgress ? 'executing' : 'pending';
-              this.respond(
-                player,
-                `[WARNING] Scramble already ${status}. Use "!teambalancer cancel" to cancel pending scrambles.`
-              );
-              return;
-            }
-
-            const arg = args[1]?.toLowerCase();
-            const immediateExecution = arg === 'now';
-
-            if (!this.options.dryRunMode) {
-              // Live mode — broadcast to players
-              const broadcastMsg = immediateExecution
-                ? `${this.RconMessages.prefix} ${this.RconMessages.immediateManualScramble}`
-                : `${this.RconMessages.prefix} ${this.formatMessage(
-                    this.RconMessages.manualScrambleAnnouncement,
-                    { delay: this.options.scrambleAnnouncementDelay }
-                  )}`;
-
-              try {
-                await this.server.rcon.broadcast(broadcastMsg);
-              } catch (err) {
-                Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error broadcasting scramble message: ${err?.message || err}`);
-              }
-            }
-
-            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ${adminName} initiated a manual scramble${immediateExecution ? ' (NOW)' : ''}.`);
-            this.respond(
-              player,
-              immediateExecution
-                ? this.options.dryRunMode
-                  ? 'Initiating immediate dry run scramble...'
-                  : 'Initiating immediate scramble...'
-                : this.options.dryRunMode
-                ? 'Initiating dry run scramble with countdown...'
-                : 'Initiating manual scramble with countdown...'
-            );
-
-            const success = await this.initiateScramble(
-              this.options.dryRunMode,
-              immediateExecution,
-              steamID,
-              player
-            );
-            if (!success) {
-              this.respond(
-                player,
-                'Failed to initiate scramble - another scramble may be in progress.'
-              );
-            }
-            break;
-          }
           case 'diag': {
             if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Diagnostics command received.');
 
@@ -376,7 +290,6 @@ const CommandHandlers = {
                   : 'N/A'
               }`,
               `Max Win Streak Threshold: ${this.options.maxWinStreak} wins`,
-              `Dry Run Mode: ${this.options.dryRunMode ? 'ON' : 'OFF'}`,
               `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
               `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
               `Scramble System: ${scrambleInfo}`,
@@ -415,7 +328,7 @@ const CommandHandlers = {
           default: {
             this.respond(
               player,
-              'Invalid command. Usage: !teambalancer [on|off | dryrun on|off | status | scramble | cancel | diag | debug on|off]'
+              'Invalid command. Usage: !teambalancer [on|off | status | diag | debug on|off]'
             );
           }
         }
@@ -430,88 +343,87 @@ const CommandHandlers = {
       // This line ensures commands are only processed from admin chat when devMode is false
       if (!this.options.devMode && command.chat !== 'ChatAdmin') return;
 
-      const message = command.message;
+      const args = (command.message?.trim().toLowerCase().split(/\s+/) || []).filter(arg => arg);
+      const hasNow = args.includes('now');
+      const hasDry = args.includes('dry');
+      const isCancel = args.includes('cancel');
+
       const steamID = command.steamID;
       const player = command.player;
-
-      const subcommand = message?.trim().toLowerCase();
+      const adminName = player?.name || steamID;
 
       try {
-        if (subcommand === 'now') {
-          if (this._scrambleInProgress) {
-            this.respond(player, 'A scramble is already in progress.');
-            return;
+        // Handle cancel subcommand
+        if (isCancel) {
+          const cancelled = await this.cancelPendingScramble(steamID, player, false);
+          if (cancelled) {
+            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Scramble cancelled by ${adminName}`);
+            this.respond(player, 'Pending scramble cancelled.');
+          } else if (this._scrambleInProgress) {
+            this.respond(player, 'Cannot cancel scramble - it is already executing.');
+          } else {
+            this.respond(player, 'No pending scramble to cancel.');
           }
-          if (this._scramblePending) {
-            await this.cancelPendingScramble(steamID, player, true);
-          }
+          return;
+        }
 
-          if (!this.options.dryRunMode) {
-            const broadcastMsg = `${this.RconMessages.prefix} ${this.RconMessages.immediateManualScramble}`;
-            try {
-              await this.server.rcon.broadcast(broadcastMsg);
-            } catch (err) {
-              Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error broadcasting immediate scramble message: ${err?.message || err}`);
-            }
-          }
-
+        // Prevent duplicate scrambles
+        if (this._scramblePending || this._scrambleInProgress) {
+          const status = this._scrambleInProgress ? 'executing' : 'pending';
           this.respond(
             player,
-            this.options.dryRunMode
-              ? 'Initiating immediate dry run scramble...'
-              : 'Initiating immediate scramble...'
+            `[WARNING] Scramble already ${status}. Use "!scramble cancel" to cancel pending scrambles.`
           );
+          return;
+        }
 
-          const success = await this.initiateScramble(
-            this.options.dryRunMode,
-            true,
-            steamID,
-            player
-          );
-          if (!success) {
-            this.respond(player, 'Failed to initiate immediate scramble.');
+        // Dry runs are ALWAYS immediate (no countdown for simulations)
+        const immediate = hasDry || hasNow;
+        const isSimulated = hasDry;
+
+        // Broadcast only for LIVE scrambles (dry runs are silent to players)
+        if (!isSimulated) {
+          const broadcastMsg = immediate
+            ? `${this.RconMessages.prefix} ${this.RconMessages.immediateManualScramble}`
+            : `${this.RconMessages.prefix} ${this.formatMessage(
+                this.RconMessages.manualScrambleAnnouncement,
+                { delay: this.options.scrambleAnnouncementDelay }
+              )}`;
+
+          try {
+            await this.server.rcon.broadcast(broadcastMsg);
+          } catch (err) {
+            Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error broadcasting scramble message: ${err?.message || err}`);
           }
+        }
+
+        // Log action
+        const actionDesc = isSimulated 
+          ? `dry run scramble${immediate ? ' (immediate)' : ''}`
+          : `live scramble${immediate ? ' (immediate)' : ''}`;
+        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ${adminName} initiated ${actionDesc}`);
+
+        // Respond to admin
+        let responseMsg;
+        if (isSimulated) {
+          responseMsg = 'Initiating dry run scramble (immediate)...';
         } else {
-          if (this._scramblePending || this._scrambleInProgress) {
-            const status = this._scrambleInProgress ? 'executing' : 'pending';
-            this.respond(
-              player,
-              `[WARNING] Scramble already ${status}. Use "!scramble cancel" to cancel pending scrambles.`
-            );
-            return;
-          }
+          responseMsg = immediate 
+            ? 'Initiating immediate scramble...'
+            : 'Initiating scramble with countdown...';
+        }
+        this.respond(player, responseMsg);
 
-          if (!this.options.dryRunMode) {
-            const broadcastMsg = `${this.RconMessages.prefix} ${this.formatMessage(
-              this.RconMessages.manualScrambleAnnouncement,
-              { delay: this.options.scrambleAnnouncementDelay }
-            )}`;
-            try {
-              await this.server.rcon.broadcast(broadcastMsg);
-            } catch (err) {
-              Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error broadcasting scramble message: ${err?.message || err}`);
-            }
-          }
+        // Execute
+        const success = await this.initiateScramble(
+          isSimulated,  // dry flag determines simulation
+          immediate,    // dry runs force immediate execution
+          steamID,
+          player
+        );
 
-          this.respond(
-            player,
-            this.options.dryRunMode
-              ? 'Initiating dry run scramble with countdown...'
-              : 'Initiating manual scramble with countdown...'
-          );
-
-          const success = await this.initiateScramble(
-            this.options.dryRunMode,
-            false,
-            steamID,
-            player
-          );
-          if (!success) {
-            this.respond(
-              player,
-              'Failed to initiate scramble - another scramble may be in progress.'
-            );
-          }
+        if (!success) {
+          this.respond(player, 'Failed to initiate scramble - another scramble may be in progress.');
         }
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error processing scramble command: ${err?.message || err}`);
