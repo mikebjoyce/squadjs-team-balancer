@@ -1,4 +1,110 @@
+/**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║                      TEAM BALANCER PLUGIN                     ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * ─── COMMAND LIST ───────────────────────────────────────────────
+ *
+ * Public Commands:
+ * !teambalancer                  → View current win streak and status.
+ *
+ * Admin Commands:
+ * !teambalancer status           → View win streak and plugin status.
+ * !teambalancer diag             → Runs diagnostic with dry-run scrambles.
+ * !teambalancer on               → Enable win streak tracking.
+ * !teambalancer off              → Disable win streak tracking.
+ * !teambalancer debug on|off     → Enable/disable debug logging.
+ *
+ * !scramble                      → Manually trigger scramble with countdown.
+ * !scramble now                  → Immediate scramble (no countdown).
+ * !scramble dry                  → Dry-run scramble (simulation only).
+ * !scramble cancel               → Cancel pending scramble countdown.
+ *
+ * ─── CONFIGURATION OPTIONS ──────────────────────────────────────
+ *
+ * Core Settings:
+ * database                       - The Sequelize connector for persistent data storage.
+ * enableWinStreakTracking        - Enable/disable automatic win streak tracking.
+ * maxWinStreak                   - Number of dominant wins to trigger a scramble.
+ * enableSingleRoundScramble      - Enable scramble if a single round ticket margin is huge.
+ * singleRoundScrambleThreshold   - Ticket margin to trigger single-round scramble.
+ * minTicketsToCountAsDominantWin - Min ticket diff for a dominant win (Standard).
+ * invasionAttackTeamThreshold    - Ticket diff for Attackers to be dominant (Invasion).
+ * invasionDefenceTeamThreshold   - Ticket diff for Defenders to be dominant (Invasion).
+ *
+ * Scramble Execution:
+ * scrambleAnnouncementDelay      - Seconds before scramble executes after announcement.
+ * scramblePercentage             - % of players to move (0.0 - 1.0).
+ * changeTeamRetryInterval        - Retry interval (ms) for player swaps.
+ * maxScrambleCompletionTime      - Max time (ms) for all swaps to complete.
+ * warnOnSwap                     - Warn players when swapped.
+ *
+ * Messaging & Display:
+ * showWinStreakMessages          - Broadcast win streak messages.
+ * useGenericTeamNamesInBroadcasts - Use "Team 1"/"Team 2" instead of faction names.
+ *
+ * Discord Integration:
+ * discordClient                  - Discord connector for admin commands.
+ * discordChannelID               - Channel ID for admin commands and logs.
+ * discordAdminRoleID             - Role ID for admin permissions (empty = all in channel).
+ * mirrorRconBroadcasts           - Mirror RCON broadcasts to Discord.
+ * postScrambleDetails            - Post detailed swap plans to Discord.
+ *
+ * Debug & Dev:
+ * debugLogs                      - Enable verbose console logging.
+ * devMode                        - Enable dev mode.
+ *
+ * ─── CONFIGURATION EXAMPLE ──────────────────────────────────────
+ 
+//1. Add connectors to the "connectors" object in config.json:
+ 
+"connectors": {
+  "sqlite": {
+    "dialect": "sqlite",
+    "storage": "squad-server.sqlite"
+  },
+  "discord": {
+    "connector": "discord",
+    "token": "YOUR_BOT_TOKEN"
+  }
+},
+
+// 2. Add the plugin configuration to the "plugins" array in config.json:
+
+{
+  "plugin": "TeamBalancer",
+  "enabled": true,
+  "database": "sqlite",
+  "enableWinStreakTracking": true,
+  "maxWinStreak": 2,
+  "enableSingleRoundScramble": false,
+  "singleRoundScrambleThreshold": 250,
+  "minTicketsToCountAsDominantWin": 150,
+  "invasionAttackTeamThreshold": 300,
+  "invasionDefenceTeamThreshold": 650,
+  "scrambleAnnouncementDelay": 12,
+  "scramblePercentage": 0.5,
+  "changeTeamRetryInterval": 200,
+  "maxScrambleCompletionTime": 15000,
+  "showWinStreakMessages": true,
+  "warnOnSwap": true,
+  "useGenericTeamNamesInBroadcasts": false,
+  "debugLogs": false,
+  "discordClient": "discord",
+  "discordChannelID": "",
+  "discordAdminRoleID": "",
+  "mirrorRconBroadcasts": true,
+  "postScrambleDetails": true,
+  "devMode": false
+}
+
+ * ════════════════════════════════════════════════════════════════
+ */
+
+
 import BasePlugin from './base-plugin.js';
+import Discord from 'discord.js';
+import { DiscordHelpers } from '../utils/tb-discord-helpers.js';
 import Scrambler from '../utils/tb-scrambler.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
 import CommandHandlers from '../utils/tb-commands.js';
@@ -61,9 +167,9 @@ export default class TeamBalancer extends BasePlugin {
       scramblePercentage: {
         default: 0.5,
         type: 'number'
-      },      
+      },
       changeTeamRetryInterval: {
-        default: 200, // Reverted to original 200ms
+        default: 200,
         type: 'number'
       },      
       maxScrambleCompletionTime: {
@@ -85,6 +191,32 @@ export default class TeamBalancer extends BasePlugin {
       debugLogs: {
         default: false,
         type: 'boolean'
+      },
+      discordClient: {
+        required: false,
+        connector: 'discord',
+        description: 'Discord connector for admin commands and event logging.',
+        default: 'discord'
+      },
+      discordChannelID: {
+        required: false,
+        description: 'Discord channel ID for admin commands and event mirroring.',
+        default: ''
+      },
+      discordAdminRoleID: {
+        required: false,
+        description: 'Discord role ID for admin permissions. Leave empty to allow all users in channel.',
+        default: ''
+      },
+      mirrorRconBroadcasts: {
+        default: true,
+        type: 'boolean',
+        description: 'Mirror RCON broadcasts to Discord channel.'
+      },
+      postScrambleDetails: {
+        default: true,
+        type: 'boolean',
+        description: 'Post detailed scramble swap plans to Discord.'
       },      
       devMode: {
         default: false,
@@ -123,7 +255,7 @@ export default class TeamBalancer extends BasePlugin {
     CommandHandlers.register(this);
 
     // Initialize executor immediately so commands (like status) can access pendingPlayerMoves without crashing
-    this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages);
+    this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages, this);
     this.sequelize = connectors.sqlite;
     this.TeamBalancerStateModel = null;
     this.stateRecord = null;
@@ -146,6 +278,8 @@ export default class TeamBalancer extends BasePlugin {
     this.listeners.onChatCommand = this.onChatCommand.bind(this);
     this.listeners.onScrambleCommand = this.onScrambleCommand.bind(this);
     this.listeners.onChatMessage = this.onChatMessage.bind(this);
+    this.listeners.onDiscordMessage = this.onDiscordMessage.bind(this);
+    this.discordChannel = null;
     
     this._gameInfoPollingInterval = null;
     this.gameModeCached = null;
@@ -169,6 +303,17 @@ export default class TeamBalancer extends BasePlugin {
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] mount/initDB failed: ${err.message}`);
     }
+
+    if (this.options.discordClient && this.options.discordChannelID) {
+      try {
+        this.discordChannel = await this.options.discordClient.channels.fetch(this.options.discordChannelID);
+        Logger.verbose('TeamBalancer', 2, `Discord channel connected: ${this.discordChannel.name}`);
+        this.options.discordClient.on('message', this.listeners.onDiscordMessage);
+      } catch (err) {
+        Logger.verbose('TeamBalancer', 1, `Failed to fetch Discord channel: ${err.message}`);
+      }
+    }
+
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.on('NEW_GAME', this.listeners.onNewGame);
     this.server.on('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
@@ -187,6 +332,10 @@ export default class TeamBalancer extends BasePlugin {
     this.server.removeListener('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
     this.server.removeListener('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.removeListener('CHAT_MESSAGE', this.listeners.onChatMessage);
+
+    if (this.options.discordClient && this.listeners.onDiscordMessage) {
+      this.options.discordClient.removeListener('message', this.listeners.onDiscordMessage);
+    }
 
     if (this._scrambleTimeout) clearTimeout(this._scrambleTimeout);
     if (this._scrambleCountdownTimeout) clearTimeout(this._scrambleCountdownTimeout);
@@ -307,6 +456,106 @@ export default class TeamBalancer extends BasePlugin {
   // ║          COMMAND HANDLERS             ║
   // ╚═══════════════════════════════════════╝
 
+  async onDiscordMessage(message) {
+    if (message.author.bot) return;
+    if (message.channel.id !== this.options.discordChannelID) return;
+
+    const content = message.content.trim();
+    if (!content.startsWith('!teambalancer') && !content.startsWith('!scramble')) return;
+
+    if (!this.checkDiscordAdminPermission(message.member)) {
+      await message.reply('❌ You do not have permission to use this command.');
+      return;
+    }
+
+    if (content.startsWith('!teambalancer')) {
+      await this.handleDiscordTeamBalancerCommand(message);
+    } else if (content.startsWith('!scramble')) {
+      await this.handleDiscordScrambleCommand(message);
+    }
+  }
+
+  checkDiscordAdminPermission(member) {
+    if (!this.options.discordAdminRoleID) return true;
+    return member.roles.cache.has(this.options.discordAdminRoleID);
+  }
+
+  async handleDiscordTeamBalancerCommand(message) {
+    const args = message.content.replace(/^!teambalancer\s*/i, '').trim().split(/\s+/);
+    const subcommand = args[0]?.toLowerCase();
+
+    switch (subcommand) {
+      case 'status':
+        await DiscordHelpers.sendDiscordMessage(message.channel, DiscordHelpers.buildStatusEmbed(this));
+        break;
+      case 'diag':
+        await DiscordHelpers.sendDiscordMessage(message.channel, DiscordHelpers.buildDiagEmbed(this));
+        break;
+      case 'on':
+      case 'off':
+        await this.discordCommandToggle(message, subcommand);
+        break;
+      case 'debug':
+        await this.discordCommandDebug(message, args[1]);
+        break;
+      default:
+        await message.reply('Invalid command. Use: `status`, `diag`, `on`, `off`, `debug on|off`');
+    }
+  }
+
+  async handleDiscordScrambleCommand(message) {
+    const args = message.content.replace(/^!scramble\s*/i, '').trim().toLowerCase().split(/\s+/).filter(a => a);
+    const hasNow = args.includes('now');
+    const hasDry = args.includes('dry');
+    const isCancel = args.includes('cancel');
+
+    if (isCancel) {
+      const cancelled = await this.cancelPendingScramble(null, null, false);
+      if (cancelled) await message.reply('✅ Pending scramble cancelled.');
+      else if (this._scrambleInProgress) await message.reply('⚠️ Cannot cancel scramble - it is already executing.');
+      else await message.reply('⚠️ No pending scramble to cancel.');
+    } else {
+      if (this._scramblePending || this._scrambleInProgress) {
+        const status = this._scrambleInProgress ? 'executing' : 'pending';
+        await message.reply(`⚠️ Scramble already ${status}. Use \`!scramble cancel\` to cancel.`);
+        return;
+      }
+      const actionDesc = hasDry ? 'dry run scramble (immediate)' : hasNow ? 'immediate scramble' : 'scramble with countdown';
+      await message.reply(`🔄 Initiating ${actionDesc}...`);
+      const success = await this.initiateScramble(hasDry, hasDry || hasNow, null, null);
+      if (!success) await message.reply('❌ Failed to initiate scramble.');
+    }
+  }
+
+  async discordCommandToggle(message, state) {
+    if (state === 'on') {
+      if (!this.manuallyDisabled) return message.reply('✅ Win streak tracking is already enabled.');
+      this.manuallyDisabled = false;
+      await message.reply('✅ Win streak tracking enabled.');
+      await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingEnabled}`);
+      await this.mirrorRconToDiscord(this.RconMessages.system.trackingEnabled, 'info');
+    } else {
+      if (this.manuallyDisabled) return message.reply('✅ Win streak tracking is already disabled.');
+      this.manuallyDisabled = true;
+      await message.reply('✅ Win streak tracking disabled.');
+      await this.resetStreak('Manual disable via Discord');
+      await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`);
+      await this.mirrorRconToDiscord(this.RconMessages.system.trackingDisabled, 'info');
+    }
+  }
+
+  async discordCommandDebug(message, arg) {
+    if (arg === 'on') {
+      this.options.debugLogs = true;
+      await message.reply('✅ Debug logging enabled.');
+    } else if (arg === 'off') {
+      this.options.debugLogs = false;
+      await message.reply('✅ Debug logging disabled.');
+    } else {
+      await message.reply('Usage: !teambalancer debug on|off');
+    }
+  }
+
   // ╔═══════════════════════════════════════╗
   // ║         ROUND EVENT HANDLERS          ║
   // ╚═══════════════════════════════════════╝
@@ -355,6 +604,11 @@ export default class TeamBalancer extends BasePlugin {
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
 
+      if (!this.options.enableWinStreakTracking || this.manuallyDisabled) {
+        Logger.verbose('TeamBalancer', 4, 'Win streak tracking disabled, skipping round evaluation.');
+        return;
+      }
+
       this.stopPollingGameInfo();
       this.stopPollingTeamAbbreviations();
 
@@ -383,6 +637,7 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast single-round scramble message: ${broadcastErr.message}`);
         }
+        await this.mirrorRconToDiscord(message, 'warning');
         this.initiateScramble(false, false);
         return;
       }
@@ -492,6 +747,7 @@ export default class TeamBalancer extends BasePlugin {
           } catch (broadcastErr) {
             Logger.verbose('TeamBalancer', 1, `Failed to broadcast non-dominant message: ${broadcastErr.message}`);
           }
+          await this.mirrorRconToDiscord(message, 'info');
         }
         return await this.resetStreak(`Non-dominant win by team ${winnerID}`);
       }
@@ -515,6 +771,10 @@ export default class TeamBalancer extends BasePlugin {
         Logger.verbose('TeamBalancer', 4, `New win streak started: team ${this.winStreakTeam}, count ${this.winStreakCount}`);
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[DB] saveState failed: ${err.message}`);
+      }
+
+      if (this.discordChannel && isDominant) {
+        await DiscordHelpers.sendDiscordMessage(this.discordChannel, DiscordHelpers.buildWinStreakEmbed(teamNames.winnerName, this.winStreakCount, margin, true));
       }
 
       const scrambleComing = this.winStreakCount >= this.options.maxWinStreak;
@@ -546,6 +806,7 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast dominant win message: ${broadcastErr.message}`);
         }
+        await this.mirrorRconToDiscord(message, 'info');
       }
 
       Logger.verbose('TeamBalancer', 4, `Evaluating scramble trigger: streakCount=${this.winStreakCount}, streakTeam=${this.winStreakTeam}, margin=${margin}`);
@@ -566,6 +827,10 @@ export default class TeamBalancer extends BasePlugin {
           await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${message}`);
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble announcement: ${broadcastErr.message}`);
+        }
+        await this.mirrorRconToDiscord(`${this.RconMessages.prefix} ${message}`, 'warning');
+        if (this.discordChannel) {
+          await DiscordHelpers.sendDiscordMessage(this.discordChannel, DiscordHelpers.buildScrambleTriggeredEmbed('Win streak threshold reached', teamNames.winnerName, this.winStreakCount, this.options.scrambleAnnouncementDelay));
         }
         this.initiateScramble(false, false);
       }
@@ -725,6 +990,7 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble execution message: ${broadcastErr.message}`);          
         }
+        await this.mirrorRconToDiscord(broadcastMessage, 'scramble');
       }
 
       const { squads: transformedSquads, players: transformedPlayers } = this.transformSquadJSData(
@@ -744,6 +1010,11 @@ export default class TeamBalancer extends BasePlugin {
 
       if (swapPlan && swapPlan.length > 0) {
         Logger.verbose('TeamBalancer', 2, `Dry run: Scrambler returned ${swapPlan.length} player moves.`);
+        
+        if (this.discordChannel && this.options.postScrambleDetails) {
+          await DiscordHelpers.sendDiscordMessage(this.discordChannel, await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this));
+        }
+
         if (!isSimulated) {          
           for (const move of swapPlan) {            
             await this.reliablePlayerMove(move.steamID, move.targetTeamID, isSimulated);
@@ -767,6 +1038,7 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble complete message: ${broadcastErr.message}`);
         }
+        await this.mirrorRconToDiscord(msg, 'success');
         const scrambleTimestamp = Date.now();
         this.lastScrambleTime = scrambleTimestamp;
         try {
@@ -827,6 +1099,7 @@ export default class TeamBalancer extends BasePlugin {
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble cancellation message: ${err.message}`);
       }
+      await this.mirrorRconToDiscord(msg, 'info');
     }
 
     return true;
@@ -855,5 +1128,21 @@ export default class TeamBalancer extends BasePlugin {
       this.swapExecutor.cleanup();
     }
     this._scrambleInProgress = false;
+  }
+
+  async mirrorRconToDiscord(message, type = 'info') {
+    if (!this.discordChannel || !this.options.mirrorRconBroadcasts) return;
+    const colors = {
+      info: '#3498db',
+      success: '#2ecc71',
+      warning: '#f39c12',
+      error: '#e74c3c',
+      scramble: '#9b59b6'
+    };
+    const embed = new Discord.MessageEmbed()
+      .setColor(colors[type] || colors.info)
+      .setDescription(`📢 **Server Broadcast**\n${message}`)
+      .setTimestamp();
+    await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
   }
 }

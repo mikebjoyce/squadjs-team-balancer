@@ -1,10 +1,12 @@
 import Logger from '../../core/logger.js';
+import { DiscordHelpers } from './tb-discord-helpers.js';
 
 export default class SwapExecutor {
-  constructor(server, options = {}, RconMessages = {}) {
+  constructor(server, options = {}, RconMessages = {}, teamBalancer = null) {
     this.server = server;
     this.options = options;
     this.RconMessages = RconMessages;
+    this.teamBalancer = teamBalancer;
 
     this.pendingPlayerMoves = new Map();
     this.scrambleRetryTimer = null;
@@ -131,6 +133,10 @@ export default class SwapExecutor {
 
     if (failedMoves > 0) {
       Logger.verbose('TeamBalancer', 1, `[SwapExecutor] ${failedMoves} players failed to move; manual action may be required.`);
+    }
+
+    if (this.teamBalancer && this.teamBalancer.discordChannel) {
+      DiscordHelpers.sendDiscordMessage(this.teamBalancer.discordChannel, DiscordHelpers.buildScrambleCompletedEmbed(totalMoves, completedMoves, failedMoves, duration));
     }
 
     this.pendingPlayerMoves.clear();

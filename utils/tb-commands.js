@@ -3,6 +3,8 @@
 // ╚═══════════════════════════════════════════════════════════════╝
 
 import Logger from '../../core/logger.js';
+import Discord from 'discord.js';
+import { DiscordHelpers } from './tb-discord-helpers.js';
 
 const CommandHandlers = {
   register(tb) {
@@ -172,6 +174,15 @@ const CommandHandlers = {
             } catch (err) {
               Logger.verbose('TeamBalancer', 1, `Failed to broadcast tracking enabled message: ${err.message}`);
             }
+            if (this.discordChannel) {
+              const embed = new Discord.MessageEmbed()
+                .setColor('#3498db')
+                .setTitle('🎮 In-Game Command: !teambalancer on')
+                .setDescription(`Executed by **${adminName}**`)
+                .addField('Response', 'Win streak tracking enabled.', false)
+                .setTimestamp();
+              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+            }
             break;
           }
           case 'off': {
@@ -190,6 +201,15 @@ const CommandHandlers = {
             } catch (err) {
               Logger.verbose('TeamBalancer', 1, `Failed to broadcast tracking disabled message: ${err.message}`);
             }
+            if (this.discordChannel) {
+              const embed = new Discord.MessageEmbed()
+                .setColor('#3498db')
+                .setTitle('🎮 In-Game Command: !teambalancer off')
+                .setDescription(`Executed by **${adminName}**`)
+                .addField('Response', 'Win streak tracking disabled.', false)
+                .setTimestamp();
+              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+            }
             break;
           }
           case 'debug': {
@@ -204,6 +224,15 @@ const CommandHandlers = {
               this.respond(player, 'Debug logging disabled.');
             } else {
               this.respond(player, 'Usage: !teambalancer debug on|off');
+            }
+            if (this.discordChannel) {
+              const embed = new Discord.MessageEmbed()
+                .setColor('#3498db')
+                .setTitle(`🎮 In-Game Command: !teambalancer debug ${arg}`)
+                .setDescription(`Executed by **${adminName}**`)
+                .addField('Response', `Debug logging ${arg === 'on' ? 'enabled' : 'disabled'}.`, false)
+                .setTimestamp();
+              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
             break;
           }
@@ -253,6 +282,15 @@ const CommandHandlers = {
             ].join('\n');
 
             this.respond(player, statusMsg);
+            if (this.discordChannel) {
+              const embed = new Discord.MessageEmbed()
+                .setColor('#3498db')
+                .setTitle('🎮 In-Game Command: !teambalancer status')
+                .setDescription(`Executed by **${adminName}**`)
+                .addField('Response', `\`\`\`\n${statusMsg}\n\`\`\``, false)
+                .setTimestamp();
+              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+            }
             break;
           }
           case 'diag': {
@@ -323,6 +361,15 @@ const CommandHandlers = {
               `------------------------------------------`
             ].join('\n');
             this.respond(player, diagMsg);
+            if (this.discordChannel) {
+              const embed = new Discord.MessageEmbed()
+                .setColor('#3498db')
+                .setTitle('🎮 In-Game Command: !teambalancer diag')
+                .setDescription(`Executed by **${adminName}**`)
+                .addField('Response', `\`\`\`\n${diagMsg}\n\`\`\``, false)
+                .setTimestamp();
+              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+            }
             break;
           }
           default: {
@@ -363,6 +410,15 @@ const CommandHandlers = {
             this.respond(player, 'Cannot cancel scramble - it is already executing.');
           } else {
             this.respond(player, 'No pending scramble to cancel.');
+          }
+          if (this.discordChannel) {
+            const embed = new Discord.MessageEmbed()
+              .setColor('#3498db')
+              .setTitle('🎮 In-Game Command: !scramble cancel')
+              .setDescription(`Executed by **${adminName}**`)
+              .addField('Response', cancelled ? 'Pending scramble cancelled.' : 'No pending scramble to cancel.', false)
+              .setTimestamp();
+            await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
           }
           return;
         }
@@ -411,6 +467,15 @@ const CommandHandlers = {
           responseMsg = immediate 
             ? 'Initiating immediate scramble...'
             : 'Initiating scramble with countdown...';
+        }
+        if (this.discordChannel) {
+          const embed = new Discord.MessageEmbed()
+            .setColor('#3498db')
+            .setTitle(`🎮 In-Game Command: !scramble ${immediate ? 'now' : ''} ${isSimulated ? 'dry' : ''}`)
+            .setDescription(`Executed by **${adminName}**`)
+            .addField('Response', responseMsg, false)
+            .setTimestamp();
+          await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
         }
         this.respond(player, responseMsg);
 
