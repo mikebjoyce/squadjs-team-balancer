@@ -265,6 +265,7 @@ export default class TeamBalancer extends BasePlugin {
     this.lastSyncTimestamp = null;
     this.manuallyDisabled = false;
 
+    this._isMounted = false;
     this._scramblePending = false;
     this._scrambleTimeout = null;
     this._scrambleCountdownTimeout = null;
@@ -286,6 +287,10 @@ export default class TeamBalancer extends BasePlugin {
     this.cachedAbbreviations = {};
   }
   async mount() {
+    if (this._isMounted) {
+      Logger.verbose('TeamBalancer', 1, 'Plugin already mounted, skipping duplicate mount attempt.');
+      return;
+    }
     if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Mounting plugin and adding listeners.');
     try {
       const dbState = await this.db.initDB();
@@ -314,6 +319,23 @@ export default class TeamBalancer extends BasePlugin {
       }
     }
 
+    this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
+    this.server.removeListener('NEW_GAME', this.listeners.onNewGame);
+    this.server.removeListener('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
+    this.server.removeListener('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
+    this.server.removeListener('CHAT_MESSAGE', this.listeners.onChatMessage);
+
+    if (this.options.debugLogs) {
+      const listenerCounts = {
+        ROUND_ENDED: this.server.listenerCount('ROUND_ENDED'),
+        NEW_GAME: this.server.listenerCount('NEW_GAME'),
+        'CHAT_COMMAND:teambalancer': this.server.listenerCount('CHAT_COMMAND:teambalancer'),
+        'CHAT_COMMAND:scramble': this.server.listenerCount('CHAT_COMMAND:scramble'),
+        CHAT_MESSAGE: this.server.listenerCount('CHAT_MESSAGE')
+      };
+      Logger.verbose('TeamBalancer', 4, `Listener counts before registration: ${JSON.stringify(listenerCounts)}`);
+    }
+
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.on('NEW_GAME', this.listeners.onNewGame);
     this.server.on('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
@@ -323,9 +345,14 @@ export default class TeamBalancer extends BasePlugin {
     this.startPollingGameInfo();
     this.startPollingTeamAbbreviations();
     this.validateOptions();
+    this._isMounted = true;
   }
 
   async unmount() {
+    if (!this._isMounted) {
+      Logger.verbose('TeamBalancer', 1, 'Plugin not mounted, skipping unmount.');
+      return;
+    }
     if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Unmounting plugin and removing listeners.');
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.removeListener('NEW_GAME', this.listeners.onNewGame);
@@ -343,6 +370,7 @@ export default class TeamBalancer extends BasePlugin {
     this.stopPollingGameInfo();
     this.stopPollingTeamAbbreviations();
     this._scrambleInProgress = false;
+    this._isMounted = false;
   }
 
   // ╔═══════════════════════════════════════╗
