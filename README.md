@@ -64,6 +64,8 @@ Add to your `config.json`:
   "database": "sqlite",
   "enableWinStreakTracking": true,
   "maxWinStreak": 2,
+  "enableSingleRoundScramble": false,
+  "singleRoundScrambleThreshold": 250,
   "minTicketsToCountAsDominantWin": 150,
   "invasionAttackTeamThreshold": 300,
   "invasionDefenceTeamThreshold": 650,
@@ -75,7 +77,12 @@ Add to your `config.json`:
   "warnOnSwap": true,
   "useGenericTeamNamesInBroadcasts": false,
   "debugLogs": false,
-  "dryRunMode": true
+  "discordClient": "discord",
+  "discordChannelID": "",
+  "discordAdminRoleID": "",
+  "mirrorRconBroadcasts": true,
+  "postScrambleDetails": true,
+  "devMode": false
 },
 ```
 
