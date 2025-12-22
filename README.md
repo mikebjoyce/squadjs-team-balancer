@@ -168,10 +168,11 @@ Set `devMode = true` in the constructor to allow commands from all chat (not jus
 
 `!teambalancer diag` provides:
 
--   Current plugin status
--   Team/squad distribution
--   3 dry-run scramble simulations
--   Debug logs (if enabled)
+-   **Self-Tests**: Database integrity check & live scramble simulation.
+-   **Plugin Status**: Version, active state, and debug logging mode.
+-   **Match Data**: Current win streak, game mode, and team names.
+-   **Population**: Player/Squad counts, team balance, and unassigned players.
+-   **Config Snapshot**: Active thresholds, scramble settings, and Discord options.
 
 ## Logging and Monitoring
 
