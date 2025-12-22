@@ -82,6 +82,8 @@ Add to your `config.json`:
   "discordAdminRoleID": "",
   "mirrorRconBroadcasts": true,
   "postScrambleDetails": true,
+  "requireScrambleConfirmation": true,
+  "scrambleConfirmationTimeout": 60,
   "devMode": false
 },
 ```
@@ -122,6 +124,7 @@ Admin Commands:
 !scramble                      → Manually trigger scramble with countdown.
 !scramble now                  → Immediate scramble (no countdown).
 !scramble dry                  → Dry-run scramble (simulation only).
+!scramble confirm              → Confirm a pending scramble request.
 !scramble cancel               → Cancel pending scramble countdown.
 ```
 
@@ -155,6 +158,8 @@ discordChannelID               - Channel ID for admin commands and logs.
 discordAdminRoleID             - Role ID for admin permissions (empty = all in channel).
 mirrorRconBroadcasts           - Mirror RCON broadcasts to Discord.
 postScrambleDetails            - Post detailed swap plans to Discord.
+requireScrambleConfirmation    - Require !scramble confirm before executing a scramble.
+scrambleConfirmationTimeout    - Time in seconds to wait for scramble confirmation.
 
 Debug & Dev:
 debugLogs                      - Enable verbose console logging.
