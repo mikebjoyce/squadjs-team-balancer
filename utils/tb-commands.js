@@ -7,7 +7,6 @@
  */
 
 import Logger from '../../core/logger.js';
-import Discord from 'discord.js';
 import { DiscordHelpers } from './tb-discord-helpers.js';
 import { TBDiagnostics } from './tb-diagnostics.js';
 
@@ -178,12 +177,13 @@ const CommandHandlers = {
               Logger.verbose('TeamBalancer', 1, `Failed to broadcast tracking enabled message: ${err.message}`);
             }
             if (this.discordChannel) {
-              const embed = new Discord.MessageEmbed()
-                .setColor('#3498db')
-                .setTitle('🎮 In-Game Command: !teambalancer on')
-                .setDescription(`Executed by **${adminName}**`)
-                .addField('Response', 'Win streak tracking enabled.', false)
-                .setTimestamp();
+              const embed = {
+                color: 0x3498db,
+                title: '🎮 In-Game Command: !teambalancer on',
+                description: `Executed by **${adminName}**`,
+                fields: [{ name: 'Response', value: 'Win streak tracking enabled.', inline: false }],
+                timestamp: new Date().toISOString()
+              };
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
             break;
@@ -205,12 +205,13 @@ const CommandHandlers = {
             }
             if (this.discordChannel) {
               try {
-                const embed = new Discord.MessageEmbed()
-                  .setColor('#3498db')
-                  .setTitle('🎮 In-Game Command: !teambalancer off')
-                  .setDescription(`Executed by **${adminName}**`)
-                  .addField('Response', 'Win streak tracking disabled.', false)
-                  .setTimestamp();
+                const embed = {
+                  color: 0x3498db,
+                  title: '🎮 In-Game Command: !teambalancer off',
+                  description: `Executed by **${adminName}**`,
+                  fields: [{ name: 'Response', value: 'Win streak tracking disabled.', inline: false }],
+                  timestamp: new Date().toISOString()
+                };
                 await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
               } catch (discordErr) {
                 Logger.verbose('TeamBalancer', 1, `Discord embed failed: ${discordErr.message}`);
@@ -233,12 +234,13 @@ const CommandHandlers = {
               this.respond(player, 'Usage: !teambalancer debug on|off');
             }
             if (this.discordChannel) {
-              const embed = new Discord.MessageEmbed()
-                .setColor('#3498db')
-                .setTitle(`🎮 In-Game Command: !teambalancer debug ${arg}`)
-                .setDescription(`Executed by **${adminName}**`)
-                .addField('Response', `Debug logging ${arg === 'on' ? 'enabled' : 'disabled'}.`, false)
-                .setTimestamp();
+              const embed = {
+                color: 0x3498db,
+                title: `🎮 In-Game Command: !teambalancer debug ${arg}`,
+                description: `Executed by **${adminName}**`,
+                fields: [{ name: 'Response', value: `Debug logging ${arg === 'on' ? 'enabled' : 'disabled'}.`, inline: false }],
+                timestamp: new Date().toISOString()
+              };
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
             break;
@@ -289,12 +291,13 @@ const CommandHandlers = {
 
             this.respond(player, statusMsg);
             if (this.discordChannel) {
-              const embed = new Discord.MessageEmbed()
-                .setColor('#3498db')
-                .setTitle('🎮 In-Game Command: !teambalancer status')
-                .setDescription(`Executed by **${adminName}**`)
-                .addField('Response', `\`\`\`\n${statusMsg}\n\`\`\``, false)
-                .setTimestamp();
+              const embed = {
+                color: 0x3498db,
+                title: '🎮 In-Game Command: !teambalancer status',
+                description: `Executed by **${adminName}**`,
+                fields: [{ name: 'Response', value: `\`\`\`\n${statusMsg}\n\`\`\``, inline: false }],
+                timestamp: new Date().toISOString()
+              };
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
             break;
@@ -368,7 +371,7 @@ const CommandHandlers = {
 
             if (this.discordChannel) {
               const embed = DiscordHelpers.buildDiagEmbed(this, results);
-              embed.setDescription(`Executed by **${adminName}**\n${embed.description}`);
+              embed.description = `Executed by **${adminName}**\n${embed.description}`;
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
             break;
@@ -413,12 +416,13 @@ const CommandHandlers = {
             this.respond(player, 'No pending scramble to cancel.');
           }
           if (this.discordChannel) {
-            const embed = new Discord.MessageEmbed()
-              .setColor('#3498db')
-              .setTitle('🎮 In-Game Command: !scramble cancel')
-              .setDescription(`Executed by **${adminName}**`)
-              .addField('Response', cancelled ? 'Pending scramble cancelled.' : 'No pending scramble to cancel.', false)
-              .setTimestamp();
+            const embed = {
+              color: 0x3498db,
+              title: '🎮 In-Game Command: !scramble cancel',
+              description: `Executed by **${adminName}**`,
+              fields: [{ name: 'Response', value: cancelled ? 'Pending scramble cancelled.' : 'No pending scramble to cancel.', inline: false }],
+              timestamp: new Date().toISOString()
+            };
             await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
           }
           return;
@@ -470,12 +474,13 @@ const CommandHandlers = {
             : 'Initiating scramble with countdown...';
         }
         if (this.discordChannel) {
-          const embed = new Discord.MessageEmbed()
-            .setColor('#3498db')
-            .setTitle(`🎮 In-Game Command: !scramble ${immediate ? 'now' : ''} ${isSimulated ? 'dry' : ''}`)
-            .setDescription(`Executed by **${adminName}**`)
-            .addField('Response', responseMsg, false)
-            .setTimestamp();
+          const embed = {
+            color: 0x3498db,
+            title: `🎮 In-Game Command: !scramble ${immediate ? 'now' : ''} ${isSimulated ? 'dry' : ''}`,
+            description: `Executed by **${adminName}**`,
+            fields: [{ name: 'Response', value: responseMsg, inline: false }],
+            timestamp: new Date().toISOString()
+          };
           await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
         }
         this.respond(player, responseMsg);

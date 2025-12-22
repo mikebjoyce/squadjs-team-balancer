@@ -144,7 +144,8 @@ export default class SwapExecutor {
     }
 
     if (this.teamBalancer && this.teamBalancer.discordChannel) {
-      DiscordHelpers.sendDiscordMessage(this.teamBalancer.discordChannel, DiscordHelpers.buildScrambleCompletedEmbed(totalMoves, completedMoves, failedMoves, duration));
+      const embed = DiscordHelpers.buildScrambleCompletedEmbed(totalMoves, completedMoves, failedMoves, duration);
+      DiscordHelpers.sendDiscordMessage(this.teamBalancer.discordChannel, { embeds: [embed] });
     }
 
     this.pendingPlayerMoves.clear();

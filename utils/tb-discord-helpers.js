@@ -8,11 +8,9 @@
  * Helper functions for Discord integration.
  *
  * COMPATIBILITY NOTE:
- * This module is written using Discord.js v13+ syntax (e.g., { embeds: [...] }).
- * However, it includes runtime compatibility checks to support Discord.js v12
- * by converting payloads to { embed: ... } when necessary.
+ * This module uses raw JavaScript objects for embeds to ensure compatibility
+ * across different Discord.js versions without importing the library directly.
  */
-import Discord from 'discord.js';
 import Logger from '../../core/logger.js';
 
 export const DiscordHelpers = {
@@ -37,18 +35,21 @@ export const DiscordHelpers = {
       ? new Date(tb.lastScrambleTime).toLocaleString()
       : 'Never';
 
-    const embed = new Discord.MessageEmbed()
-      .setColor('#3498db')
-      .setTitle('📊 TeamBalancer Status')
-      .setDescription('Current plugin state and configuration')
-      .addField('Version', tb.constructor.version || 'Unknown', true)
-      .addField('Plugin Status', effectiveStatus, true)
-      .addField('Win Streak', winStreakText, false)
-      .addField('Scramble State', scrambleInfo, true)
-      .addField('Last Scramble', lastScrambleText, true)
-      .addField('Scramble Pending', tb._scramblePending ? 'Yes' : 'No', true)
-      .addField('Scramble In Progress', tb._scrambleInProgress ? 'Yes' : 'No', true)
-      .setTimestamp();
+    const embed = {
+      color: 0x3498db,
+      title: '📊 TeamBalancer Status',
+      description: 'Current plugin state and configuration',
+      fields: [
+        { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
+        { name: 'Plugin Status', value: effectiveStatus, inline: true },
+        { name: 'Win Streak', value: winStreakText, inline: false },
+        { name: 'Scramble State', value: scrambleInfo, inline: true },
+        { name: 'Last Scramble', value: lastScrambleText, inline: true },
+        { name: 'Scramble Pending', value: tb._scramblePending ? 'Yes' : 'No', inline: true },
+        { name: 'Scramble In Progress', value: tb._scrambleInProgress ? 'Yes' : 'No', inline: true }
+      ],
+      timestamp: new Date().toISOString()
+    };
 
     return embed;
   },
@@ -68,55 +69,51 @@ export const DiscordHelpers = {
       : 'None';
 
     // Determine color based on diagnostics if present
-    let color = '#3498db';
+    let color = 0x3498db;
     if (diagnosticResults) {
-      color = diagnosticResults.every((r) => r.pass) ? '#2ecc71' : '#e74c3c';
+      color = diagnosticResults.every((r) => r.pass) ? 0x2ecc71 : 0xe74c3c;
     }
 
-    const embed = new Discord.MessageEmbed()
-      .setColor(color)
-      .setTitle('🩺 TeamBalancer Diagnostics')
-      .setTimestamp()
-      .setDescription(`**Plugin Status:** ${tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`);
+    const embed = {
+      color: color,
+      title: '🩺 TeamBalancer Diagnostics',
+      description: `**Plugin Status:** ${tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`,
+      fields: [],
+      timestamp: new Date().toISOString()
+    };
 
     if (diagnosticResults) {
       const dbRes = diagnosticResults.find((r) => r.name === 'Database');
       const scramRes = diagnosticResults.find((r) => r.name === 'Live Scramble Test');
       const diagText = `**DB:** [${dbRes?.message || 'N/A'}]\n**Scramble:** [${scramRes?.message || 'N/A'}]`;
-      embed.addField('🔍 Self-Test Results', diagText, false);
+      embed.fields.push({ name: '🔍 Self-Test Results', value: diagText, inline: false });
     }
 
-    embed.addField('Version', tb.constructor.version || 'Unknown', true)
-      .addField('Win Streak', 
-        tb.winStreakTeam 
-          ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)` 
-          : 'None', 
-        true)
-      .addField('Max Threshold', `${tb.options?.maxWinStreak || 2} wins`, true)
-      .addField('Scramble Pending', tb._scramblePending ? 'Yes' : 'No', true)
-      .addField('Scramble Active', tb._scrambleInProgress ? 'Yes' : 'No', true)
-      .addField('Pending Moves', scrambleInfo, true)
-      .addField('Game Mode', tb.gameModeCached || 'N/A', true)
-      .addField('Team Names', `${tb.getTeamName(1)} | ${tb.getTeamName(2)}`, true)
-      .addField('\u200B', '\u200B', true)
-      .addField('Total Players', `${players.length}`, true)
-      .addField('Team 1 | Team 2', `${t1Players.length} | ${t2Players.length}`, true)
-      .addField('Unassigned', `T1: ${t1UnassignedPlayers.length} | T2: ${t2UnassignedPlayers.length}`, true)
-      .addField('Total Squads', `${squads.length}`, true)
-      .addField('Squad Split', `T1: ${t1Squads.length} | T2: ${t2Squads.length}`, true)
-      .addField('\u200B', '\u200B', true)
-      .addField('Dominant Win Threshold (RAAS/AAS)', `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, true)
-      .addField('Single Round Scramble (RAAS/AAS)', 
-        tb.options?.enableSingleRoundScramble 
-          ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` 
-          : 'OFF', 
-        true)
-      .addField('Invasion Thresholds', `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, true)
-      .addField('Scramble %', `${(tb.options?.scramblePercentage || 0.5) * 100}%`, true)
-      .addField('Scramble Delay', `${tb.options?.scrambleAnnouncementDelay}s`, true)
-      .addField('Max Scramble Time', `${tb.options?.maxScrambleCompletionTime}ms`, true)
-      .addField('Discord Options', `Mirror: ${tb.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${tb.options?.postScrambleDetails ? 'Yes' : 'No'}`, true)
-      .addField('Console Debug Logs', tb.options?.debugLogs ? 'ON' : 'OFF', true);
+    embed.fields.push(
+      { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
+      { name: 'Win Streak', value: tb.winStreakTeam ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)` : 'None', inline: true },
+      { name: 'Max Threshold', value: `${tb.options?.maxWinStreak || 2} wins`, inline: true },
+      { name: 'Scramble Pending', value: tb._scramblePending ? 'Yes' : 'No', inline: true },
+      { name: 'Scramble Active', value: tb._scrambleInProgress ? 'Yes' : 'No', inline: true },
+      { name: 'Pending Moves', value: scrambleInfo, inline: true },
+      { name: 'Game Mode', value: tb.gameModeCached || 'N/A', inline: true },
+      { name: 'Team Names', value: `${tb.getTeamName(1)} | ${tb.getTeamName(2)}`, inline: true },
+      { name: '\u200B', value: '\u200B', inline: true },
+      { name: 'Total Players', value: `${players.length}`, inline: true },
+      { name: 'Team 1 | Team 2', value: `${t1Players.length} | ${t2Players.length}`, inline: true },
+      { name: 'Unassigned', value: `T1: ${t1UnassignedPlayers.length} | T2: ${t2UnassignedPlayers.length}`, inline: true },
+      { name: 'Total Squads', value: `${squads.length}`, inline: true },
+      { name: 'Squad Split', value: `T1: ${t1Squads.length} | T2: ${t2Squads.length}`, inline: true },
+      { name: '\u200B', value: '\u200B', inline: true },
+      { name: 'Dominant Win Threshold (RAAS/AAS)', value: `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, inline: true },
+      { name: 'Single Round Scramble (RAAS/AAS)', value: tb.options?.enableSingleRoundScramble ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` : 'OFF', inline: true },
+      { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
+      { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
+      { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s`, inline: true },
+      { name: 'Max Scramble Time', value: `${tb.options?.maxScrambleCompletionTime}ms`, inline: true },
+      { name: 'Discord Options', value: `Mirror: ${tb.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${tb.options?.postScrambleDetails ? 'Yes' : 'No'}`, inline: true },
+      { name: 'Console Debug Logs', value: tb.options?.debugLogs ? 'ON' : 'OFF', inline: true }
+    );
 
     return embed;
   },
@@ -160,15 +157,15 @@ export const DiscordHelpers = {
     const projT1 = currentT1 + movesToT1 - movesToT2;
     const projT2 = currentT2 + movesToT2 - movesToT1;
 
-    const embed = new Discord.MessageEmbed()
-      .setColor(isSimulated ? '#9b59b6' : '#2ecc71')
-      .setTitle(isSimulated ? '🧪 Dry Run Scramble Plan' : '🔀 Scramble Execution Plan')
-      .setDescription(`**Total players affected:** ${swapPlan.length}`)
-      .addField('Balance Projection', 
-        `**Team 1:** ${currentT1} ➔ ${projT1}\n**Team 2:** ${currentT2} ➔ ${projT2}`, 
-        false
-      )
-      .setTimestamp();
+    const embed = {
+      color: isSimulated ? 0x9b59b6 : 0x2ecc71,
+      title: isSimulated ? '🧪 Dry Run Scramble Plan' : '🔀 Scramble Execution Plan',
+      description: `**Total players affected:** ${swapPlan.length}`,
+      fields: [
+        { name: 'Balance Projection', value: `**Team 1:** ${currentT1} ➔ ${projT1}\n**Team 2:** ${currentT2} ➔ ${projT2}`, inline: false }
+      ],
+      timestamp: new Date().toISOString()
+    };
 
     if (affectedSquads.size > 0) {
       const squadLines = [];
@@ -181,27 +178,27 @@ export const DiscordHelpers = {
         ? squadLines.slice(0, 15).join('\n') + `\n...and ${squadLines.length - 15} more`
         : squadLines.join('\n');
         
-      embed.addField('Squads Moving', squadText, false);
+      embed.fields.push({ name: 'Squads Moving', value: squadText, inline: false });
     }
     
     if (unassignedCount > 0) {
-      embed.addField('Unassigned Players', `${unassignedCount} players moving`, false);
+      embed.fields.push({ name: 'Unassigned Players', value: `${unassignedCount} players moving`, inline: false });
     }
 
     if (teamLists['1'].length > 0) {
       const team1Name = teamBalancer.getTeamName(1);
       const playerNames = await DiscordHelpers.resolveSteamIDsToNames(teamLists['1'], teamBalancer);
-      embed.addField(`→ Moving to ${team1Name} (${teamCounts['1']} players)`, DiscordHelpers.formatPlayerList(playerNames), false);
+      embed.fields.push({ name: `→ Moving to ${team1Name} (${teamCounts['1']} players)`, value: DiscordHelpers.formatPlayerList(playerNames), inline: false });
     }
 
     if (teamLists['2'].length > 0) {
       const team2Name = teamBalancer.getTeamName(2);
       const playerNames = await DiscordHelpers.resolveSteamIDsToNames(teamLists['2'], teamBalancer);
-      embed.addField(`→ Moving to ${team2Name} (${teamCounts['2']} players)`, DiscordHelpers.formatPlayerList(playerNames), false);
+      embed.fields.push({ name: `→ Moving to ${team2Name} (${teamCounts['2']} players)`, value: DiscordHelpers.formatPlayerList(playerNames), inline: false });
     }
 
     if (swapPlan.length === 0) {
-      embed.setFooter('The simulation resulted in no player moves. This is expected behavior on low-population servers.');
+      embed.footer = { text: 'The simulation resulted in no player moves. This is expected behavior on low-population servers.' };
     }
 
     return embed;
@@ -223,30 +220,36 @@ export const DiscordHelpers = {
   },
 
   buildWinStreakEmbed(teamName, streakCount, margin, isDominant) {
-    const embed = new Discord.MessageEmbed()
-      .setColor(isDominant ? '#f39c12' : '#3498db')
-      .setTitle(isDominant ? '⚠️ Dominant Win Streak' : '📊 Win Recorded')
-      .addField('Team', teamName, true)
-      .addField('Streak', `${streakCount} win(s)`, true)
-      .addField('Margin', `${margin} tickets`, true)
-      .setTimestamp();
+    const embed = {
+      color: isDominant ? 0xf39c12 : 0x3498db,
+      title: isDominant ? '⚠️ Dominant Win Streak' : '📊 Win Recorded',
+      fields: [
+        { name: 'Team', value: teamName, inline: true },
+        { name: 'Streak', value: `${streakCount} win(s)`, inline: true },
+        { name: 'Margin', value: `${margin} tickets`, inline: true }
+      ],
+      timestamp: new Date().toISOString()
+    };
 
     if (isDominant) {
-      embed.setDescription('⚠️ This team is dominating. Scramble may be triggered soon.');
+      embed.description = '⚠️ This team is dominating. Scramble may be triggered soon.';
     }
 
     return embed;
   },
 
   buildScrambleTriggeredEmbed(reason, teamName, count, delay) {
-    const embed = new Discord.MessageEmbed()
-      .setColor('#f39c12')
-      .setTitle('🚨 Scramble Triggered')
-      .setDescription(`**Reason:** ${reason}`)
-      .addField('Dominant Team', teamName || 'N/A', true)
-      .addField('Win Streak', count ? `${count} wins` : 'N/A', true)
-      .addField('Countdown', `${delay} seconds`, true)
-      .setTimestamp();
+    const embed = {
+      color: 0xf39c12,
+      title: '🚨 Scramble Triggered',
+      description: `**Reason:** ${reason}`,
+      fields: [
+        { name: 'Dominant Team', value: teamName || 'N/A', inline: true },
+        { name: 'Win Streak', value: count ? `${count} wins` : 'N/A', inline: true },
+        { name: 'Countdown', value: `${delay} seconds`, inline: true }
+      ],
+      timestamp: new Date().toISOString()
+    };
 
     return embed;
   },
@@ -254,18 +257,21 @@ export const DiscordHelpers = {
   buildScrambleCompletedEmbed(totalMoves, successMoves, failedMoves, duration) {
     const successRate = totalMoves > 0 ? Math.round((successMoves / totalMoves) * 100) : 100;
 
-    const embed = new Discord.MessageEmbed()
-      .setColor(failedMoves > 0 ? '#f39c12' : '#2ecc71')
-      .setTitle('✅ Scramble Completed')
-      .addField('Total Moves', `${totalMoves}`, true)
-      .addField('Successful', `${successMoves}`, true)
-      .addField('Failed', `${failedMoves}`, true)
-      .addField('Success Rate', `${successRate}%`, true)
-      .addField('Duration', `${duration}ms`, true)
-      .setTimestamp();
+    const embed = {
+      color: failedMoves > 0 ? 0xf39c12 : 0x2ecc71,
+      title: '✅ Scramble Completed',
+      fields: [
+        { name: 'Total Moves', value: `${totalMoves}`, inline: true },
+        { name: 'Successful', value: `${successMoves}`, inline: true },
+        { name: 'Failed', value: `${failedMoves}`, inline: true },
+        { name: 'Success Rate', value: `${successRate}%`, inline: true },
+        { name: 'Duration', value: `${duration}ms`, inline: true }
+      ],
+      timestamp: new Date().toISOString()
+    };
 
     if (failedMoves > 0) {
-      embed.setDescription('⚠️ Some players could not be moved. Check logs for details.');
+      embed.description = '⚠️ Some players could not be moved. Check logs for details.';
     }
 
     return embed;
@@ -280,12 +286,6 @@ export const DiscordHelpers = {
     if (!content) {
       Logger.verbose('TeamBalancer', 1, 'Discord send failed: Content was empty.');
       return false;
-    }
-
-    // Fix for Discord.js v12 compatibility: Convert { embeds: [embed] } to { embed: embed }
-    if (Discord.version && Discord.version.startsWith('12') && content.embeds && Array.isArray(content.embeds) && content.embeds.length > 0) {
-      content.embed = content.embeds[0];
-      delete content.embeds;
     }
 
     try {

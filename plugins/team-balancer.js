@@ -107,7 +107,6 @@ Discord: `real_slacker`
 
 
 import BasePlugin from './base-plugin.js';
-import Discord from 'discord.js';
 import { DiscordHelpers } from '../utils/tb-discord-helpers.js';
 import Scrambler from '../utils/tb-scrambler.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
@@ -519,7 +518,7 @@ export default class TeamBalancer extends BasePlugin {
 
     switch (subcommand) {
       case 'status':
-        await DiscordHelpers.sendDiscordMessage(message.channel, DiscordHelpers.buildStatusEmbed(this));
+        await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [DiscordHelpers.buildStatusEmbed(this)] });
         break;
       case 'diag':
         await message.channel.send('🔄 Running diagnostics... please wait.');
@@ -527,7 +526,7 @@ export default class TeamBalancer extends BasePlugin {
         const results = await diagnostics.runAll();
 
         const embed = DiscordHelpers.buildDiagEmbed(this, results);
-        embed.setDescription(`Executed by ${message.author}\n${embed.description}`);
+        embed.description = `Executed by ${message.author}\n${embed.description}`;
 
         await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });
         break;
@@ -539,23 +538,22 @@ export default class TeamBalancer extends BasePlugin {
         await this.discordCommandDebug(message, args[1]);
         break;
       case 'help':
-        const helpEmbed = new Discord.MessageEmbed()
-          .setColor('#3498db')
-          .setTitle('📚 TeamBalancer Command Reference')
-          .setDescription('Available commands for Discord admins:')
-          .addField('Plugin Commands', 
-            '`!teambalancer status` - Show current state & win streak\n' +
-            '`!teambalancer diag` - Run diagnostics & dry run\n' +
-            '`!teambalancer on` - Enable win streak tracking\n' +
-            '`!teambalancer off` - Disable win streak tracking\n' +
-            '`!teambalancer debug on|off` - Toggle verbose logs'
-          )
-          .addField('Scramble Commands', 
-            '`!scramble` - Trigger scramble (with countdown)\n' +
-            '`!scramble now` - Trigger immediate scramble\n' +
-            '`!scramble dry` - Run simulation (dry run)\n' +
-            '`!scramble cancel` - Cancel pending countdown'
-          );
+        const helpEmbed = {
+          color: 0x3498db,
+          title: '📚 TeamBalancer Command Reference',
+          description: 'Available commands for Discord admins:',
+          fields: [
+            { name: 'Plugin Commands', value: '`!teambalancer status` - Show current state & win streak\n' +
+              '`!teambalancer diag` - Run diagnostics & dry run\n' +
+              '`!teambalancer on` - Enable win streak tracking\n' +
+              '`!teambalancer off` - Disable win streak tracking\n' +
+              '`!teambalancer debug on|off` - Toggle verbose logs' },
+            { name: 'Scramble Commands', value: '`!scramble` - Trigger scramble (with countdown)\n' +
+              '`!scramble now` - Trigger immediate scramble\n' +
+              '`!scramble dry` - Run simulation (dry run)\n' +
+              '`!scramble cancel` - Cancel pending countdown' }
+          ]
+        };
         await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [helpEmbed] });
         break;
       default:
@@ -853,7 +851,7 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       if (this.discordChannel && isDominant) {
-        await DiscordHelpers.sendDiscordMessage(this.discordChannel, DiscordHelpers.buildWinStreakEmbed(teamNames.winnerName, this.winStreakCount, margin, true));
+        await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [DiscordHelpers.buildWinStreakEmbed(teamNames.winnerName, this.winStreakCount, margin, true)] });
       }
 
       const scrambleComing = this.winStreakCount >= this.options.maxWinStreak;
@@ -909,7 +907,7 @@ export default class TeamBalancer extends BasePlugin {
         }
         await this.mirrorRconToDiscord(`${this.RconMessages.prefix} ${message}`, 'warning');
         if (this.discordChannel) {
-          await DiscordHelpers.sendDiscordMessage(this.discordChannel, DiscordHelpers.buildScrambleTriggeredEmbed('Win streak threshold reached', teamNames.winnerName, this.winStreakCount, this.options.scrambleAnnouncementDelay));
+          await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [DiscordHelpers.buildScrambleTriggeredEmbed('Win streak threshold reached', teamNames.winnerName, this.winStreakCount, this.options.scrambleAnnouncementDelay)] });
         }
         this.initiateScramble(false, false);
       }
@@ -1088,7 +1086,8 @@ export default class TeamBalancer extends BasePlugin {
       });
 
       if (this.discordChannel && this.options.postScrambleDetails) {
-        await DiscordHelpers.sendDiscordMessage(this.discordChannel, await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this));
+        const embed = await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this);
+        await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
       }
 
       if (swapPlan && swapPlan.length > 0) {
@@ -1227,10 +1226,11 @@ export default class TeamBalancer extends BasePlugin {
     };
 
     try {
-      const embed = new Discord.MessageEmbed()
-        .setColor(colors[type] || colors.info)
-        .setDescription(`📢 **Server Broadcast**\n${message}`)
-        .setTimestamp();
+      const embed = {
+        color: parseInt((colors[type] || colors.info).replace('#', ''), 16),
+        description: `📢 **Server Broadcast**\n${message}`,
+        timestamp: new Date().toISOString()
+      };
       await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[Discord] Mirror failed: ${err.message}`);
