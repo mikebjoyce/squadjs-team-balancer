@@ -10,21 +10,21 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 ## Core Features
 
-* **Win Streak Detection**: Detects dominant win streaks based on ticket difference thresholds.
+* **Win Streak Tracking**: Automatically tracks dominant wins and triggers scrambles after a configurable streak.
 
-* **Automatic/Manual Scrambling**: Triggers squad-preserving scrambles automatically or via admin command.
+* **Single-Round Scramble**: Optional "Mercy Rule" to scramble immediately after a single game with extreme ticket disparity.
 
-* **Multi-Mode Support**: Handles RAAS, AAS, and Invasion with separate logic.
+* **Discord Integration**: Administer the plugin via Discord, mirror RCON broadcasts, and view detailed swap plans.
 
-* **Dry-Run Diagnostics**: Simulate scrambles without affecting players via chat commands.
+* **Multi-Mode Logic**: Distinct dominance thresholds for Standard (RAAS/AAS) and Invasion game modes.
 
-* **Player Notifications**: Sends RCON warnings to swapped players (optional).
+* **Squad-Preserving Algorithm**: Calculates optimal moves to balance teams while keeping squads together.
 
-* **Reliable Swap System**: Retries failed swaps until timeout expires.
+* **Dry-Run & Diagnostics**: Run simulation scrambles and self-diagnostics to verify plugin health without affecting gameplay.
 
-* **Emergency Enforcement**: Breaks squads only if needed to enforce 50-player cap.
+* **Reliable Execution**: Handles RCON command retries and timeouts to ensure players are moved successfully.
 
-* **Generic Team Names**: Option to use "Team 1" / "Team 2" instead of faction names in broadcasts.
+* **Customizable Messaging**: Options for RCON warnings, win streak broadcasts, and generic team naming.
 
 ## Scramble Algorithm
 
