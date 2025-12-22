@@ -47,7 +47,7 @@ export const DiscordHelpers = {
     return embed;
   },
 
-  buildDiagEmbed(tb) {
+  buildDiagEmbed(tb, diagnosticResults = null) {
     const players = tb.server.players;
     const squads = tb.server.squads;
     const t1Players = players.filter((p) => p.teamID === 1);
@@ -61,12 +61,26 @@ export const DiscordHelpers = {
       ? `${tb.swapExecutor.pendingPlayerMoves.size} pending moves`
       : 'None';
 
+    // Determine color based on diagnostics if present
+    let color = '#3498db';
+    if (diagnosticResults) {
+      color = diagnosticResults.every((r) => r.pass) ? '#2ecc71' : '#e74c3c';
+    }
+
     const embed = new Discord.MessageEmbed()
-      .setColor('#3498db')
+      .setColor(color)
       .setTitle('🩺 TeamBalancer Diagnostics')
       .setTimestamp()
-      .setDescription(`**Plugin Status:** ${tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`)
-      .addField('Version', tb.constructor.version || 'Unknown', true)
+      .setDescription(`**Plugin Status:** ${tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`);
+
+    if (diagnosticResults) {
+      const dbRes = diagnosticResults.find((r) => r.name === 'Database');
+      const scramRes = diagnosticResults.find((r) => r.name === 'Live Scramble Test');
+      const diagText = `**DB:** [${dbRes?.message || 'N/A'}]\n**Scramble:** [${scramRes?.message || 'N/A'}]`;
+      embed.addField('🔍 Self-Test Results', diagText, false);
+    }
+
+    embed.addField('Version', tb.constructor.version || 'Unknown', true)
       .addField('Win Streak', 
         tb.winStreakTeam 
           ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)` 

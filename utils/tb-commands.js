@@ -5,6 +5,7 @@
 import Logger from '../../core/logger.js';
 import Discord from 'discord.js';
 import { DiscordHelpers } from './tb-discord-helpers.js';
+import { TBDiagnostics } from './tb-diagnostics.js';
 
 const CommandHandlers = {
   register(tb) {
@@ -295,80 +296,44 @@ const CommandHandlers = {
             break;
           }
           case 'diag': {
-            if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'Diagnostics command received.');
+            if (this.options.debugLogs)
+              Logger.verbose('TeamBalancer', 4, 'Diagnostics command received.');
+            await this.server.rcon.warn(steamID, 'Running diagnostics... please wait.');
 
-            // Gather all data regardless of debugLogs, as this is the primary purpose of 'diag'
-            const players = this.server.players;
-            const squads = this.server.squads;
-            const t1Players = players.filter((p) => p.teamID === 1);
-            const t2Players = players.filter((p) => p.teamID === 2);
-            const t1UnassignedPlayers = t1Players.filter((p) => p.squadID === null);
-            const t2UnassignedPlayers = t2Players.filter((p) => p.squadID === null);
-            const t1Squads = squads.filter((s) => s.teamID === 1);
-            const t2Squads = squads.filter((s) => s.teamID === 2);
-            const scrambleInfo =
-              this.swapExecutor.pendingPlayerMoves.size > 0
-                ? `${this.swapExecutor.pendingPlayerMoves.size} pending player moves`
-                : 'No active scramble';
+            const diagnostics = new TBDiagnostics(this);
+            const results = await diagnostics.runAll();
 
-            // Directly use the cached values for diagnostic output
+            const dbResult = results.find((r) => r.name === 'Database');
+            const scrambleResult = results.find((r) => r.name === 'Live Scramble Test');
+
+            const layer = await this.server.currentLayer;
+            const layerName = layer?.name || 'Unknown';
             const gameMode = this.gameModeCached || 'N/A';
-            const team1Name = this.getTeamName(1);
-            const team2Name = this.getTeamName(2);
 
-            // Formatted diagnostic message
+            const streakText =
+              this.winStreakCount > 0
+                ? `${this.winStreakCount} win(s) on Team ${this.getTeamName(this.winStreakTeam)}`
+                : 'No active streak';
+
             const diagMsg = [
-              `--- TeamBalancer Diagnostics for ${adminName} ---`,
-              '',
-              '----- CORE STATUS -----',
-              `Version: ${this.constructor.version}`,
-              `Plugin Status: ${this.manuallyDisabled ? 'DISABLED (Manual override)' : 'ENABLED'}`,
-              `Win Streak: ${
-                this.winStreakTeam
-                  ? `${this.getTeamName(this.winStreakTeam)} with ${this.winStreakCount} win(s)`
-                  : 'N/A'
-              }`,
-              `Max Win Streak Threshold: ${this.options.maxWinStreak} wins`,
-              `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
-              `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
-              `Scramble System: ${scrambleInfo}`,
-              '',
-              '----- ROUND/LAYER INFO -----',
-              `Game Mode: ${gameMode}`,
-              `Team 1 Name: ${team1Name}`,
-              `Team 2 Name: ${team2Name}`,
-              '',
-              '----- PLAYER/SQUAD INFO -----',
-              `Total Players: ${players.length}`,
-              `Team 1 Players: ${t1Players.length}`,
-              `Team 2 Players: ${t2Players.length}`,
-              `Team 1 Unassigned Players: ${t1UnassignedPlayers.length}`,
-              `Team 2 Unassigned Players: ${t2UnassignedPlayers.length}`,
-              `Total Squads: ${squads.length}`,
-              `Team 1 Squads: ${t1Squads.length}`,
-              `Team 2 Squads: ${t2Squads.length}`,
-              '',
-              '----- CONFIGURATION -----',
-              `Min Tickets for Dominant Win: ${this.options.minTicketsToCountAsDominantWin}`,
-              `Single Round Scramble: ${this.options.enableSingleRoundScramble ? 'ENABLED' : 'DISABLED'} (> ${this.options.singleRoundScrambleThreshold} tickets)`,
-              `Invasion Attack/Defence Thresholds: ${this.options.invasionAttackTeamThreshold} / ${this.options.invasionDefenceTeamThreshold}`,
-              `Scramble Announcement Delay: ${this.options.scrambleAnnouncementDelay}s`,
-              `Player Swap Retry Interval: ${this.options.changeTeamRetryInterval}ms`,
-              `Max Scramble Time: ${this.options.maxScrambleCompletionTime}ms`,
-              `Use Generic Team Names: ${
-                this.options.useGenericTeamNamesInBroadcasts ? 'YES' : 'NO'
-              }`,
-              `Scramble Percentage: ${this.options.scramblePercentage}`,
-              `Debug Logging: ${this.options.debugLogs ? 'ON' : 'OFF'}`,
+              `--- [TeamBalancer Diag] ---`,
+              `DB Connection: [${dbResult.message}]`,
+              `Live Scramble Test: [${scrambleResult.message}]`,
+              `Current Layer: ${layerName} (Mode: ${gameMode})`,
+              `Active Streak: ${streakText}`,
               `------------------------------------------`
             ].join('\n');
-            this.respond(player, diagMsg);
+            await this.server.rcon.warn(steamID, diagMsg);
+
             if (this.discordChannel) {
               const embed = new Discord.MessageEmbed()
-                .setColor('#3498db')
-                .setTitle('🎮 In-Game Command: !teambalancer diag')
+                .setColor(results.every((r) => r.pass) ? '#2ecc71' : '#e74c3c')
+                .setTitle('⚙️ In-Game Diagnostics Report')
                 .setDescription(`Executed by **${adminName}**`)
-                .addField('Response', `\`\`\`\n${diagMsg}\n\`\`\``, false)
+                .addField('Database', `[${dbResult.message}]`, false)
+                .addField('Live Scramble Test', `[${scrambleResult.message}]`, false)
+                .addField('Layer', `${layerName} (${gameMode})`, true)
+                .addField('Active Streak', streakText, true)
                 .setTimestamp();
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }

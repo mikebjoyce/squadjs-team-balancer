@@ -110,6 +110,7 @@ import SwapExecutor from '../utils/tb-swap-executor.js';
 import CommandHandlers from '../utils/tb-commands.js';
 import TBDatabase from '../utils/tb-database.js';
 import Logger from '../../core/logger.js';
+import { TBDiagnostics } from '../utils/tb-diagnostics.js';
 
 export default class TeamBalancer extends BasePlugin {
   static get version() {
@@ -517,7 +518,14 @@ export default class TeamBalancer extends BasePlugin {
         await DiscordHelpers.sendDiscordMessage(message.channel, DiscordHelpers.buildStatusEmbed(this));
         break;
       case 'diag':
-        await DiscordHelpers.sendDiscordMessage(message.channel, DiscordHelpers.buildDiagEmbed(this));
+        await message.channel.send('🔄 Running diagnostics... please wait.');
+        const diagnostics = new TBDiagnostics(this);
+        const results = await diagnostics.runAll();
+
+        const embed = DiscordHelpers.buildDiagEmbed(this, results);
+        embed.setDescription(`Executed by ${message.author}\n${embed.description}`);
+
+        await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });
         break;
       case 'on':
       case 'off':
@@ -526,8 +534,28 @@ export default class TeamBalancer extends BasePlugin {
       case 'debug':
         await this.discordCommandDebug(message, args[1]);
         break;
+      case 'help':
+        const helpEmbed = new Discord.MessageEmbed()
+          .setColor('#3498db')
+          .setTitle('📚 TeamBalancer Command Reference')
+          .setDescription('Available commands for Discord admins:')
+          .addField('Plugin Commands', 
+            '`!teambalancer status` - Show current state & win streak\n' +
+            '`!teambalancer diag` - Run diagnostics & dry run\n' +
+            '`!teambalancer on` - Enable win streak tracking\n' +
+            '`!teambalancer off` - Disable win streak tracking\n' +
+            '`!teambalancer debug on|off` - Toggle verbose logs'
+          )
+          .addField('Scramble Commands', 
+            '`!scramble` - Trigger scramble (with countdown)\n' +
+            '`!scramble now` - Trigger immediate scramble\n' +
+            '`!scramble dry` - Run simulation (dry run)\n' +
+            '`!scramble cancel` - Cancel pending countdown'
+          );
+        await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [helpEmbed] });
+        break;
       default:
-        await message.reply('Invalid command. Use: `status`, `diag`, `on`, `off`, `debug on|off`');
+        await message.reply('Invalid command. Use: `status`, `diag`, `on`, `off`, `debug`, `help` or `!scramble <now|dry|cancel>`.');
     }
   }
 
@@ -1072,6 +1100,7 @@ export default class TeamBalancer extends BasePlugin {
           for (const move of swapPlan) {
             Logger.verbose('TeamBalancer', 2, `  [Dry Run] Player ${move.steamID} to Team ${move.targetTeamID}`);
           }
+          Logger.verbose('TeamBalancer', 2, `[Diagnostics] Dry run successful. No players were harmed.`);
         }
       } else {
         Logger.verbose('TeamBalancer', 2, 'Scrambler returned no player moves or an empty plan.');
