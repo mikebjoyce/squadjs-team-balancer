@@ -548,8 +548,27 @@ export default class TeamBalancer extends BasePlugin {
         await message.reply(`⚠️ Scramble already ${status}. Use \`!scramble cancel\` to cancel.`);
         return;
       }
+
+      if (!hasDry) {
+        const broadcastMsg = hasNow
+          ? `${this.RconMessages.prefix} ${this.RconMessages.immediateManualScramble}`
+          : `${this.RconMessages.prefix} ${this.formatMessage(
+              this.RconMessages.manualScrambleAnnouncement,
+              { delay: this.options.scrambleAnnouncementDelay }
+            )}`;
+        try {
+          await this.server.rcon.broadcast(broadcastMsg);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error broadcasting Discord scramble message: ${err?.message || err}`);
+        }
+      }
+
       const actionDesc = hasDry ? 'dry run scramble (immediate)' : hasNow ? 'immediate scramble' : 'scramble with countdown';
-      await message.reply(`🔄 Initiating ${actionDesc}...`);
+      let replyMsg = `🔄 Initiating ${actionDesc}...`;
+      if (!hasDry && !hasNow) {
+        replyMsg += `\n⏳ Countdown: ${this.options.scrambleAnnouncementDelay}s\n📢 Broadcast sent to server.`;
+      }
+      await message.reply(replyMsg);
       const success = await this.initiateScramble(hasDry, hasDry || hasNow, null, null);
       if (!success) await message.reply('❌ Failed to initiate scramble.');
     }

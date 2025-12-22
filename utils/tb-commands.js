@@ -56,7 +56,7 @@ const CommandHandlers = {
       singleRoundScramble:
         'Extreme ticket difference detected ({margin} tickets) | Scrambling in {delay}s...',
       manualScrambleAnnouncement:
-        'Manual team balance triggered by admin | Scramble in {delay}s...',
+        'Manual team balance triggered by admin | Scrambling in {delay}s...',
       immediateManualScramble: 'Manual team balance triggered by admin | Scrambling teams...',
       executeScrambleMessage: 'Executing scramble...',
       executeDryRunMessage: 'Dry Run: Simulating scramble...',
