@@ -79,6 +79,24 @@ Add to your `config.json`:
 },
 ```
 
+**File Placement**: Move the project files into your SquadJS directory's squad-server folder
+
+/squad-server
+  /plugins
+    /teambalancer
+      team-balancer.js
+  /utils
+    tb-scrambler.js
+    tb-database.js
+    tb-commands.js
+    tb-diagnostics.js
+    tb-discord-helpers.js
+    tb-swap-executor.js
+  /tests (optional)
+    plugin-logic-test-runner.js
+    scrambler-test-runner.js
+    mock-data-generator.js
+
 ## Commands
 
 ```text
