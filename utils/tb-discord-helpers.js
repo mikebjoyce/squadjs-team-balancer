@@ -137,15 +137,16 @@ export const DiscordHelpers = {
       const player = players.find(p => p.steamID === move.steamID);
       if (player) {
         if (player.squadID) {
-          if (!affectedSquads.has(player.squadID)) {
-            const squad = squads.find(s => s.squadID === player.squadID);
-            affectedSquads.set(player.squadID, {
+          const uniqueKey = `${player.teamID}-${player.squadID}`;
+          if (!affectedSquads.has(uniqueKey)) {
+            const squad = squads.find(s => s.squadID === player.squadID && s.teamID == player.teamID);
+            affectedSquads.set(uniqueKey, {
               name: squad ? squad.squadName : `Squad ${player.squadID}`,
               targetTeam: move.targetTeamID,
               count: 0
             });
           }
-          affectedSquads.get(player.squadID).count++;
+          affectedSquads.get(uniqueKey).count++;
         } else {
           unassignedCount++;
         }
