@@ -96,8 +96,8 @@ export const Scrambler = {
         .filter((s) => s.teamID === teamID)
         .concat(unassignedPseudoSquads.filter((s) => s.teamID === teamID));
 
-    const t1Candidates = filterCandidates('1');
-    const t2Candidates = filterCandidates('2');
+    let t1Candidates = filterCandidates('1');
+    let t2Candidates = filterCandidates('2');
 
     if (debug) Logger.verbose('TeamBalancer', 4, `Candidate squads filtered: Team1 = ${t1Candidates.length}, Team2 = ${t2Candidates.length}`);
 
@@ -160,8 +160,8 @@ export const Scrambler = {
       
       const balanceScore = Math.abs(hypotheticalNewT1 - hypotheticalNewT2);
       
-      const penaltyT1Overcap = Math.max(0, hypotheticalNewT1 - maxTeamSize) * 1000; // High penalty
-      const penaltyT2Overcap = Math.max(0, hypotheticalNewT2 - maxTeamSize) * 1000; // High penalty
+      const penaltyT1Overcap = Math.max(0, hypotheticalNewT1 - maxTeamSize) * 10000; // Increased penalty
+      const penaltyT2Overcap = Math.max(0, hypotheticalNewT2 - maxTeamSize) * 10000; // Increased penalty
       
       const totalPlayers = initialT1Count + initialT2Count;
       const idealTeamSize = totalPlayers / 2;
@@ -171,8 +171,8 @@ export const Scrambler = {
       }
       
       let combinedScore =
-        churnScore * 10 + // Increased weight for hitting the churn target
-        balanceScore * 5 + // Higher weight for final balance
+        churnScore * 2 + // Reduced weight (tie-breaker only)
+        balanceScore * 50 + // Massive weight for numerical parity
         penaltyT1Overcap +
         penaltyT2Overcap +
         sizeDeviationPenalty;
@@ -195,13 +195,39 @@ export const Scrambler = {
     if (debug) Logger.verbose('TeamBalancer', 4, `Starting swap attempts (max ${MAX_ATTEMPTS})`);
 
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      // Emergency Squad Splitting (Partial Squad Break): If we can't find a good solution early, break unlocked squads
+      if (i === 25 && bestScore > 50) {
+        if (debug) Logger.verbose('TeamBalancer', 2, 'High imbalance detected after 25 attempts. Engaging Partial Squad Break (Emergency Splitting).');
+        const decompose = (candidates) => {
+          const newCandidates = [];
+          for (const cand of candidates) {
+            // Decompose unlocked squads (that aren't already pseudo-squads)
+            if (!cand.locked && !cand.id.startsWith('Unassigned') && !cand.id.startsWith('Split')) {
+              for (const pid of cand.players) {
+                newCandidates.push({
+                  id: `Split-${pid}`,
+                  teamID: cand.teamID,
+                  players: [pid]
+                });
+              }
+            } else {
+              newCandidates.push(cand);
+            }
+          }
+          return newCandidates;
+        };
+        t1Candidates = decompose(t1Candidates);
+        t2Candidates = decompose(t2Candidates);
+      }
+
       const currentUsedSquadIds = new Set(); // Reset for each attempt
       
       shuffle(t1Candidates);
       shuffle(t2Candidates);
       
-      let targetMoveFromT1 = Math.round(targetPlayersToMove / 2);
-      let targetMoveFromT2 = Math.round(targetPlayersToMove / 2);
+      const teamDiff = initialCounts.team1Count - initialCounts.team2Count;
+      let targetMoveFromT1 = Math.round((targetPlayersToMove / 2) + (teamDiff / 4));
+      let targetMoveFromT2 = Math.round((targetPlayersToMove / 2) - (teamDiff / 4));
       
       targetMoveFromT1 = Math.max(0, targetMoveFromT1 + Math.floor(Math.random() * 5) - 2); // +/- 2 players
       targetMoveFromT2 = Math.max(0, targetMoveFromT2 + Math.floor(Math.random() * 5) - 2); // +/- 2 players
@@ -344,7 +370,7 @@ export const Scrambler = {
         );
         for (const player of playersToConsider) {
           
-          if (getCurrentTeamCounts().team2Count < maxTeamSize) {
+          if (getCurrentTeamCounts().team1Count > getCurrentTeamCounts().team2Count + 1) {
             finalPlayerMovesMap.set(player.steamID, { steamID: player.steamID, targetTeamID: '2' });
             updatePlayerTeam(player.steamID, '2');
             Logger.verbose('TeamBalancer', 3, `Trimming: Player ${player.steamID} from Team 1 to Team 2 (overcap fix)`);
@@ -370,7 +396,7 @@ export const Scrambler = {
         );
         for (const player of playersToConsider) {
           
-          if (getCurrentTeamCounts().team1Count < maxTeamSize) {
+          if (getCurrentTeamCounts().team2Count > getCurrentTeamCounts().team1Count + 1) {
             finalPlayerMovesMap.set(player.steamID, { steamID: player.steamID, targetTeamID: '1' });
             updatePlayerTeam(player.steamID, '1');
             Logger.verbose('TeamBalancer', 3, `Trimming: Player ${player.steamID} from Team 2 to Team 1 (overcap fix)`);

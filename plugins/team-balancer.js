@@ -963,7 +963,7 @@ export default class TeamBalancer extends BasePlugin {
 
     for (const player of normalizedPlayers) {
       if (player.squadID) {
-        const squadKey = String(player.squadID);
+        const squadKey = `T${player.teamID}-S${player.squadID}`;
         if (!squadPlayerMap.has(squadKey)) {
           squadPlayerMap.set(squadKey, []);
         }
@@ -974,11 +974,11 @@ export default class TeamBalancer extends BasePlugin {
     Logger.verbose('TeamBalancer', 4, `Squad-player mapping created for ${squadPlayerMap.size} squads`);
     
     const transformedSquads = normalizedSquads.map((squad) => {
-      const squadKey = String(squad.squadID);
+      const squadKey = `T${squad.teamID}-S${squad.squadID}`;
       const playersInSquad = squadPlayerMap.get(squadKey) || [];
 
       const transformed = {
-        id: squadKey,
+        id: squadKey, // Now unique (e.g., T1-S5)
         teamID: String(squad.teamID), // Ensure string format
         players: playersInSquad,
         locked: squad.locked === 'True' || squad.locked === true // Handle both string and boolean
@@ -992,7 +992,7 @@ export default class TeamBalancer extends BasePlugin {
     const transformedPlayers = normalizedPlayers.map((player) => ({
       steamID: player.steamID,
       teamID: String(player.teamID), // Ensure string format
-      squadID: player.squadID ? String(player.squadID) : null
+      squadID: player.squadID ? `T${player.teamID}-S${player.squadID}` : null
     }));
 
     Logger.verbose('TeamBalancer', 4, `Transformation complete: ${transformedSquads.length} squads, ${transformedPlayers.length} players`);
