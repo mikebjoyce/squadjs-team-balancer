@@ -91,6 +91,13 @@ export default class SwapExecutor {
             continue;
           }
 
+          // Bugfix: Check if player is already on the target team to prevent RCON spam
+          if (String(player.teamID) === String(moveData.targetTeamID)) {
+            this.activeSession.completedMoves++;
+            playersToRemove.push(steamID);
+            continue;
+          }
+
           moveData.attempts++;
           const maxRconAttempts = 5;
 

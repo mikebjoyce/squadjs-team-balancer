@@ -394,7 +394,24 @@ const CommandHandlers = {
       // This line ensures commands are only processed from admin chat when devMode is false
       if (!this.options.devMode && command.chat !== 'ChatAdmin') return;
 
-      const args = (command.message?.trim().toLowerCase().split(/\s+/) || []).filter(arg => arg);
+      let args = (command.message?.trim().toLowerCase().split(/\s+/) || []).filter(arg => arg);
+      const isConfirm = args.includes('confirm');
+
+      if (isConfirm) {
+        if (!this.scrambleConfirmation) {
+          this.respond(player, 'No pending scramble confirmation found.');
+          return;
+        }
+        const timeoutMs = (this.options.scrambleConfirmationTimeout || 60) * 1000;
+        if (Date.now() - this.scrambleConfirmation.timestamp > timeoutMs) {
+          this.scrambleConfirmation = null;
+          this.respond(player, 'Scramble confirmation expired.');
+          return;
+        }
+        args = this.scrambleConfirmation.args;
+        this.scrambleConfirmation = null;
+      }
+
       const hasNow = args.includes('now');
       const hasDry = args.includes('dry');
       const isCancel = args.includes('cancel');
@@ -406,6 +423,7 @@ const CommandHandlers = {
       try {
         // Handle cancel subcommand
         if (isCancel) {
+          this.scrambleConfirmation = null;
           const cancelled = await this.cancelPendingScramble(steamID, player, false);
           if (cancelled) {
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Scramble cancelled by ${adminName}`);
@@ -435,6 +453,15 @@ const CommandHandlers = {
             player,
             `[WARNING] Scramble already ${status}. Use "!scramble cancel" to cancel pending scrambles.`
           );
+          return;
+        }
+
+        // Require confirmation for live scrambles
+        if (this.options.requireScrambleConfirmation && !hasDry && !isConfirm) {
+          this.scrambleConfirmation = { timestamp: Date.now(), args: args };
+          const type = hasNow ? 'IMMEDIATE' : 'scheduled';
+          const timeoutSec = this.options.scrambleConfirmationTimeout || 60;
+          this.respond(player, `⚠️ Please confirm ${type} scramble by typing "!scramble confirm" within ${timeoutSec} seconds.`);
           return;
         }
 
