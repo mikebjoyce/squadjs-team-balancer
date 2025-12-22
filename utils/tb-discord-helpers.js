@@ -292,6 +292,19 @@ export const DiscordHelpers = {
       await channel.send(content);
       return true;
     } catch (err) {
+      // Compatibility fix for Discord.js v12 which throws "Cannot send an empty message"
+      // when receiving { embeds: [...] } instead of { embed: ... }
+      if (err.message === 'Cannot send an empty message' && content.embeds && Array.isArray(content.embeds) && content.embeds.length > 0) {
+        try {
+          const legacyContent = { ...content, embed: content.embeds[0] };
+          delete legacyContent.embeds;
+          await channel.send(legacyContent);
+          return true;
+        } catch (legacyErr) {
+          Logger.verbose('TeamBalancer', 1, `Discord send failed (Legacy Fallback): ${legacyErr.message}`);
+        }
+      }
+
       const errMsg = `Discord send failed: ${err.message}`;
       if (!suppressErrors) throw new Error(errMsg);
       Logger.verbose('TeamBalancer', 1, errMsg);
