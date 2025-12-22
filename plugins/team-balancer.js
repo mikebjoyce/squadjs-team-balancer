@@ -51,7 +51,7 @@
  * discordAdminRoleID             - Role ID for admin permissions (empty = all in channel).
  * mirrorRconBroadcasts           - Mirror RCON broadcasts to Discord.
  * postScrambleDetails            - Post detailed swap plans to Discord.
- * requireScrambleConfirmation    - Require !scramble confirm before executing a scramble.
+ * requireScrambleConfirmation    - Require '!scramble confirm' before executing a scramble.
  * scrambleConfirmationTimeout    - Time in seconds to wait for scramble confirmation.
  *
  * Debug & Dev:
@@ -99,6 +99,8 @@
   "discordAdminRoleID": "",
   "mirrorRconBroadcasts": true,
   "postScrambleDetails": true,
+  "requireScrambleConfirmation": true,
+  "scrambleConfirmationTimeout": 60,
   "devMode": false
 }
 
