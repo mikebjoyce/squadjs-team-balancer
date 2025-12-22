@@ -1015,8 +1015,8 @@ export default class TeamBalancer extends BasePlugin {
       if (!isSimulated) {
         try {
           await this.server.rcon.broadcast(broadcastMessage);
-        } catch (broadcastErr) {
-          Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble execution message: ${broadcastErr.message}`);          
+        } catch (broadcastErr) {          
+          Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble execution message: ${broadcastErr.message}`);
         }
         await this.mirrorRconToDiscord(broadcastMessage, 'scramble');
       }
@@ -1036,12 +1036,12 @@ export default class TeamBalancer extends BasePlugin {
         debug: this.options.debugLogs
       });
 
+      if (this.discordChannel && this.options.postScrambleDetails) {
+        await DiscordHelpers.sendDiscordMessage(this.discordChannel, await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this));
+      }
+
       if (swapPlan && swapPlan.length > 0) {
         Logger.verbose('TeamBalancer', 2, `Dry run: Scrambler returned ${swapPlan.length} player moves.`);
-        
-        if (this.discordChannel && this.options.postScrambleDetails) {
-          await DiscordHelpers.sendDiscordMessage(this.discordChannel, await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this));
-        }
 
         if (!isSimulated) {          
           for (const move of swapPlan) {            
@@ -1160,6 +1160,12 @@ export default class TeamBalancer extends BasePlugin {
 
   async mirrorRconToDiscord(message, type = 'info') {
     if (!this.discordChannel || !this.options.mirrorRconBroadcasts) return;
+
+    if (!message || typeof message !== 'string' || message.trim() === '') {
+      Logger.verbose('TeamBalancer', 1, `[Discord] Attempted to mirror empty/invalid message: ${message}`);
+      return;
+    }
+
     const colors = {
       info: '#3498db',
       success: '#2ecc71',
@@ -1167,10 +1173,15 @@ export default class TeamBalancer extends BasePlugin {
       error: '#e74c3c',
       scramble: '#9b59b6'
     };
-    const embed = new Discord.MessageEmbed()
-      .setColor(colors[type] || colors.info)
-      .setDescription(`📢 **Server Broadcast**\n${message}`)
-      .setTimestamp();
-    await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+
+    try {
+      const embed = new Discord.MessageEmbed()
+        .setColor(colors[type] || colors.info)
+        .setDescription(`📢 **Server Broadcast**\n${message}`)
+        .setTimestamp();
+      await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 1, `[Discord] Mirror failed: ${err.message}`);
+    }
   }
 }

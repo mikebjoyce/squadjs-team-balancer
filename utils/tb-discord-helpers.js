@@ -50,23 +50,45 @@ export const DiscordHelpers = {
 
   buildDiagEmbed(tb) {
     const players = tb.server.players;
-    const t1Players = players.filter((p) => p.teamID === 1).length;
-    const t2Players = players.filter((p) => p.teamID === 2).length;
+    const squads = tb.server.squads;
+    const t1Players = players.filter((p) => p.teamID === 1);
+    const t2Players = players.filter((p) => p.teamID === 2);
+    const t1UnassignedPlayers = t1Players.filter((p) => p.squadID === null);
+    const t2UnassignedPlayers = t2Players.filter((p) => p.squadID === null);
+    const t1Squads = squads.filter((s) => s.teamID === 1);
+    const t2Squads = squads.filter((s) => s.teamID === 2);
+
+    const scrambleInfo = tb.swapExecutor?.pendingPlayerMoves?.size > 0
+      ? `${tb.swapExecutor.pendingPlayerMoves.size} pending moves`
+      : 'None';
 
     const embed = new Discord.MessageEmbed()
       .setColor('#3498db')
       .setTitle('🩺 TeamBalancer Diagnostics')
       .setTimestamp()
       .setDescription(`**Plugin Status:** ${tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`)
-      .addField('Players', `Total: ${players.length}\nT1: ${t1Players}\nT2: ${t2Players}`, true)
-      .addField(
-        'Win Streak',
-        tb.winStreakTeam
-          ? `${tb.getTeamName(tb.winStreakTeam)} (${tb.winStreakCount} wins)`
-          : 'None',
-        true
-      )
-      .addField('Scramble', `Pending: ${tb._scramblePending ? 'Yes' : 'No'}\nIn Progress: ${tb._scrambleInProgress ? 'Yes' : 'No'}`, true);
+      .addField('Version', tb.constructor.version || 'Unknown', true)
+      .addField('Win Streak', 
+        tb.winStreakTeam 
+          ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)` 
+          : 'None', 
+        true)
+      .addField('Max Threshold', `${tb.options?.maxWinStreak || 2} wins`, true)
+      .addField('Scramble Pending', tb._scramblePending ? 'Yes' : 'No', true)
+      .addField('Scramble Active', tb._scrambleInProgress ? 'Yes' : 'No', true)
+      .addField('Pending Moves', scrambleInfo, true)
+      .addField('Game Mode', tb.gameModeCached || 'N/A', true)
+      .addField('Team Names', `${tb.getTeamName(1)} | ${tb.getTeamName(2)}`, true)
+      .addField('\u200B', '\u200B', true)
+      .addField('Total Players', `${players.length}`, true)
+      .addField('Team 1 / Team 2', `${t1Players.length} / ${t2Players.length}`, true)
+      .addField('Unassigned', `T1: ${t1UnassignedPlayers.length} | T2: ${t2UnassignedPlayers.length}`, true)
+      .addField('Total Squads', `${squads.length}`, true)
+      .addField('Squad Split', `T1: ${t1Squads.length} | T2: ${t2Squads.length}`, true)
+      .addField('\u200B', '\u200B', true)
+      .addField('Dominant Win Threshold', `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, true)
+      .addField('Scramble %', `${(tb.options?.scramblePercentage || 0.5) * 100}%`, true)
+      .addField('Debug Logs', tb.options?.debugLogs ? 'ON' : 'OFF', true);
 
     return embed;
   },
@@ -74,17 +96,70 @@ export const DiscordHelpers = {
   async createScrambleDetailsMessage(swapPlan, isSimulated, teamBalancer) {
     const teamCounts = { '1': 0, '2': 0 };
     const teamLists = { '1': [], '2': [] };
+    
+    const players = teamBalancer.server.players;
+    const squads = teamBalancer.server.squads;
+    const currentT1 = players.filter(p => p.teamID == 1).length;
+    const currentT2 = players.filter(p => p.teamID == 2).length;
+    
+    const affectedSquads = new Map();
+    let unassignedCount = 0;
 
     for (const move of swapPlan) {
       teamCounts[move.targetTeamID]++;
       teamLists[move.targetTeamID].push(move.steamID);
+      
+      const player = players.find(p => p.steamID === move.steamID);
+      if (player) {
+        if (player.squadID) {
+          if (!affectedSquads.has(player.squadID)) {
+            const squad = squads.find(s => s.squadID === player.squadID);
+            affectedSquads.set(player.squadID, {
+              name: squad ? squad.squadName : `Squad ${player.squadID}`,
+              targetTeam: move.targetTeamID,
+              count: 0
+            });
+          }
+          affectedSquads.get(player.squadID).count++;
+        } else {
+          unassignedCount++;
+        }
+      }
     }
+    
+    const movesToT1 = teamCounts['1'];
+    const movesToT2 = teamCounts['2'];
+    const projT1 = currentT1 + movesToT1 - movesToT2;
+    const projT2 = currentT2 + movesToT2 - movesToT1;
 
     const embed = new Discord.MessageEmbed()
       .setColor(isSimulated ? '#9b59b6' : '#2ecc71')
       .setTitle(isSimulated ? '🧪 Dry Run Scramble Plan' : '🔀 Scramble Execution Plan')
       .setDescription(`**Total players affected:** ${swapPlan.length}`)
+      .addField('Balance Projection', 
+        `**Team 1:** ${currentT1} ➔ ${projT1}\n**Team 2:** ${currentT2} ➔ ${projT2}`, 
+        false
+      )
       .setTimestamp();
+
+    if (affectedSquads.size > 0) {
+      const squadLines = [];
+      affectedSquads.forEach((info) => {
+        const arrow = info.targetTeam === '1' ? 'T2->T1' : 'T1->T2';
+        squadLines.push(`**${info.name}** (${arrow}, ${info.count})`);
+      });
+      
+      const squadText = squadLines.length > 15 
+        ? squadLines.slice(0, 15).join('\n') + `\n...and ${squadLines.length - 15} more`
+        : squadLines.join('\n');
+        
+      embed.addField('Squads Moving', squadText, false);
+    }
+    
+    if (unassignedCount > 0) {
+      embed.addField('Unassigned Players', `${unassignedCount} players moving`, false);
+    }
+
     if (teamLists['1'].length > 0) {
       const team1Name = teamBalancer.getTeamName(1);
       const playerNames = await DiscordHelpers.resolveSteamIDsToNames(teamLists['1'], teamBalancer);
@@ -95,6 +170,10 @@ export const DiscordHelpers = {
       const team2Name = teamBalancer.getTeamName(2);
       const playerNames = await DiscordHelpers.resolveSteamIDsToNames(teamLists['2'], teamBalancer);
       embed.addField(`→ Moving to ${team2Name} (${teamCounts['2']} players)`, DiscordHelpers.formatPlayerList(playerNames), false);
+    }
+
+    if (swapPlan.length === 0) {
+      embed.setFooter('The simulation resulted in no player moves. This is expected on a low-population server.');
     }
 
     return embed;
