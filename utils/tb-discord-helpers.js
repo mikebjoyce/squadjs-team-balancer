@@ -19,7 +19,7 @@ export const DiscordHelpers = {
       : 'DISABLED (config)';
 
     const winStreakText = tb.winStreakTeam
-      ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)`
+      ? `${tb.getTeamName(tb.winStreakTeam)} (Team ${tb.winStreakTeam}): ${tb.winStreakCount} win(s)`
       : 'No active streak';
 
     const scrambleInfo =
@@ -42,7 +42,6 @@ export const DiscordHelpers = {
       .addField('Last Scramble', lastScrambleText, true)
       .addField('Scramble Pending', tb._scramblePending ? 'Yes' : 'No', true)
       .addField('Scramble In Progress', tb._scrambleInProgress ? 'Yes' : 'No', true)
-      .addField('Debug Logging', tb.options?.debugLogs ? 'ON' : 'OFF', true)
       .setTimestamp();
 
     return embed;
@@ -81,14 +80,23 @@ export const DiscordHelpers = {
       .addField('Team Names', `${tb.getTeamName(1)} | ${tb.getTeamName(2)}`, true)
       .addField('\u200B', '\u200B', true)
       .addField('Total Players', `${players.length}`, true)
-      .addField('Team 1 / Team 2', `${t1Players.length} / ${t2Players.length}`, true)
+      .addField('Team 1 | Team 2', `${t1Players.length} | ${t2Players.length}`, true)
       .addField('Unassigned', `T1: ${t1UnassignedPlayers.length} | T2: ${t2UnassignedPlayers.length}`, true)
       .addField('Total Squads', `${squads.length}`, true)
       .addField('Squad Split', `T1: ${t1Squads.length} | T2: ${t2Squads.length}`, true)
       .addField('\u200B', '\u200B', true)
-      .addField('Dominant Win Threshold', `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, true)
+      .addField('Dominant Win Threshold (RAAS/AAS)', `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, true)
+      .addField('Single Round Scramble (RAAS/AAS)', 
+        tb.options?.enableSingleRoundScramble 
+          ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` 
+          : 'OFF', 
+        true)
+      .addField('Invasion Thresholds', `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, true)
       .addField('Scramble %', `${(tb.options?.scramblePercentage || 0.5) * 100}%`, true)
-      .addField('Debug Logs', tb.options?.debugLogs ? 'ON' : 'OFF', true);
+      .addField('Scramble Delay', `${tb.options?.scrambleAnnouncementDelay}s`, true)
+      .addField('Max Scramble Time', `${tb.options?.maxScrambleCompletionTime}ms`, true)
+      .addField('Discord Options', `Mirror: ${tb.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${tb.options?.postScrambleDetails ? 'Yes' : 'No'}`, true)
+      .addField('Console Debug Logs', tb.options?.debugLogs ? 'ON' : 'OFF', true);
 
     return embed;
   },
@@ -173,7 +181,7 @@ export const DiscordHelpers = {
     }
 
     if (swapPlan.length === 0) {
-      embed.setFooter('The simulation resulted in no player moves. This is expected on a low-population server.');
+      embed.setFooter('The simulation resulted in no player moves. This is expected behavior on low-population servers.');
     }
 
     return embed;

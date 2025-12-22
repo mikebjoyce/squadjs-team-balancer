@@ -269,14 +269,13 @@ const CommandHandlers = {
               `Plugin Status: ${effectiveStatus}`,
               `Win Streak: ${
                 this.winStreakTeam
-                  ? `${this.getTeamName(this.winStreakTeam)} has ${this.winStreakCount} win(s)`
+                  ? `${this.getTeamName(this.winStreakTeam)} (Team ${this.winStreakTeam}) has ${this.winStreakCount} win(s)`
                   : 'N/A'
               }`,
               `Scramble State: ${scrambleInfo}`,
               `Last Scramble: ${lastScrambleTimeFormatted}`,
               `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
               `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
-              `Debug Logging: ${this.options.debugLogs ? 'ON' : 'OFF'}`,
               `Cached Game Mode: ${gameMode}`,
               `Team 1 Name: ${team1Name}`,
               `Team 2 Name: ${team2Name}`,
@@ -351,6 +350,7 @@ const CommandHandlers = {
               '',
               '----- CONFIGURATION -----',
               `Min Tickets for Dominant Win: ${this.options.minTicketsToCountAsDominantWin}`,
+              `Single Round Scramble: ${this.options.enableSingleRoundScramble ? 'ENABLED' : 'DISABLED'} (> ${this.options.singleRoundScrambleThreshold} tickets)`,
               `Invasion Attack/Defence Thresholds: ${this.options.invasionAttackTeamThreshold} / ${this.options.invasionDefenceTeamThreshold}`,
               `Scramble Announcement Delay: ${this.options.scrambleAnnouncementDelay}s`,
               `Player Swap Retry Interval: ${this.options.changeTeamRetryInterval}ms`,
