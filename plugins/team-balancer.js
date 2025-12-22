@@ -117,7 +117,7 @@ import { TBDiagnostics } from '../utils/tb-diagnostics.js';
 
 export default class TeamBalancer extends BasePlugin {
   static get version() {
-    return '2.0.0';
+    return '2.0.1';
   }
 
   static get description() {

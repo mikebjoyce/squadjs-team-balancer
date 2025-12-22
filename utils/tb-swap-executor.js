@@ -20,6 +20,7 @@ export default class SwapExecutor {
     this.scrambleRetryTimer = null;
     this.overallTimeout = null;
     this.activeSession = null;
+    this.isProcessing = false;
   }
 
   async queueMove(steamID, targetTeamID, isSimulated = false) {
@@ -36,7 +37,11 @@ export default class SwapExecutor {
 
     if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor] Queued move for ${steamID} -> ${targetTeamID}`);
 
-    if (!this.scrambleRetryTimer) this.startMonitoring();
+    if (!this.scrambleRetryTimer) {
+      this.startMonitoring();
+    } else if (this.activeSession) {
+      this.activeSession.totalMoves++;
+    }
   }
 
   startMonitoring() {
@@ -62,62 +67,69 @@ export default class SwapExecutor {
   }
 
   async processRetries() {
-    const now = Date.now();
-    const playersToRemove = [];
-    const currentPlayers = this.server.players;
+    if (this.isProcessing) return;
+    this.isProcessing = true;
 
-    for (const [steamID, moveData] of this.pendingPlayerMoves.entries()) {
-      try {
-        if (now - moveData.startTime > (this.options.maxScrambleCompletionTime || 15000)) {
-          Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Move timeout for ${steamID}`);
-          this.activeSession.failedMoves++;
-          playersToRemove.push(steamID);
-          continue;
-        }
+    try {
+      const now = Date.now();
+      const playersToRemove = [];
+      const currentPlayers = this.server.players;
 
-        const player = currentPlayers.find((p) => p.steamID === steamID);
-        if (!player) {
-          this.activeSession.completedMoves++;
-          playersToRemove.push(steamID);
-          continue;
-        }
+      for (const [steamID, moveData] of this.pendingPlayerMoves.entries()) {
+        try {
+          if (now - moveData.startTime > (this.options.maxScrambleCompletionTime || 15000)) {
+            Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Move timeout for ${steamID}`);
+            this.activeSession.failedMoves++;
+            playersToRemove.push(steamID);
+            continue;
+          }
 
-        moveData.attempts++;
-        const maxRconAttempts = 5;
-
-        if (moveData.attempts <= maxRconAttempts) {
-          try {
-            await this.server.rcon.switchTeam(steamID, moveData.targetTeamID);
+          const player = currentPlayers.find((p) => p.steamID === steamID);
+          if (!player) {
             this.activeSession.completedMoves++;
             playersToRemove.push(steamID);
-            if (this.options.warnOnSwap) {
-              try {
-                  await this.server.rcon.warn(steamID, this.RconMessages.playerScrambledWarning);
-                } catch (err) {
-                  if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor] warn failed for ${steamID}: ${err}`);
+            continue;
+          }
+
+          moveData.attempts++;
+          const maxRconAttempts = 5;
+
+          if (moveData.attempts <= maxRconAttempts) {
+            try {
+              await this.server.rcon.switchTeam(steamID, moveData.targetTeamID);
+              this.activeSession.completedMoves++;
+              playersToRemove.push(steamID);
+              if (this.options.warnOnSwap) {
+                try {
+                    await this.server.rcon.warn(steamID, this.RconMessages.playerScrambledWarning);
+                  } catch (err) {
+                    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor] warn failed for ${steamID}: ${err}`);
+                }
+              }
+            } catch (err) {
+              Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Move attempt ${moveData.attempts} failed for ${steamID}: ${err?.message || err}`);
+              if (moveData.attempts >= maxRconAttempts) {
+                this.activeSession.failedMoves++;
+                playersToRemove.push(steamID);
               }
             }
-          } catch (err) {
-            Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Move attempt ${moveData.attempts} failed for ${steamID}: ${err?.message || err}`);
-            if (moveData.attempts >= maxRconAttempts) {
-              this.activeSession.failedMoves++;
-              playersToRemove.push(steamID);
-            }
+          } else {
+            this.activeSession.failedMoves++;
+            playersToRemove.push(steamID);
           }
-        } else {
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Error processing ${steamID}: ${err?.message || err}`);
           this.activeSession.failedMoves++;
           playersToRemove.push(steamID);
         }
-      } catch (err) {
-        Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Error processing ${steamID}: ${err?.message || err}`);
-        this.activeSession.failedMoves++;
-        playersToRemove.push(steamID);
       }
+
+      for (const sid of playersToRemove) this.pendingPlayerMoves.delete(sid);
+
+      if (this.pendingPlayerMoves.size === 0) this.completeSession();
+    } finally {
+      this.isProcessing = false;
     }
-
-    for (const sid of playersToRemove) this.pendingPlayerMoves.delete(sid);
-
-    if (this.pendingPlayerMoves.size === 0) this.completeSession();
   }
 
   completeSession() {
