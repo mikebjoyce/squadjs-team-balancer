@@ -205,8 +205,10 @@ This will show squad selection logic, player move attempts, and retry status in 
 ## Author
 
 **Slacker**
+```
 Discord: `real_slacker`
 Email: `mike.b.joyce@gmail.com`
+```
 
 ---
 
