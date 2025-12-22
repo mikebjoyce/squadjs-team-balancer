@@ -99,7 +99,7 @@ squad-server/
 │   ├── tb-diagnostics.js
 │   ├── tb-discord-helpers.js
 │   └── tb-swap-executor.js
-└── tests/ (optional)
+└── testing/ (optional)
     ├── plugin-logic-test-runner.js
     ├── scrambler-test-runner.js
     └── mock-data-generator.js
