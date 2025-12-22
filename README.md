@@ -86,7 +86,7 @@ Add to your `config.json`:
 },
 ```
 
-**File Placement**: Move the project files into your SquadJS directory's squad-server folder]
+**File Placement**: Move the project files into your SquadJS directory's squad-server folder
 
 ```
 squad-server/
