@@ -222,6 +222,16 @@ export default class TeamBalancer extends BasePlugin {
         type: 'boolean',
         description: 'Post detailed scramble swap plans to Discord.'
       },      
+      requireScrambleConfirmation: {
+        default: true,
+        type: 'boolean',
+        description: 'Require !scramble confirm before executing a scramble.'
+      },
+      scrambleConfirmationTimeout: {
+        default: 60,
+        type: 'number',
+        description: 'Time in seconds to wait for scramble confirmation.'
+      },
       devMode: {
         default: false,
         type: 'boolean'
@@ -268,6 +278,7 @@ export default class TeamBalancer extends BasePlugin {
     this.winStreakCount = 0;
     this.lastSyncTimestamp = null;
     this.manuallyDisabled = false;
+    this.scrambleConfirmation = null;
 
     this._isMounted = false;
     this._scramblePending = false;
@@ -562,12 +573,30 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   async handleDiscordScrambleCommand(message) {
-    const args = message.content.replace(/^!scramble\s*/i, '').trim().toLowerCase().split(/\s+/).filter(a => a);
+    let args = message.content.replace(/^!scramble\s*/i, '').trim().toLowerCase().split(/\s+/).filter(a => a);
+    const isConfirm = args.includes('confirm');
+
+    if (isConfirm) {
+      if (!this.scrambleConfirmation) {
+        await message.reply('⚠️ No pending scramble confirmation found.');
+        return;
+      }
+      const timeoutMs = (this.options.scrambleConfirmationTimeout || 60) * 1000;
+      if (Date.now() - this.scrambleConfirmation.timestamp > timeoutMs) {
+        this.scrambleConfirmation = null;
+        await message.reply('⚠️ Scramble confirmation expired.');
+        return;
+      }
+      args = this.scrambleConfirmation.args;
+      this.scrambleConfirmation = null;
+    }
+
     const hasNow = args.includes('now');
     const hasDry = args.includes('dry');
     const isCancel = args.includes('cancel');
 
     if (isCancel) {
+      this.scrambleConfirmation = null;
       const cancelled = await this.cancelPendingScramble(null, null, false);
       if (cancelled) await message.reply('✅ Pending scramble cancelled.');
       else if (this._scrambleInProgress) await message.reply('⚠️ Cannot cancel scramble - it is already executing.');
@@ -576,6 +605,14 @@ export default class TeamBalancer extends BasePlugin {
       if (this._scramblePending || this._scrambleInProgress) {
         const status = this._scrambleInProgress ? 'executing' : 'pending';
         await message.reply(`⚠️ Scramble already ${status}. Use \`!scramble cancel\` to cancel.`);
+        return;
+      }
+
+      if (this.options.requireScrambleConfirmation && !hasDry && !isConfirm) {
+        this.scrambleConfirmation = { timestamp: Date.now(), args: args };
+        const type = hasNow ? 'IMMEDIATE' : 'scheduled';
+        const timeoutSec = this.options.scrambleConfirmationTimeout || 60;
+        await message.reply(`⚠️ Please confirm ${type} scramble by typing \`!scramble confirm\` within ${timeoutSec} seconds.`);
         return;
       }
 
