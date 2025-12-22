@@ -1,3 +1,13 @@
+/**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║                   SELF-DIAGNOSTICS SUITE                      ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * Part of the TeamBalancer Plugin
+ *
+ * Runs integrity checks on the database connection and performs
+ * dry-run simulations of the Scrambler to verify plugin health.
+ */
 import Logger from '../../core/logger.js';
 import Scrambler from './tb-scrambler.js';
 

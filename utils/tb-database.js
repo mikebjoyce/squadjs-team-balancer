@@ -1,3 +1,11 @@
+/**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║                     PERSISTENCE LAYER                         ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * Part of the TeamBalancer Plugin
+ */
+
 import Sequelize from 'sequelize';
 import Logger from '../../core/logger.js';
 const { DataTypes } = Sequelize;

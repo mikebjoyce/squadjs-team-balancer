@@ -1,8 +1,9 @@
-
 /**
  * ╔═══════════════════════════════════════════════════════════════╗
  * ║             SQUAD-PRESERVING TEAM SCRAMBLE ALGORITHM          ║
  * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * Part of the TeamBalancer Plugin
  *
  * This algorithm efficiently rebalances Squad teams by swapping whole squads
  * or unassigned players. It prioritizes maintaining squad cohesion and

@@ -1,6 +1,10 @@
-// ╔═══════════════════════════════════════════════════════════════╗
-// ║                PLAYER COMMAND & RESPONSE LOGIC                ║
-// ╚═══════════════════════════════════════════════════════════════╝
+/**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║                PLAYER COMMAND & RESPONSE LOGIC                ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * Part of the TeamBalancer Plugin
+ */
 
 import Logger from '../../core/logger.js';
 import Discord from 'discord.js';
@@ -306,35 +310,65 @@ const CommandHandlers = {
             const dbResult = results.find((r) => r.name === 'Database');
             const scrambleResult = results.find((r) => r.name === 'Live Scramble Test');
 
+            // Restore detailed stats calculation
+            const players = this.server.players;
+            const squads = this.server.squads;
+            const t1Players = players.filter((p) => p.teamID === 1);
+            const t2Players = players.filter((p) => p.teamID === 2);
+            const t1UnassignedPlayers = t1Players.filter((p) => p.squadID === null);
+            const t2UnassignedPlayers = t2Players.filter((p) => p.squadID === null);
+            const t1Squads = squads.filter((s) => s.teamID === 1);
+            const t2Squads = squads.filter((s) => s.teamID === 2);
+            
+            const scrambleInfo =
+              this.swapExecutor.pendingPlayerMoves.size > 0
+                ? `${this.swapExecutor.pendingPlayerMoves.size} pending player moves`
+                : 'No active scramble';
+
             const layer = await this.server.currentLayer;
             const layerName = layer?.name || 'Unknown';
             const gameMode = this.gameModeCached || 'N/A';
-
-            const streakText =
-              this.winStreakCount > 0
-                ? `${this.winStreakCount} win(s) on Team ${this.getTeamName(this.winStreakTeam)}`
-                : 'No active streak';
+            const team1Name = this.getTeamName(1);
+            const team2Name = this.getTeamName(2);
 
             const diagMsg = [
               `--- [TeamBalancer Diag] ---`,
               `DB Connection: [${dbResult.message}]`,
               `Live Scramble Test: [${scrambleResult.message}]`,
-              `Current Layer: ${layerName} (Mode: ${gameMode})`,
-              `Active Streak: ${streakText}`,
+              '',
+              '----- CORE STATUS -----',
+              `Version: ${this.constructor.version}`,
+              `Plugin Status: ${this.manuallyDisabled ? 'DISABLED (Manual override)' : 'ENABLED'}`,
+              `Win Streak: ${
+                this.winStreakTeam
+                  ? `${this.getTeamName(this.winStreakTeam)} with ${this.winStreakCount} win(s)`
+                  : 'N/A'
+              }`,
+              `Max Win Streak Threshold: ${this.options.maxWinStreak} wins`,
+              `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
+              `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
+              `Scramble System: ${scrambleInfo}`,
+              '',
+              '----- ROUND/LAYER INFO -----',
+              `Layer: ${layerName}`,
+              `Game Mode: ${gameMode}`,
+              `Team 1 Name: ${team1Name}`,
+              `Team 2 Name: ${team2Name}`,
+              '',
+              '----- PLAYER/SQUAD INFO -----',
+              `Total Players: ${players.length}`,
+              `Team 1: ${t1Players.length} (Unassigned: ${t1UnassignedPlayers.length})`,
+              `Team 2: ${t2Players.length} (Unassigned: ${t2UnassignedPlayers.length})`,
+              `Total Squads: ${squads.length}`,
+              `Team 1 Squads: ${t1Squads.length}`,
+              `Team 2 Squads: ${t2Squads.length}`,
               `------------------------------------------`
             ].join('\n');
             await this.server.rcon.warn(steamID, diagMsg);
 
             if (this.discordChannel) {
-              const embed = new Discord.MessageEmbed()
-                .setColor(results.every((r) => r.pass) ? '#2ecc71' : '#e74c3c')
-                .setTitle('⚙️ In-Game Diagnostics Report')
-                .setDescription(`Executed by **${adminName}**`)
-                .addField('Database', `[${dbResult.message}]`, false)
-                .addField('Live Scramble Test', `[${scrambleResult.message}]`, false)
-                .addField('Layer', `${layerName} (${gameMode})`, true)
-                .addField('Active Streak', streakText, true)
-                .setTimestamp();
+              const embed = DiscordHelpers.buildDiagEmbed(this, results);
+              embed.setDescription(`Executed by **${adminName}**\n${embed.description}`);
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
             break;
@@ -342,7 +376,7 @@ const CommandHandlers = {
           default: {
             this.respond(
               player,
-              'Invalid command. Usage: !teambalancer [on|off | status | diag | debug on|off]'
+              'Invalid command. Usage: !teambalancer [status|diag|on|off|debug|help] or !scramble [now|dry|cancel]'
             );
           }
         }

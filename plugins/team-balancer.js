@@ -10,10 +10,11 @@
  *
  * Admin Commands:
  * !teambalancer status           → View win streak and plugin status.
- * !teambalancer diag             → Runs diagnostic with dry-run scrambles.
+ * !teambalancer diag             → Run self-diagnostics (DB check + Live Scramble Sim).
  * !teambalancer on               → Enable win streak tracking.
  * !teambalancer off              → Disable win streak tracking.
  * !teambalancer debug on|off     → Enable/disable debug logging.
+ * !teambalancer help             → (Discord Only) List available commands.
  *
  * !scramble                      → Manually trigger scramble with countdown.
  * !scramble now                  → Immediate scramble (no countdown).

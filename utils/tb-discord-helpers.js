@@ -1,4 +1,10 @@
 /**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║                  DISCORD MESSAGING UTILITY                    ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * Part of the TeamBalancer Plugin
+ *
  * Helper functions for Discord integration.
  *
  * COMPATIBILITY NOTE:

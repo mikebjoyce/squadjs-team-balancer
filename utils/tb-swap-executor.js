@@ -1,3 +1,11 @@
+/**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║                   SWAP EXECUTION ENGINE                       ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * Part of the TeamBalancer Plugin
+ */
+
 import Logger from '../../core/logger.js';
 import { DiscordHelpers } from './tb-discord-helpers.js';
 

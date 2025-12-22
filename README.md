@@ -49,6 +49,10 @@ Add to your `config.json`:
     "sqlite": {
       "dialect": "sqlite",
       "storage": "squad-server.sqlite"
+    },
+    "discord": {
+      "connector": "discord",
+      "token": "YOUR_BOT_TOKEN"
     }
   },
 
@@ -77,52 +81,59 @@ Add to your `config.json`:
 
 ## Commands
 
-### Admin
+```text
+Public Commands:
+!teambalancer                  → View current win streak and status.
 
-| Command | Description |
-|---|---|
-| `!teambalancer on\|off` | Enable/disable auto-tracking |
-| `!teambalancer status` | Show plugin config, streak, and stats |
-| `!teambalancer debug on\|off` | Enable/disable debug logging |
-| `!teambalancer diag` | Run 3 dry-run simulations |
-| `!teambalancer scramble` | Manual scramble with delay |
-| `!teambalancer cancel` | Cancel countdown |
-| `!scramble` | Alias for `!teambalancer scramble` |
-| `!scramble now` | Immediate scramble (no delay) |
-| `!scramble cancel` | Cancel pending countdown |
+Admin Commands:
+!teambalancer status           → View win streak and plugin status.
+!teambalancer diag             → Run self-diagnostics (DB check + Live Scramble Sim + Discord Check).
+!teambalancer on               → Enable win streak tracking.
+!teambalancer off              → Disable win streak tracking.
+!teambalancer debug on|off     → Enable/disable debug logging.
+!teambalancer help             → List available commands.
 
-### Player
-
-| Command | Description |
-|---|---|
-| `!teambalancer` | Show win streak, last scramble, plugin state |
+!scramble                      → Manually trigger scramble with countdown.
+!scramble now                  → Immediate scramble (no countdown).
+!scramble dry                  → Dry-run scramble (simulation only).
+!scramble cancel               → Cancel pending scramble countdown.
+```
 
 ## Configuration Options
 
-| Key | Description | Default |
-|---|---|---|
-| `enableWinStreakTracking` | Enables or disables the automatic win streak tracking system. | `true` |
-| `maxWinStreak` | The number of dominant wins required for a team to trigger an automatic scramble. | `2` |
-| `minTicketsToCountAsDominantWin` | The minimum ticket difference required for a win to be considered "dominant" in non-Invasion game modes. | `150` |
-| `invasionAttackTeamThreshold` | The ticket difference threshold for the attacking team to be considered "dominant" in Invasion game mode. | `300` |
-| `invasionDefenceTeamThreshold` | The ticket difference threshold for the defending team to be considered "dominant" in Invasion game mode. | `650` |
-| `scrambleAnnouncementDelay` | The delay in seconds before a scramble executes after being announced. | `12` |
-| `scramblePercentage` | The percentage of total players the scramble algorithm will attempt to move to balance teams (0.0 to 1.0). | `0.5` |
-| `changeTeamRetryInterval` | The interval in milliseconds between retry attempts when moving players between teams. | `200` |
-| `maxScrambleCompletionTime` | The maximum total time in milliseconds allowed for all player swaps to complete during a scramble. | `15000` |
-| `showWinStreakMessages` | Controls whether messages about win streaks are broadcast to the server. | `true` |
-| `warnOnSwap` | Controls whether players receive a warning message when they are swapped between teams. | `true` |
-| `useGenericTeamNamesInBroadcasts` | If true, broadcasts will use "Team 1" and "Team 2" instead of faction names. | `false` |
-| `debugLogs` | Enables verbose debug logging to the server console. | `false` |
-| `dryRunMode` | If true, manual scrambles will only simulate the moves without actually executing them via RCON. | `true` |
+```text
+Core Settings:
+database                       - The Sequelize connector for persistent data storage.
+enableWinStreakTracking        - Enable/disable automatic win streak tracking.
+maxWinStreak                   - Number of dominant wins to trigger a scramble.
+enableSingleRoundScramble      - Enable scramble if a single round ticket margin is huge.
+singleRoundScrambleThreshold   - Ticket margin to trigger single-round scramble.
+minTicketsToCountAsDominantWin - Min ticket diff for a dominant win (Standard).
+invasionAttackTeamThreshold    - Ticket diff for Attackers to be dominant (Invasion).
+invasionDefenceTeamThreshold   - Ticket diff for Defenders to be dominant (Invasion).
 
-### Notes
+Scramble Execution:
+scrambleAnnouncementDelay      - Seconds before scramble executes after announcement.
+scramblePercentage             - % of players to move (0.0 - 1.0).
+changeTeamRetryInterval        - Retry interval (ms) for player swaps.
+maxScrambleCompletionTime      - Max time (ms) for all swaps to complete.
+warnOnSwap                     - Warn players when swapped.
 
-- `scrambleAnnouncementDelay` minimum: 10 sec
-- `scramblePercentage` must be a value between 0.0 and 1.0.
-- `changeTeamRetryInterval` minimum: 200 ms
-- `maxScrambleCompletionTime` minimum: 5000 ms
-- All options validated on startup
+Messaging & Display:
+showWinStreakMessages          - Broadcast win streak messages.
+useGenericTeamNamesInBroadcasts - Use "Team 1"/"Team 2" instead of faction names.
+
+Discord Integration:
+discordClient                  - Discord connector for admin commands.
+discordChannelID               - Channel ID for admin commands and logs.
+discordAdminRoleID             - Role ID for admin permissions (empty = all in channel).
+mirrorRconBroadcasts           - Mirror RCON broadcasts to Discord.
+postScrambleDetails            - Post detailed swap plans to Discord.
+
+Debug & Dev:
+debugLogs                      - Enable verbose console logging.
+devMode                        - Enable dev mode.
+```
 
 ## Game Mode Support
 
