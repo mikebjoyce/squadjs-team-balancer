@@ -113,7 +113,7 @@ Public Commands:
 
 Admin Commands:
 !teambalancer status           → View win streak and plugin status.
-!teambalancer diag             → Run self-diagnostics (DB check + Live Scramble Sim + Discord Check).
+!teambalancer diag             → Run self-diagnostics (DB check + Live Scramble Sim).
 !teambalancer on               → Enable win streak tracking.
 !teambalancer off              → Disable win streak tracking.
 !teambalancer debug on|off     → Enable/disable debug logging.
