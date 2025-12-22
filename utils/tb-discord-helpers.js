@@ -1,3 +1,11 @@
+/**
+ * Helper functions for Discord integration.
+ *
+ * COMPATIBILITY NOTE:
+ * This module is written using Discord.js v13+ syntax (e.g., { embeds: [...] }).
+ * However, it includes runtime compatibility checks to support Discord.js v12
+ * by converting payloads to { embed: ... } when necessary.
+ */
 import Discord from 'discord.js';
 import Logger from '../../core/logger.js';
 
@@ -165,6 +173,12 @@ export const DiscordHelpers = {
     if (!content) {
       Logger.verbose('TeamBalancer', 1, 'Discord send failed: Content was empty.');
       return false;
+    }
+
+    // Fix for Discord.js v12 compatibility: Convert { embeds: [embed] } to { embed: embed }
+    if (Discord.version && Discord.version.startsWith('12') && content.embeds && Array.isArray(content.embeds) && content.embeds.length > 0) {
+      content.embed = content.embeds[0];
+      delete content.embeds;
     }
 
     try {

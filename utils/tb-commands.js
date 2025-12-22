@@ -8,8 +8,6 @@ import { DiscordHelpers } from './tb-discord-helpers.js';
 
 const CommandHandlers = {
   register(tb) {
-    console.log("Command Handlers are being registered");
-
     tb.respond = function (player, msg) {
       const playerName = player?.name || 'Unknown Player';
       const steamID = player?.steamID || 'Unknown SteamID';
@@ -193,7 +191,6 @@ const CommandHandlers = {
             this.manuallyDisabled = true;
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking disabled by ${adminName}`);
             this.respond(player, 'Win streak tracking disabled.');
-            await this.resetStreak('Manual disable');
             try {
               await this.server.rcon.broadcast(
                 `${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`
@@ -202,14 +199,19 @@ const CommandHandlers = {
               Logger.verbose('TeamBalancer', 1, `Failed to broadcast tracking disabled message: ${err.message}`);
             }
             if (this.discordChannel) {
-              const embed = new Discord.MessageEmbed()
-                .setColor('#3498db')
-                .setTitle('🎮 In-Game Command: !teambalancer off')
-                .setDescription(`Executed by **${adminName}**`)
-                .addField('Response', 'Win streak tracking disabled.', false)
-                .setTimestamp();
-              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+              try {
+                const embed = new Discord.MessageEmbed()
+                  .setColor('#3498db')
+                  .setTitle('🎮 In-Game Command: !teambalancer off')
+                  .setDescription(`Executed by **${adminName}**`)
+                  .addField('Response', 'Win streak tracking disabled.', false)
+                  .setTimestamp();
+                await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+              } catch (discordErr) {
+                Logger.verbose('TeamBalancer', 1, `Discord embed failed: ${discordErr.message}`);
+              }
             }
+            await this.resetStreak('Manual disable');
             break;
           }
           case 'debug': {
