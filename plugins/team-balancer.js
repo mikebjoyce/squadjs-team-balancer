@@ -52,8 +52,8 @@
  * requireScrambleConfirmation    - Require '!scramble confirm' before executing a scramble.
  * scrambleConfirmationTimeout    - Time in seconds to wait for scramble confirmation.
  *
- * Debug & Dev:
- * devMode                        - Enable dev mode.
+ * Dev:
+ * devMode                        - Enable dev mode. Allows anyone (regardless of admin priviledges) to run chat commands in-game.
  *
  * ─── CONFIGURATION EXAMPLE ──────────────────────────────────────
  
