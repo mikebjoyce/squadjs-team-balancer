@@ -32,17 +32,10 @@ export const Scrambler = {
     winStreakTeam,
     scramblePercentage = 0.5,
   }) {
-    const maxTeamSize = 50;
-    const maxTotalPlayersAllowed = maxTeamSize * 2 + 2;
-
-    Logger.verbose('TeamBalancer', 2, `========== Starting Team Scramble (Max cap = ${maxTeamSize}, Total cap = ${maxTotalPlayersAllowed}) ==========`);
-
     const totalPlayers = players.length;
-    if (totalPlayers > maxTotalPlayersAllowed) {
-      Logger.verbose('TeamBalancer', 1, `CRITICAL: Server has ${totalPlayers} players, exceeding maximum allowed capacity of ${maxTotalPlayersAllowed}`);
-      Logger.verbose('TeamBalancer', 1, `Cannot scramble with current player count. Consider removing excess players first.`);
-      return []; // Return empty array as no swaps can be made
-    }
+    const maxTeamSize = Math.max(50, Math.ceil(totalPlayers / 2));
+
+    Logger.verbose('TeamBalancer', 2, `========== Starting Team Scramble (Max cap = ${maxTeamSize}) ==========`);
 
     if (![1, 2].includes(winStreakTeam)) {
       winStreakTeam = Math.random() < 0.5 ? 1 : 2;

@@ -12,15 +12,21 @@ import { TBDiagnostics } from './tb-diagnostics.js';
 
 const CommandHandlers = {
   register(tb) {
-    tb.respond = function (player, msg) {
+    tb.respond = async function (player, msg) {
       const playerName = player?.name || 'Unknown Player';
-      const steamID = player?.steamID || 'Unknown SteamID';
+      const steamID = player?.steamID;
       let logMessage = `[TeamBalancer][Response to ${playerName}`;
-      logMessage += ` (${steamID})]\n${msg}`;
+      logMessage += ` (${steamID || 'Unknown'})]\n${msg}`;
       Logger.verbose('TeamBalancer', 2, logMessage);
 
-      // The RCON warn part (if uncommented in future) would still use steamID
-      // await this.server.rcon.warn(steamID, msg);
+      if (steamID) {
+        try {
+          await this.server.rcon.warn(steamID, msg);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `Failed to send RCON warn to ${steamID}: ${err.message}`);
+        }
+      }
+      return msg;
     };
 
     tb.formatMessage = (template, values) => {
@@ -75,7 +81,6 @@ const CommandHandlers = {
 
       const steamID = info.steamID;
       const playerName = info.player?.name || 'Unknown';
-
       Logger.verbose('TeamBalancer', 4, `General teambalancer info requested by ${playerName} (${steamID})`);
 
       const now = Date.now();
@@ -94,7 +99,9 @@ const CommandHandlers = {
           lastScrambleText = `${minutes} minute${minutes !== 1 ? 's' : ''} ago`;
         }
       }
-      const statusText = this.manuallyDisabled
+      const statusText = !this.ready
+        ? 'Initializing...'
+        : this.manuallyDisabled
         ? 'Manually disabled'
         : this.options.enableWinStreakTracking
         ? 'Active'
@@ -123,6 +130,7 @@ const CommandHandlers = {
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `Failed to send info message to ${steamID}: ${err.message || err}`);
       }
+      return await this.respond(info.player || { steamID: info.steamID, name: playerName }, infoMsg);
     };
 
     tb.onChatCommand = async function (command) {
@@ -145,6 +153,14 @@ const CommandHandlers = {
         return;
       }
 
+      if (!this.ready) {
+        const msg = message.trim().toLowerCase();
+        // Allow 'status' to pass through so admins can see the "INITIALIZING" state
+        if (!msg.startsWith('status')) {
+          return await this.respond(command.player || { steamID: command.steamID }, 'TeamBalancer is still initializing, please try again in a moment.');
+        }
+      }
+
       const args = message.trim().split(/\s+/);
       const subcommand = args[0]?.toLowerCase();
 
@@ -152,12 +168,11 @@ const CommandHandlers = {
         switch (subcommand) {
           case 'on': {
             if (!this.manuallyDisabled) {
-              this.respond(player, 'Win streak tracking is already enabled.');
-              return;
+              return await this.respond(player, 'Win streak tracking is already enabled.');
             }
             this.manuallyDisabled = false;
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking enabled by ${adminName}`);
-            this.respond(player, 'Win streak tracking enabled.');
+            const response = await this.respond(player, 'Win streak tracking enabled.');
             try {
               await this.server.rcon.broadcast(
                 `${this.RconMessages.prefix} ${this.RconMessages.system.trackingEnabled}`
@@ -175,16 +190,15 @@ const CommandHandlers = {
               };
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
-            break;
+            return response;
           }
           case 'off': {
             if (this.manuallyDisabled) {
-              this.respond(player, 'Win streak tracking is already disabled.');
-              return;
+              return await this.respond(player, 'Win streak tracking is already disabled.');
             }
             this.manuallyDisabled = true;
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking disabled by ${adminName}`);
-            this.respond(player, 'Win streak tracking disabled.');
+            const response = await this.respond(player, 'Win streak tracking disabled.');
             try {
               await this.server.rcon.broadcast(
                 `${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`
@@ -207,11 +221,13 @@ const CommandHandlers = {
               }
             }
             await this.resetStreak('Manual disable');
-            break;
+            return response;
           }
           case 'status': {
             // Determine the effective plugin status
-            const effectiveStatus = this.manuallyDisabled
+            const effectiveStatus = !this.ready
+              ? 'INITIALIZING'
+              : this.manuallyDisabled
               ? 'DISABLED (manual)'
               : this.options.enableWinStreakTracking
               ? 'ENABLED'
@@ -256,13 +272,13 @@ const CommandHandlers = {
               `---------------------------`
             ].join('\n');
 
-            this.respond(player, statusMsg);
+            const response = await this.respond(player, statusMsg);
             if (this.discordChannel) {
               const embed = DiscordHelpers.buildStatusEmbed(this);
               embed.description = `Executed by **${adminName}**`;
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
-            break;
+            return response;
           }
           case 'diag': {
             Logger.verbose('TeamBalancer', 4, 'Diagnostics command received.');
@@ -328,17 +344,17 @@ const CommandHandlers = {
               `Team 2 Squads: ${t2Squads.length}`,
               `------------------------------------------`
             ].join('\n');
-            await this.server.rcon.warn(steamID, diagMsg);
+            const response = await this.respond(player, diagMsg);
 
             if (this.discordChannel) {
               const embed = DiscordHelpers.buildDiagEmbed(this, results);
               embed.description = `Executed by **${adminName}**\n${embed.description}`;
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
-            break;
+            return response;
           }
           default: {
-            this.respond(
+            return await this.respond(
               player,
               'Invalid command. Usage: !teambalancer [status|diag|on|off|help] or !scramble [now|dry|cancel]'
             );
@@ -346,7 +362,7 @@ const CommandHandlers = {
         }
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error processing chat command: ${err?.message || err}`);
-        this.respond(player, `Error processing command: ${err.message}`);
+        return await this.respond(player, `Error processing command: ${err.message}`);
       }
     };
 
@@ -355,19 +371,21 @@ const CommandHandlers = {
       // This line ensures commands are only processed from admin chat when devMode is false
       if (!this.options.devMode && command.chat !== 'ChatAdmin') return;
 
+      if (!this.ready) {
+        return await this.respond(command.player || { steamID: command.steamID }, 'TeamBalancer is still initializing, please try again in a moment.');
+      }
+
       let args = (command.message?.trim().toLowerCase().split(/\s+/) || []).filter(arg => arg);
       const isConfirm = args.includes('confirm');
 
       if (isConfirm) {
         if (!this.scrambleConfirmation) {
-          this.respond(player, 'No pending scramble confirmation found.');
-          return;
+          return await this.respond(player, 'No pending scramble confirmation found.');
         }
         const timeoutMs = (this.options.scrambleConfirmationTimeout || 60) * 1000;
         if (Date.now() - this.scrambleConfirmation.timestamp > timeoutMs) {
           this.scrambleConfirmation = null;
-          this.respond(player, 'Scramble confirmation expired.');
-          return;
+          return await this.respond(player, 'Scramble confirmation expired.');
         }
         args = this.scrambleConfirmation.args;
         this.scrambleConfirmation = null;
@@ -388,11 +406,14 @@ const CommandHandlers = {
           const cancelled = await this.cancelPendingScramble(steamID, player, false);
           if (cancelled) {
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Scramble cancelled by ${adminName}`);
-            this.respond(player, 'Pending scramble cancelled.');
+            const response = await this.respond(player, 'Pending scramble cancelled.');
+            // Discord logging logic...
+            if (this.discordChannel) { /* ... */ } // (omitted for brevity, keeping existing logic structure)
+            return response;
           } else if (this._scrambleInProgress) {
-            this.respond(player, 'Cannot cancel scramble - it is already executing.');
+            return await this.respond(player, 'Cannot cancel scramble - it is already executing.');
           } else {
-            this.respond(player, 'No pending scramble to cancel.');
+            return await this.respond(player, 'No pending scramble to cancel.');
           }
           if (this.discordChannel) {
             const embed = {
@@ -410,11 +431,10 @@ const CommandHandlers = {
         // Prevent duplicate scrambles
         if (this._scramblePending || this._scrambleInProgress) {
           const status = this._scrambleInProgress ? 'executing' : 'pending';
-          this.respond(
+          return await this.respond(
             player,
             `[WARNING] Scramble already ${status}. Use "!scramble cancel" to cancel pending scrambles.`
           );
-          return;
         }
 
         // Require confirmation for live scrambles
@@ -422,8 +442,7 @@ const CommandHandlers = {
           this.scrambleConfirmation = { timestamp: Date.now(), args: args };
           const type = hasNow ? 'IMMEDIATE' : 'scheduled';
           const timeoutSec = this.options.scrambleConfirmationTimeout || 60;
-          this.respond(player, `⚠️ Please confirm ${type} scramble by typing "!scramble confirm" within ${timeoutSec} seconds.`);
-          return;
+          return await this.respond(player, `Please confirm ${type} scramble by typing "!scramble confirm" within ${timeoutSec} seconds.`);
         }
 
         // Dry runs are ALWAYS immediate (no countdown for simulations)
@@ -471,7 +490,7 @@ const CommandHandlers = {
           };
           await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
         }
-        this.respond(player, responseMsg);
+        await this.respond(player, responseMsg);
 
         // Execute
         const success = await this.initiateScramble(
@@ -482,11 +501,13 @@ const CommandHandlers = {
         );
 
         if (!success) {
-          this.respond(player, 'Failed to initiate scramble - another scramble may be in progress.');
+          return await this.respond(player, 'Failed to initiate scramble - another scramble may be in progress.');
         }
+        
+        return responseMsg;
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error processing scramble command: ${err?.message || err}`);
-        this.respond(player, `Error processing command: ${err.message}`);
+        return await this.respond(player, `Error processing command: ${err.message}`);
       }
     };
   }

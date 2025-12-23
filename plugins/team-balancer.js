@@ -276,6 +276,7 @@ export default class TeamBalancer extends BasePlugin {
     this.lastSyncTimestamp = null;
     this.manuallyDisabled = false;
     this.scrambleConfirmation = null;
+    this.ready = false;
 
     this._isMounted = false;
     this._scramblePending = false;
@@ -303,6 +304,7 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 1, 'Plugin already mounted, skipping duplicate mount attempt.');
       return;
     }
+    this.ready = false;
     Logger.verbose('TeamBalancer', 4, 'Mounting plugin and adding listeners.');
     try {
       const dbState = await this.db.initDB();
@@ -356,6 +358,8 @@ export default class TeamBalancer extends BasePlugin {
     this.startPollingTeamAbbreviations();
     this.validateOptions();
     this._isMounted = true;
+    this.ready = true;
+    Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Plugin is now fully ready.');
   }
 
   async unmount() {
@@ -380,6 +384,7 @@ export default class TeamBalancer extends BasePlugin {
     this.stopPollingGameInfo();
     this.stopPollingTeamAbbreviations();
     this._scrambleInProgress = false;
+    this.ready = false;
     this._isMounted = false;
   }
 
@@ -495,6 +500,7 @@ export default class TeamBalancer extends BasePlugin {
   // ╚═══════════════════════════════════════╝
 
   async onDiscordMessage(message) {
+    if (!this.ready) return;
     if (message.author.bot) return;
     if (message.channel.id !== this.options.discordChannelID) return;
 
@@ -654,6 +660,7 @@ export default class TeamBalancer extends BasePlugin {
   // ╚═══════════════════════════════════════╝
 
   async onNewGame() {
+    if (!this.ready) return;
     try {
       Logger.verbose('TeamBalancer', 4, '[onNewGame] Event triggered');
       
@@ -694,6 +701,7 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   async onRoundEnded(data) {
+    if (!this.ready) return;
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
 
