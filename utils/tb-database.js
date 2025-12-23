@@ -52,7 +52,7 @@ export default class TBDatabase {
             lastScrambleTime: null
           },
           transaction: t,
-          lock: t.LOCK.UPDATE
+          lock: Sequelize.Transaction.LOCK.UPDATE
         });
 
         const staleCutoff = 2.5 * 60 * 60 * 1000;
@@ -99,7 +99,7 @@ export default class TBDatabase {
       return await this.sequelize.transaction(async (t) => {
         const record = await this.TeamBalancerStateModel.findByPk(1, {
           transaction: t,
-          lock: t.LOCK.UPDATE
+          lock: Sequelize.Transaction.LOCK.UPDATE
         });
         if (!record) {
           Logger.verbose('TeamBalancer', 1, '[DB] saveState: state record missing.');
@@ -132,7 +132,7 @@ export default class TBDatabase {
       return await this.sequelize.transaction(async (t) => {
         const record = await this.TeamBalancerStateModel.findByPk(1, {
           transaction: t,
-          lock: t.LOCK.UPDATE
+          lock: Sequelize.Transaction.LOCK.UPDATE
         });
         if (!record) return null;
         record.lastScrambleTime = timestamp;

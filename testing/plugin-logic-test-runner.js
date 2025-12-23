@@ -2,7 +2,9 @@ import TeamBalancer from '../plugins/team-balancer.js';
 import Logger from '../../core/logger.js'; // The plugin uses this, so we need a mock.
 
 // Suppress logger output for cleaner test results
-Logger.verbose = () => {};
+Logger.verbose = (module, level, message) => {
+  if (level === 1) console.error(`[${module}] ERROR: ${message}`);
+};
 
 console.log('🧪 Initializing Plugin Logic Test Harness...');
 
@@ -26,29 +28,53 @@ const mockServer = {
   listenerCount: () => 0,
 };
 
+const mockDbState = {
+  winStreakTeam: null,
+  winStreakCount: 0,
+  lastSyncTimestamp: Date.now(),
+  lastScrambleTime: null,
+};
+
+const mockModel = {
+  sync: async () => {},
+  findOrCreate: async () => {
+    const instance = {
+      ...mockDbState,
+      save: async function () {
+        mockDbState.winStreakTeam = this.winStreakTeam;
+        mockDbState.winStreakCount = this.winStreakCount;
+        mockDbState.lastSyncTimestamp = this.lastSyncTimestamp;
+        mockDbState.lastScrambleTime = this.lastScrambleTime;
+      },
+    };
+    return [instance, true];
+  },
+  findByPk: async () => {
+    const instance = {
+      ...mockDbState,
+      save: async function () {
+        mockDbState.winStreakTeam = this.winStreakTeam;
+        mockDbState.winStreakCount = this.winStreakCount;
+        mockDbState.lastSyncTimestamp = this.lastSyncTimestamp;
+        mockDbState.lastScrambleTime = this.lastScrambleTime;
+      },
+    };
+    return instance;
+  },
+};
+
 const mockConnectors = {
   // Mock the database connector to prevent file system access and errors
   sqlite: {
-    define: () => ({
-      sync: async () => {},
-      findOrCreate: async () => [
-        {
-          winStreakTeam: null,
-          winStreakCount: 0,
-          lastSyncTimestamp: Date.now(),
-          lastScrambleTime: null,
-          save: async () => {},
-        },
-        true,
-      ],
-      findByPk: async () => ({
-        winStreakTeam: null,
-        winStreakCount: 0,
-        lastSyncTimestamp: Date.now(),
-        lastScrambleTime: null,
-        save: async () => {},
-      }),
-    }),
+    define: () => mockModel,
+    transaction: async (fn) => {
+      // Execute the callback immediately with a dummy transaction object
+      return fn({
+        commit: async () => {},
+        rollback: async () => {},
+        LOCK: { UPDATE: 'UPDATE' },
+      });
+    },
   },
 };
 
@@ -92,6 +118,27 @@ async function runPluginLogicTests() {
 
   // Instantiate the plugin with our mock environment
   const tb = new TeamBalancer(mockServer, { ...defaultTestOptions }, mockConnectors);
+
+  // Mock RconMessages and formatMessage as BasePlugin loading is bypassed/incomplete in test harness
+  tb.RconMessages = {
+    prefix: '[TB]',
+    executeScrambleMessage: 'Scrambling teams!',
+    executeDryRunMessage: 'Dry run scramble!',
+    scrambleCompleteMessage: 'Scramble complete.',
+    scrambleFailedMessage: 'Scramble failed.',
+    manualScrambleAnnouncement: 'Manual scramble in {delay}s',
+    immediateManualScramble: 'Scrambling now!',
+    scrambleAnnouncement: 'Scramble in {delay}s after {count} dominant wins',
+    singleRoundScramble: 'Single round scramble triggered.',
+    system: { trackingEnabled: 'Tracking enabled', trackingDisabled: 'Tracking disabled' },
+    dominant: { stomped: 'Stomp', steamrolled: 'Steamrolled', invasionAttackStomp: 'Atk Stomp', invasionDefendStomp: 'Def Stomp' },
+    nonDominant: { streakBroken: 'Streak Broken', invasionAttackWin: 'Atk Win', invasionDefendWin: 'Def Win', narrowVictory: 'Narrow', marginalVictory: 'Marginal', tacticalAdvantage: 'Tactical', operationalSuperiority: 'Operational' }
+  };
+  tb.formatMessage = (msg, params) => {
+    if (!msg) return '';
+    return Object.entries(params).reduce((acc, [k, v]) => acc.replace(`{${k}}`, v), msg);
+  };
+
   // Manually mount to initialize DB stubs etc.
   await tb.mount();
 
@@ -179,12 +226,23 @@ async function runPluginLogicTests() {
   capturedBroadcasts.length = 0; // Clear broadcast history
   tb.options.maxWinStreak = 1;
   await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
-  const announcement = capturedBroadcasts.find((msg) => msg.includes('Scrambling in'));
+  const announcement = capturedBroadcasts.find((msg) => msg.includes('Scramble in'));
   assert(!!announcement, 'Scramble announcement broadcast was captured.');
-  assert(announcement.includes('1 dominant wins'), 'Announcement includes correct win count.');
+  if (announcement) {
+    assert(announcement.includes('1 dominant wins'), 'Announcement includes correct win count.');
+  }
 
   // Test post-scramble reset
   // We can call executeScramble directly to test the reset logic
+  // Populate server with unbalanced teams to ensure scramble generates moves and triggers success path
+  tb.server.players = Array.from({ length: 10 }, (_, i) => ({
+    steamID: `765611980000000${i}`,
+    name: `Player${i}`,
+    teamID: 1, // All on team 1 to force imbalance
+    squadID: null,
+    roles: ['Rifleman']
+  }));
+
   await tb.executeScramble(false); // isSimulated = false
   assert(tb.winStreakCount === 0, 'executeScramble resets the win streak count to 0.');
   assert(tb._scrambleInProgress === false, 'Scramble is no longer in progress after execution.');
