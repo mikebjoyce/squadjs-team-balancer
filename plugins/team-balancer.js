@@ -659,6 +659,11 @@ export default class TeamBalancer extends BasePlugin {
   // ║         ROUND EVENT HANDLERS          ║
   // ╚═══════════════════════════════════════╝
 
+
+  /**
+   * Triggered when the match officially begins after the Staging Phase (approx. 2-3 mins).
+   * Note: This does not fire at map load, but when the "Live" combat phase starts.
+   */
   async onNewGame() {
     if (!this.ready) return;
     try {
@@ -700,6 +705,10 @@ export default class TeamBalancer extends BasePlugin {
     }
   }
 
+  /**
+   * Triggered immediately when a team hits zero tickets or the victory condition is met.
+   * Note: This occurs before the AAR (After Action Report) scoreboard and voting screens.
+   */
   async onRoundEnded(data) {
     if (!this.ready) return;
     try {
