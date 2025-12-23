@@ -37,44 +37,48 @@ export default class TBDatabase {
 
       await this.TeamBalancerStateModel.sync({ alter: true });
 
-      const [record] = await this.TeamBalancerStateModel.findOrCreate({
-        where: { id: 1 },
-        defaults: {
+      return await this.sequelize.transaction(async (t) => {
+        const [record] = await this.TeamBalancerStateModel.findOrCreate({
+          where: { id: 1 },
+          defaults: {
+            winStreakTeam: null,
+            winStreakCount: 0,
+            lastSyncTimestamp: Date.now(),
+            lastScrambleTime: null
+          },
+          transaction: t,
+          lock: t.LOCK.UPDATE
+        });
+
+        const staleCutoff = 2.5 * 60 * 60 * 1000;
+        const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > staleCutoff;
+
+        if (!isStale) {
+          Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);
+          return {
+            winStreakTeam: record.winStreakTeam,
+            winStreakCount: record.winStreakCount,
+            lastSyncTimestamp: record.lastSyncTimestamp,
+            lastScrambleTime: record.lastScrambleTime,
+            isStale: false
+          };
+        }
+
+        Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
+        const lastScrambleTime = record.lastScrambleTime;
+        record.winStreakTeam = null;
+        record.winStreakCount = 0;
+        record.lastSyncTimestamp = Date.now();
+        await record.save({ transaction: t });
+
+        return {
           winStreakTeam: null,
           winStreakCount: 0,
-          lastSyncTimestamp: Date.now(),
-          lastScrambleTime: null
-        }
-      });
-
-      const staleCutoff = 2.5 * 60 * 60 * 1000;
-      const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > staleCutoff;
-
-      if (!isStale) {
-        Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);
-        return {
-          winStreakTeam: record.winStreakTeam,
-          winStreakCount: record.winStreakCount,
           lastSyncTimestamp: record.lastSyncTimestamp,
-          lastScrambleTime: record.lastScrambleTime,
-          isStale: false
+          lastScrambleTime,
+          isStale: true
         };
-      }
-
-      Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
-      const lastScrambleTime = record.lastScrambleTime;
-      record.winStreakTeam = null;
-      record.winStreakCount = 0;
-      record.lastSyncTimestamp = Date.now();
-      await record.save();
-
-      return {
-        winStreakTeam: null,
-        winStreakCount: 0,
-        lastSyncTimestamp: record.lastSyncTimestamp,
-        lastScrambleTime,
-        isStale: true
-      };
+      });
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] initDB failed: ${err.message}`);
       return { winStreakTeam: null, winStreakCount: 0, lastSyncTimestamp: null, lastScrambleTime: null, isStale: true };
@@ -87,22 +91,27 @@ export default class TBDatabase {
         Logger.verbose('TeamBalancer', 1, '[DB] saveState called before initDB.');
         return null;
       }
-      const record = await this.TeamBalancerStateModel.findByPk(1);
-      if (!record) {
-        Logger.verbose('TeamBalancer', 1, '[DB] saveState: state record missing.');
-        return null;
-      }
-      record.winStreakTeam = team;
-      record.winStreakCount = count;
-      record.lastSyncTimestamp = Date.now();
-      await record.save();
-      Logger.verbose('TeamBalancer', 4, `[DB] Updated: team=${team}, count=${count}`);
-      return {
-        winStreakTeam: record.winStreakTeam,
-        winStreakCount: record.winStreakCount,
-        lastSyncTimestamp: record.lastSyncTimestamp,
-        lastScrambleTime: record.lastScrambleTime
-      };
+      return await this.sequelize.transaction(async (t) => {
+        const record = await this.TeamBalancerStateModel.findByPk(1, {
+          transaction: t,
+          lock: t.LOCK.UPDATE
+        });
+        if (!record) {
+          Logger.verbose('TeamBalancer', 1, '[DB] saveState: state record missing.');
+          return null;
+        }
+        record.winStreakTeam = team;
+        record.winStreakCount = count;
+        record.lastSyncTimestamp = Date.now();
+        await record.save({ transaction: t });
+        Logger.verbose('TeamBalancer', 4, `[DB] Updated: team=${team}, count=${count}`);
+        return {
+          winStreakTeam: record.winStreakTeam,
+          winStreakCount: record.winStreakCount,
+          lastSyncTimestamp: record.lastSyncTimestamp,
+          lastScrambleTime: record.lastScrambleTime
+        };
+      });
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] saveState failed: ${err.message}`);
       return null;
@@ -115,12 +124,17 @@ export default class TBDatabase {
         Logger.verbose('TeamBalancer', 1, '[DB] saveScrambleTime called before initDB.');
         return null;
       }
-      const record = await this.TeamBalancerStateModel.findByPk(1);
-      if (!record) return null;
-      record.lastScrambleTime = timestamp;
-      await record.save();
-      Logger.verbose('TeamBalancer', 4, `[DB] Updated lastScrambleTime: ${timestamp}`);
-      return { lastScrambleTime: record.lastScrambleTime };
+      return await this.sequelize.transaction(async (t) => {
+        const record = await this.TeamBalancerStateModel.findByPk(1, {
+          transaction: t,
+          lock: t.LOCK.UPDATE
+        });
+        if (!record) return null;
+        record.lastScrambleTime = timestamp;
+        await record.save({ transaction: t });
+        Logger.verbose('TeamBalancer', 4, `[DB] Updated lastScrambleTime: ${timestamp}`);
+        return { lastScrambleTime: record.lastScrambleTime };
+      });
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] saveScrambleTime failed: ${err.message}`);
       return null;
