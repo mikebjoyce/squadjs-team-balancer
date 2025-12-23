@@ -253,51 +253,49 @@ const CommandHandlers = {
               ? 'ENABLED'
               : 'DISABLED (config)';
 
-            // Get information about any pending scrambles
-            const scrambleInfo =
-              this.swapExecutor.pendingPlayerMoves.size > 0
-                ? `${this.swapExecutor.pendingPlayerMoves.size} pending player moves`
-                : 'No active scramble';
+            // Win Streak with Threshold
+            const maxStreak = this.options?.maxWinStreak || 2;
+            const winStreakText = this.winStreakTeam
+              ? `${this.getTeamName(this.winStreakTeam)}: ${this.winStreakCount} / ${maxStreak} wins`
+              : `None (Threshold: ${maxStreak} wins)`;
 
-            // Format the last scramble timestamp
-            const lastScrambleTimeFormatted = this.lastScrambleTime
-              ? new Date(this.lastScrambleTime).toLocaleString()
-              : 'Never';
+            // Format the last scramble timestamp (Relative for in-game)
+            let lastScrambleText = 'Never';
+            if (this.lastScrambleTime) {
+              const diff = Date.now() - this.lastScrambleTime;
+              const mins = Math.floor(diff / 60000);
+              const hours = Math.floor(mins / 60);
+              if (hours > 0) {
+                lastScrambleText = `${hours}h ${mins % 60}m ago`;
+              } else {
+                lastScrambleText = `${mins}m ago`;
+              }
+            }
 
-            // Directly use the cached game mode and team names for administrative output
-            const gameMode = this.gameModeCached || 'N/A';
-            const team1Name = this.getTeamName(1);
-            const team2Name = this.getTeamName(2);
+            // Player Counts
+            const players = this.server.players;
+            const t1Count = players.filter((p) => p.teamID === 1).length;
+            const t2Count = players.filter((p) => p.teamID === 2).length;
+
+            // Layer
+            const currentLayer = this.server.currentLayer?.name || 'Unknown';
 
             // Formatted response for !teambalancer status
             const statusMsg = [
               `--- TeamBalancer Status ---`,
               `Version: ${this.constructor.version}`,
               `Plugin Status: ${effectiveStatus}`,
-              `Win Streak: ${
-                this.winStreakTeam
-                  ? `${this.getTeamName(this.winStreakTeam)} (Team ${this.winStreakTeam}) has ${this.winStreakCount} win(s)`
-                  : 'N/A'
-              }`,
-              `Scramble State: ${scrambleInfo}`,
-              `Last Scramble: ${lastScrambleTimeFormatted}`,
-              `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
-              `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
-              `Cached Game Mode: ${gameMode}`,
-              `Team 1 Name: ${team1Name}`,
-              `Team 2 Name: ${team2Name}`,
+              `Win Streak: ${winStreakText}`,
+              `Last Scramble: ${lastScrambleText}`,
+              `Players: ${players.length} (T1: ${t1Count} | T2: ${t2Count})`,
+              `Layer: ${currentLayer}`,
               `---------------------------`
             ].join('\n');
 
             this.respond(player, statusMsg);
             if (this.discordChannel) {
-              const embed = {
-                color: 0x3498db,
-                title: '🎮 In-Game Command: !teambalancer status',
-                description: `Executed by **${adminName}**`,
-                fields: [{ name: 'Response', value: `\`\`\`\n${statusMsg}\n\`\`\``, inline: false }],
-                timestamp: new Date().toISOString()
-              };
+              const embed = DiscordHelpers.buildStatusEmbed(this);
+              embed.description = `Executed by **${adminName}**`;
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
             }
             break;

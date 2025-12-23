@@ -22,31 +22,31 @@ export const DiscordHelpers = {
       ? 'ENABLED'
       : 'DISABLED (config)';
 
+    const maxStreak = tb.options?.maxWinStreak || 2;
     const winStreakText = tb.winStreakTeam
-      ? `${tb.getTeamName(tb.winStreakTeam)} (Team ${tb.winStreakTeam}): ${tb.winStreakCount} win(s)`
-      : 'No active streak';
+      ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} / ${maxStreak} wins`
+      : `None (Threshold: ${maxStreak} wins)`;
 
-    const scrambleInfo =
-      tb.swapExecutor?.pendingPlayerMoves?.size > 0
-        ? `${tb.swapExecutor.pendingPlayerMoves.size} pending moves`
-        : 'No active scramble';
+    let lastScrambleText = 'Never';
+    if (tb.lastScrambleTime) {
+      const unixTime = Math.floor(tb.lastScrambleTime / 1000);
+      // Discord timestamp: f = short date time, R = relative time
+      lastScrambleText = `<t:${unixTime}:f> (<t:${unixTime}:R>)`;
+    }
 
-    const lastScrambleText = tb.lastScrambleTime
-      ? new Date(tb.lastScrambleTime).toLocaleString()
-      : 'Never';
+    const players = tb.server.players;
+    const t1Count = players.filter((p) => p.teamID === 1).length;
+    const t2Count = players.filter((p) => p.teamID === 2).length;
 
     const embed = {
       color: 0x3498db,
       title: '📊 TeamBalancer Status',
-      description: 'Current plugin state and configuration',
       fields: [
         { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
         { name: 'Plugin Status', value: effectiveStatus, inline: true },
         { name: 'Win Streak', value: winStreakText, inline: false },
-        { name: 'Scramble State', value: scrambleInfo, inline: true },
-        { name: 'Last Scramble', value: lastScrambleText, inline: true },
-        { name: 'Scramble Pending', value: tb._scramblePending ? 'Yes' : 'No', inline: true },
-        { name: 'Scramble In Progress', value: tb._scrambleInProgress ? 'Yes' : 'No', inline: true }
+        { name: 'Last Scramble', value: lastScrambleText, inline: false },
+        { name: 'Player Count', value: `Total: ${players.length} | T1: ${t1Count} | T2: ${t2Count}`, inline: false }
       ],
       timestamp: new Date().toISOString()
     };
@@ -201,8 +201,8 @@ export const DiscordHelpers = {
 
     if (namesT1.length > 0 || namesT2.length > 0) {
       embed.fields.push(
-        { name: `👤 Players ➡️ ${teamBalancer.getTeamName(1)} (${teamLists['1'].length})`, value: DiscordHelpers.formatPlayerList(namesT1), inline: true },
-        { name: `👤 Players ➡️ ${teamBalancer.getTeamName(2)} (${teamLists['2'].length})`, value: DiscordHelpers.formatPlayerList(namesT2), inline: true }
+        { name: `👤 Players ➡️ ${teamBalancer.getTeamName(1)} (${teamLists['1'].length})`, value: DiscordHelpers.formatPlayerList(namesT1), inline: false },
+        { name: `👤 Players ➡️ ${teamBalancer.getTeamName(2)} (${teamLists['2'].length})`, value: DiscordHelpers.formatPlayerList(namesT2), inline: false }
       );
     }
 
@@ -223,26 +223,28 @@ export const DiscordHelpers = {
 
   formatPlayerList(names) {
     if (names.length === 0) return 'None';
-    if (names.length > 60) {
-      return names.slice(0, 60).join('\n') + `\n... and ${names.length - 60} more`;
-    }
-    return names.join('\n');
+    return `\`\`\`\n${names.join(', ')}\n\`\`\``;
   },
 
-  buildWinStreakEmbed(teamName, streakCount, margin, isDominant) {
+  buildWinStreakEmbed(teamName, teamID, streakCount, maxStreak, margin, isDominant) {
     const embed = {
       color: isDominant ? 0xf39c12 : 0x3498db,
-      title: isDominant ? '⚠️ Dominant Win Streak' : '📊 Win Recorded',
+      title: isDominant ? '🔥 Dominant Win Streak' : '📊 Win Recorded',
       fields: [
-        { name: 'Team', value: teamName, inline: true },
-        { name: 'Streak', value: `${streakCount} win(s)`, inline: true },
-        { name: 'Margin', value: `${margin} tickets`, inline: true }
+        { name: 'Winning Team', value: `${teamName} (Team ${teamID})`, inline: true },
+        { name: 'Streak Progress', value: `**${streakCount}** / ${maxStreak} wins`, inline: true },
+        { name: 'Ticket Margin', value: `+${margin}`, inline: true }
       ],
       timestamp: new Date().toISOString()
     };
 
     if (isDominant) {
-      embed.description = '⚠️ This team is dominating. Scramble may be triggered soon.';
+      const remaining = maxStreak - streakCount;
+      if (remaining <= 0) {
+        embed.description = '🚨 **Scramble Threshold Reached**\nTeams will be scrambled shortly to restore balance.';
+      } else {
+        embed.description = `**Dominance Detected**\nIf this team wins dominantly **${remaining}** more time(s), a scramble will be triggered.`;
+      }
     }
 
     return embed;

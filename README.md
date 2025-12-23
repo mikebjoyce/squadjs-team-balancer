@@ -207,6 +207,42 @@ Enable debug logging to see detailed scramble execution:
 
 This will show squad selection logic, player move attempts, and retry status in the console.
 
+# Critical Server Configuration
+
+For a scramble to be successful, **all team-swap commands must be completed before Faction Voting begins**. The Squad game engine blocks team changes once the faction voting phase starts.
+
+Because the plugin's timers and the server's round-cycle timers run independently, you must ensure your server settings provide a large enough window for the scramble to finish.
+
+## Required Server Settings
+
+You must modify your server configuration to allow enough time for the announcement and the movement of players.
+
+**File:** `SquadServer/SquadGame/ServerConfig/Server.cfg`
+
+**Command:**
+```cfg
+// For how long end screen will be displayed before we move to voting
+TimeBeforeVote=45
+```
+
+## Recommended Timing Logic
+
+To ensure the scramble (30s announcement + 5s execution) finishes safely before faction voting locks the teams, we recommend the following balance:
+
+* **Plugin Setting** (`scrambleAnnouncementDelay`): 30 (seconds)
+* **Server Setting** (`TimeBeforeVote`): At least 45 (seconds)
+
+## How the Timers Interact
+
+All timings below are relative to the exact moment the round ends:
+
+1. **T+0s (Round End)**: The server starts its internal `TimeBeforeVote` countdown. Simultaneously, TeamBalancer receives the "Round End" event and starts its own `scrambleAnnouncementDelay` timer.
+2. **T+30s**: The plugin's delay expires and it begins executing the scramble. It takes roughly 4–8 seconds to process and send all RCON move commands.
+3. **T+45s**: The server's `TimeBeforeVote` expires. The server transitions to the Map/Faction Voting screen. Team changes are now locked by the game engine.
+
+> [!IMPORTANT]  
+> If `TimeBeforeVote` is set too low (e.g., 20s), the plugin will still be mid-execution when the server hits the Faction Voting phase. Players will not be successfully swapped, rendering the team balancing ineffective for that round.
+
 ## Author
 
 **Slacker**

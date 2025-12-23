@@ -893,7 +893,16 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       if (this.discordChannel && isDominant) {
-        await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [DiscordHelpers.buildWinStreakEmbed(teamNames.winnerName, this.winStreakCount, margin, true)] });
+        await DiscordHelpers.sendDiscordMessage(this.discordChannel, {
+          embeds: [DiscordHelpers.buildWinStreakEmbed(
+            teamNames.winnerName,
+            winnerID,
+            this.winStreakCount,
+            this.options.maxWinStreak,
+            margin,
+            true
+          )]
+        });
       }
 
       const scrambleComing = this.winStreakCount >= this.options.maxWinStreak;
