@@ -132,7 +132,7 @@ export const DiscordHelpers = {
     const currentT2 = players.filter(p => p.teamID == 2).length;
     
     const affectedSquads = new Map();
-    let unassignedCount = 0;
+    const unassignedMoves = { '1': 0, '2': 0 };
 
     for (const move of swapPlan) {
       teamCounts[move.targetTeamID]++;
@@ -152,7 +152,7 @@ export const DiscordHelpers = {
           }
           affectedSquads.get(uniqueKey).count++;
         } else {
-          unassignedCount++;
+          unassignedMoves[move.targetTeamID]++;
         }
       }
     }
@@ -165,7 +165,7 @@ export const DiscordHelpers = {
     const embed = {
       color: isSimulated ? 0x9b59b6 : 0x2ecc71,
       title: isSimulated ? '🧪 Dry Run Scramble Plan' : '🔀 Scramble Execution Plan',
-      description: `**Total players affected:** ${swapPlan.length}`,
+      description: `**Total players affected:** ${swapPlan.length}\n**Calculation Time:** ${swapPlan.calculationTime || 'N/A'}ms`,
       fields: [
         { name: 'Balance Projection', value: `**Team 1:** ${currentT1} ➔ ${projT1}\n**Team 2:** ${currentT2} ➔ ${projT2}`, inline: false }
       ],
@@ -195,8 +195,12 @@ export const DiscordHelpers = {
       );
     }
 
-    if (unassignedCount > 0) {
-      embed.fields.push({ name: 'Unassigned Players', value: `${unassignedCount} players moving`, inline: false });
+    if (unassignedMoves['1'] > 0 || unassignedMoves['2'] > 0) {
+      const parts = [];
+      if (unassignedMoves['1'] > 0) parts.push(`**${unassignedMoves['1']}** ➡️ ${teamBalancer.getTeamName(1)}`);
+      if (unassignedMoves['2'] > 0) parts.push(`**${unassignedMoves['2']}** ➡️ ${teamBalancer.getTeamName(2)}`);
+      
+      embed.fields.push({ name: 'Unassigned (No Squad) Players', value: parts.join('\n'), inline: false });
     }
 
     // --- PLAYERS SECTION ---
@@ -290,6 +294,24 @@ export const DiscordHelpers = {
       embed.description = '⚠️ Some players could not be moved. Check logs for details.';
     }
 
+    return embed;
+  },
+
+  buildScrambleFailedEmbed(reason, duration, tb) {
+    const players = tb?.server?.players || [];
+    const t1Count = players.filter((p) => p.teamID == 1).length;
+    const t2Count = players.filter((p) => p.teamID == 2).length;
+
+    const embed = {
+      color: 0xe74c3c,
+      title: '❌ Scramble Failed',
+      description: `**Reason:** ${reason}`,
+      fields: [
+        { name: 'Calculation Time', value: `${duration}ms`, inline: true },
+        { name: 'Server State', value: `**Total:** ${players.length}\n**T1:** ${t1Count} | **T2:** ${t2Count}`, inline: true }
+      ],
+      timestamp: new Date().toISOString()
+    };
     return embed;
   },
 

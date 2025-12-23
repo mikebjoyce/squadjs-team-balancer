@@ -51,6 +51,7 @@ export const Scrambler = {
     winStreakTeam,
     scramblePercentage = 0.5,
   }) {
+    const startTime = Date.now();
     const totalPlayers = players.length;
     const maxTeamSize = Math.max(50, Math.ceil(totalPlayers / 2));
 
@@ -338,7 +339,9 @@ export const Scrambler = {
 
     if (!bestT1SwapCandidates || !bestT2SwapCandidates) {
       Logger.verbose('TeamBalancer', 2, 'No valid swap solution found within attempt limit.');
-      return []; // Return empty array if no solution found
+      const res = [];
+      res.calculationTime = Date.now() - startTime;
+      return res; // Return empty array if no solution found
     }
     
     const finalT1Ids = new Set(bestT1SwapCandidates.map((s) => s.id));
@@ -348,7 +351,9 @@ export const Scrambler = {
     if (finalIntersection.length > 0) {
       Logger.verbose('TeamBalancer', 1, `CRITICAL ERROR: Final solution has duplicate squads: ${finalIntersection.join(', ')}`);
       Logger.verbose('TeamBalancer', 1, 'Aborting scramble to prevent team count corruption.');
-      return []; // Return empty array if critical error
+      const res = [];
+      res.calculationTime = Date.now() - startTime;
+      return res; // Return empty array if critical error
     }
 
     const preSwapCounts = getCurrentTeamCounts();
@@ -479,12 +484,15 @@ export const Scrambler = {
       Logger.verbose('TeamBalancer', 2, `This may require manual intervention or a change in balancing strategy.`);
     }
 
-    Logger.verbose('TeamBalancer', 2, `========== Scramble Plan Generated ==========`);
+    const duration = Date.now() - startTime;
+    Logger.verbose('TeamBalancer', 2, `========== Scramble Plan Generated (${duration}ms) ==========`);
     Logger.verbose('TeamBalancer', 2, `Total player moves in plan: ${finalPlayerMovesMap.size}`);
     Logger.verbose('TeamBalancer', 2, `Final desired balance: Team1 = ${finalInternalCounts.team1Count}, Team2 = ${finalInternalCounts.team2Count}`);
     Logger.verbose('TeamBalancer', 2, `Unassigned players in plan: ${finalInternalCounts.unassignedCount}`);
 
-    return Array.from(finalPlayerMovesMap.values()); // Return the plan to the TeamBalancer
+    const result = Array.from(finalPlayerMovesMap.values());
+    result.calculationTime = duration;
+    return result; // Return the plan to the TeamBalancer
   }
 };
 

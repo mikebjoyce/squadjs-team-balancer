@@ -1124,44 +1124,59 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       if (swapPlan && swapPlan.length > 0) {
-        Logger.verbose('TeamBalancer', 2, `Dry run: Scrambler returned ${swapPlan.length} player moves.`);
+        Logger.verbose('TeamBalancer', 2, `Dry run: Scrambler returned ${swapPlan.length} player moves (Calculation: ${swapPlan.calculationTime}ms).`);
 
         if (!isSimulated) {          
           for (const move of swapPlan) {            
             await this.reliablePlayerMove(move.steamID, move.targetTeamID, isSimulated);
           }          
           await this.waitForScrambleToFinish(this.options.maxScrambleCompletionTime);
+
+          const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`;
+          Logger.verbose('TeamBalancer', 4, `Broadcasting: "${msg}"`);
+          try {
+            await this.server.rcon.broadcast(msg);
+          } catch (broadcastErr) {
+            Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble complete message: ${broadcastErr.message}`);
+          }
+          await this.mirrorRconToDiscord(msg, 'success');
+          const scrambleTimestamp = Date.now();
+          this.lastScrambleTime = scrambleTimestamp;
+          try {
+            const res = await this.db.saveScrambleTime(scrambleTimestamp);
+            if (res && res.lastScrambleTime) this.lastScrambleTime = res.lastScrambleTime;
+          } catch (err) {
+            Logger.verbose('TeamBalancer', 1, `[DB] saveScrambleTime failed: ${err.message}`);
+          }
+          await this.resetStreak('Post-scramble cleanup');
         } else {
           Logger.verbose('TeamBalancer', 2, `Dry run: Would have queued ${swapPlan.length} player moves.`);
           for (const move of swapPlan) {
             Logger.verbose('TeamBalancer', 4, `  [Dry Run] Player ${move.steamID} to Team ${move.targetTeamID}`);
           }
           Logger.verbose('TeamBalancer', 2, `[Diagnostics] Dry run successful. No players were harmed.`);
+          Logger.verbose('TeamBalancer', 2, `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`);
         }
       } else {
         Logger.verbose('TeamBalancer', 2, 'Scrambler returned no player moves or an empty plan.');
-      }
-
-      const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`;
-      if (!isSimulated) {
-        Logger.verbose('TeamBalancer', 4, `Broadcasting: "${msg}"`);
-        try {
-          await this.server.rcon.broadcast(msg);
-        } catch (broadcastErr) {
-          Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble complete message: ${broadcastErr.message}`);
+        
+        if (!isSimulated) {
+          const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleFailedMessage.trim()}`;
+          Logger.verbose('TeamBalancer', 4, `Broadcasting: "${msg}"`);
+          try {
+            await this.server.rcon.broadcast(msg);
+          } catch (broadcastErr) {
+            Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble failed message: ${broadcastErr.message}`);
+          }
+          await this.mirrorRconToDiscord(msg, 'warning');
+          if (this.discordChannel) {
+            const embed = DiscordHelpers.buildScrambleFailedEmbed('No valid swap solution found.', swapPlan?.calculationTime || 0, this);
+            await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+          }
+          // Note: We do NOT reset the streak here, as the imbalance likely persists.
+        } else {
+          Logger.verbose('TeamBalancer', 2, `${this.RconMessages.prefix} ${this.RconMessages.scrambleFailedMessage.trim()}`);
         }
-        await this.mirrorRconToDiscord(msg, 'success');
-        const scrambleTimestamp = Date.now();
-        this.lastScrambleTime = scrambleTimestamp;
-        try {
-          const res = await this.db.saveScrambleTime(scrambleTimestamp);
-          if (res && res.lastScrambleTime) this.lastScrambleTime = res.lastScrambleTime;
-        } catch (err) {
-          Logger.verbose('TeamBalancer', 1, `[DB] saveScrambleTime failed: ${err.message}`);
-        }
-        await this.resetStreak('Post-scramble cleanup');
-      } else {
-        Logger.verbose('TeamBalancer', 2, msg);
       }
 
       return true;
