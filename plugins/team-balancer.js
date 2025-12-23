@@ -946,6 +946,12 @@ export default class TeamBalancer extends BasePlugin {
       }
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error in onRoundEnded: ${err.message}`);      
+      
+      if (this.discordChannel) {
+        const embed = DiscordHelpers.buildFatalErrorEmbed(err, 'Round End Processing', this);
+        await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+      }
+
       this.winStreakTeam = null;
       this.winStreakCount = 0;
       this._scrambleInProgress = false;
@@ -1184,6 +1190,12 @@ export default class TeamBalancer extends BasePlugin {
     Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Critical error during scramble execution: ${error?.message || error}`);      
       Logger.verbose('TeamBalancer', 4, `Squad data at error:`, JSON.stringify(this.server.squads, null, 2));
       Logger.verbose('TeamBalancer', 4, `Player data at error:`, JSON.stringify(this.server.players, null, 2));      
+      
+      if (this.discordChannel) {
+        const embed = DiscordHelpers.buildFatalErrorEmbed(error, 'Scramble Execution', this);
+        await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+      }
+
       this.cleanupScrambleTracking();
       await this.resetStreak('Scramble execution failed');
       return false;

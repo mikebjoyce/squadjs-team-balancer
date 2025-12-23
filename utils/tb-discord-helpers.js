@@ -315,6 +315,30 @@ export const DiscordHelpers = {
     return embed;
   },
 
+  buildFatalErrorEmbed(error, context, tb) {
+    const players = tb?.server?.players || [];
+    const t1Count = players.filter((p) => p.teamID == 1).length;
+    const t2Count = players.filter((p) => p.teamID == 2).length;
+
+    const embed = {
+      color: 0x992d22,
+      title: '☠️ Fatal Plugin Error',
+      description: `**Context:** ${context}\n**Error:** ${error?.message || error}`,
+      fields: [
+        { name: 'Server State', value: `**Total:** ${players.length}\n**T1:** ${t1Count} | **T2:** ${t2Count}`, inline: true },
+        { name: 'Version', value: tb?.constructor?.version || 'Unknown', inline: true }
+      ],
+      timestamp: new Date().toISOString()
+    };
+
+    if (error?.stack) {
+      const stack = error.stack.length > 1000 ? error.stack.substring(0, 1000) + '...' : error.stack;
+      embed.fields.push({ name: 'Stack Trace', value: `\`\`\`js\n${stack}\n\`\`\``, inline: false });
+    }
+
+    return embed;
+  },
+
   async sendDiscordMessage(channel, content, suppressErrors = true) {
     if (!channel) {
       Logger.verbose('TeamBalancer', 1, 'Discord send failed: No channel available');
