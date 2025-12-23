@@ -168,38 +168,47 @@ export const DiscordHelpers = {
       timestamp: new Date().toISOString()
     };
 
-    if (affectedSquads.size > 0) {
-      const squadLines = [];
-      affectedSquads.forEach((info) => {
-        const arrow = info.targetTeam === '1' ? 'T2->T1' : 'T1->T2';
-        squadLines.push(`**${info.name}** (${arrow}, ${info.count})`);
-      });
-      
-      const squadText = squadLines.length > 15 
-        ? squadLines.slice(0, 15).join('\n') + `\n...and ${squadLines.length - 15} more`
-        : squadLines.join('\n');
-        
-      embed.fields.push({ name: 'Squads Moving', value: squadText, inline: false });
+    // --- SQUADS SECTION ---
+    const squadsT1 = [];
+    const squadsT2 = [];
+    affectedSquads.forEach((info) => {
+      const text = `**${info.name}** (${info.count})`;
+      if (info.targetTeam === '1') squadsT1.push(text);
+      else squadsT2.push(text);
+    });
+
+    const formatSquadList = (list) => {
+      if (list.length === 0) return 'None';
+      // Limit to 20 squads per column to keep it readable
+      if (list.length > 20) return list.slice(0, 20).join('\n') + `\n...and ${list.length - 20} more`;
+      return list.join('\n');
+    };
+
+    if (squadsT1.length > 0 || squadsT2.length > 0) {
+      embed.fields.push(
+        { name: `🛡️ Squads ➡️ ${teamBalancer.getTeamName(1)}`, value: formatSquadList(squadsT1), inline: true },
+        { name: `🛡️ Squads ➡️ ${teamBalancer.getTeamName(2)}`, value: formatSquadList(squadsT2), inline: true }
+      );
     }
-    
+
     if (unassignedCount > 0) {
       embed.fields.push({ name: 'Unassigned Players', value: `${unassignedCount} players moving`, inline: false });
     }
 
-    if (teamLists['1'].length > 0) {
-      const team1Name = teamBalancer.getTeamName(1);
-      const playerNames = await DiscordHelpers.resolveSteamIDsToNames(teamLists['1'], teamBalancer);
-      embed.fields.push({ name: `→ Moving to ${team1Name} (${teamCounts['1']} players)`, value: DiscordHelpers.formatPlayerList(playerNames), inline: false });
-    }
+    // --- PLAYERS SECTION ---
+    const namesT1 = await DiscordHelpers.resolveSteamIDsToNames(teamLists['1'], teamBalancer);
+    const namesT2 = await DiscordHelpers.resolveSteamIDsToNames(teamLists['2'], teamBalancer);
 
-    if (teamLists['2'].length > 0) {
-      const team2Name = teamBalancer.getTeamName(2);
-      const playerNames = await DiscordHelpers.resolveSteamIDsToNames(teamLists['2'], teamBalancer);
-      embed.fields.push({ name: `→ Moving to ${team2Name} (${teamCounts['2']} players)`, value: DiscordHelpers.formatPlayerList(playerNames), inline: false });
+    if (namesT1.length > 0 || namesT2.length > 0) {
+      embed.fields.push(
+        { name: `👤 Players ➡️ ${teamBalancer.getTeamName(1)} (${teamLists['1'].length})`, value: DiscordHelpers.formatPlayerList(namesT1), inline: true },
+        { name: `👤 Players ➡️ ${teamBalancer.getTeamName(2)} (${teamLists['2'].length})`, value: DiscordHelpers.formatPlayerList(namesT2), inline: true }
+      );
     }
 
     if (swapPlan.length === 0) {
-      embed.footer = { text: 'The simulation resulted in no player moves. This is expected behavior on low-population servers.' };
+      const action = isSimulated ? 'simulation' : 'scramble calculation';
+      embed.footer = { text: `The ${action} resulted in no player moves. This is expected behavior on low-population servers.` };
     }
 
     return embed;
@@ -214,8 +223,8 @@ export const DiscordHelpers = {
 
   formatPlayerList(names) {
     if (names.length === 0) return 'None';
-    if (names.length > 20) {
-      return names.slice(0, 20).join('\n') + `\n... and ${names.length - 20} more`;
+    if (names.length > 60) {
+      return names.slice(0, 60).join('\n') + `\n... and ${names.length - 60} more`;
     }
     return names.join('\n');
   },
