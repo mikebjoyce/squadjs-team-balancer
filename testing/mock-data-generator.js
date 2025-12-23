@@ -91,3 +91,51 @@ export function transformForScrambler(mockPlayers, mockSquads) {
     players: transformedPlayers
   };
 }
+
+/**
+ * Generates a scenario where EVERY squad is locked.
+ */
+export function generateScenario_AllLocked(count = 100, team1Ratio = 0.8) {
+  const players = generateMockPlayers(count, team1Ratio, 0); // 0 unassigned to force squad moves
+  const squads = generateMockSquads(players);
+  
+  // Force lock all squads
+  squads.forEach(s => s.locked = true);
+
+  return { players, squads };
+}
+
+/**
+ * Generates "David vs Goliath": Team 1 has one massive unlocked squad, Team 2 has small locked squads.
+ * Used to test surgical splitting of the large squad.
+ */
+export function generateScenario_DavidGoliath() {
+  const players = [];
+  
+  // Team 1: 1 Massive Squad of 9 (Unlocked)
+  for (let i = 0; i < 9; i++) {
+    players.push({ steamID: `t1_giant_${i}`, name: `Giant_${i}`, teamID: 1, squadID: 1 });
+  }
+  
+  // Team 1: Fill with some small locked squads to create bulk (e.g., 21 more players = 30 total)
+  for (let i = 0; i < 21; i++) {
+    const squadID = 2 + Math.floor(i / 3); // Squads of 3
+    players.push({ steamID: `t1_filler_${i}`, name: `Filler_${i}`, teamID: 1, squadID: squadID });
+  }
+
+  // Team 2: 10 players in small locked squads (Squads of 2)
+  for (let i = 0; i < 10; i++) {
+    const squadID = 100 + Math.floor(i / 2);
+    players.push({ steamID: `t2_small_${i}`, name: `Small_${i}`, teamID: 2, squadID: squadID });
+  }
+
+  const squads = generateMockSquads(players);
+
+  // Apply Locks: Unlock T1-S1, Lock everything else
+  squads.forEach(s => {
+    if (s.teamID === 1 && s.squadID === 1) s.locked = false;
+    else s.locked = true;
+  });
+
+  return { players, squads };
+}

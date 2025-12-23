@@ -5,22 +5,41 @@
  *
  * Part of the TeamBalancer Plugin
  *
- * This algorithm efficiently rebalances Squad teams by swapping whole squads
- * or unassigned players. It prioritizes maintaining squad cohesion and
- * respects team size limits (default 50 players). The goal is to introduce
- * a calculated amount of churn to prevent dominant win streaks and ensure fair matches.
+ * This algorithm rebalances teams by swapping whole squads and unassigned players. 
+ * It utilizes a Tiered Surgical Fallback system to ensure numerical parity 
+ * while maximizing friend-group cohesion (keeping squads together).
  *
- * The process involves:
- * 1.  **Data Preparation:** Normalizing player and squad data, treating unassigned
- * players as individual "pseudo-squads."
- * 2.  **Target Calculation:** Determining the ideal number of players to move
- * based on the configured `scramblePercentage` and current team imbalance.
- * 3.  **Squad Selection:** Using a randomized, iterative approach to find the
- * best combination of squads to swap, scoring candidates based on balance
- * and churn targets.
- * 4.  **Swap Plan Generation:** Creating a detailed plan of player movements.
- * 5.  **Cap Enforcement:** A final adjustment phase to ensure no team exceeds
- * the maximum player limit, prioritizing unassigned or unlocked players for movement.
+ * THE PROCESS INVOLVES:
+ *
+ * 1. Data Preparation: Normalizes player/squad snapshots. Unassigned 
+ * players are treated as individual "pseudo-squads" for movement flexibility.
+ *
+ * 2. Target Calculation: Establishes movement targets based on the 
+ * scramblePercentage and the current delta between Team 1 and Team 2.
+ *
+ * 3. Iterative Selection (Monte Carlo): Runs 121 attempts to find the 
+ * optimal swap, scoring candidates on balance, churn, and cap penalties.
+ *
+ * 4. Surgical Squad Breaking (Attempts 31-119): If balance remains poor, 
+ * the algorithm non-destructively selects ONE random unlocked squad per 
+ * iteration to "shatter" into individuals. This allows for precision 
+ * balancing without mass-breaking all groups.
+ *
+ * 5. Nuclear Option (Attempt 120): As a final resort, all squads (including 
+ * locked) are decomposed to resolve extreme parity issues.
+ *
+ * 6. Scoring & Penalties: A lockedPenalty (500 pts) and cohesionPenalty 
+ * (25 pts) ensure that breaking groups is mathematically the least 
+ * preferred outcome compared to whole-squad swaps.
+ *
+ * 7. Cap Enforcement & Trimming: A final corrective phase ensures neither 
+ * team exceeds limits (default 50). It intelligently trims overages by 
+ * moving Unassigned -> Unlocked -> Locked players in that order.
+ *
+ * RELATION TO OTHER FILES:
+ * This module acts as a pure logic provider. It accepts snapshots, calculates 
+ * the optimal moves, and returns a 'swap plan'. It does not execute RCON 
+ * commands; execution is handled by the SwapExecutor.
  */
 
 import Logger from '../../core/logger.js';
@@ -162,13 +181,35 @@ export const Scrambler = {
       if (hypotheticalNewT1 < idealTeamSize - 5 || hypotheticalNewT2 < idealTeamSize - 5) {
         sizeDeviationPenalty += 50; // Moderate penalty for significant underpopulation
       }
+
+      const calcLockedPenalty = (squads) => {
+        const brokenSquads = new Set();
+        for (const s of squads) {
+          if (s.wasLocked) brokenSquads.add(s.sourceSquadId || s.id);
+        }
+        return brokenSquads.size * 500;
+      };
+      const lockedPenalty = calcLockedPenalty(selectedT1Squads) + calcLockedPenalty(selectedT2Squads);
       
+      const calcCohesionPenalty = (squads) => {
+        let penalty = 0;
+        for (const s of squads) {
+          if (s.id.startsWith('Split-') && !s.wasLocked) {
+            penalty += 25;
+          }
+        }
+        return penalty;
+      };
+      const cohesionPenalty = calcCohesionPenalty(selectedT1Squads) + calcCohesionPenalty(selectedT2Squads);
+
       let combinedScore =
         churnScore * 2 + // Reduced weight (tie-breaker only)
         balanceScore * 50 + // Massive weight for numerical parity
         penaltyT1Overcap +
-        penaltyT2Overcap +
-        sizeDeviationPenalty;
+        penaltyT2Overcap + 
+        sizeDeviationPenalty +
+        lockedPenalty +
+        cohesionPenalty;
       
       if (
         targetPlayersToMoveOverall > 10 &&
@@ -180,43 +221,63 @@ export const Scrambler = {
       return combinedScore;
     };
 
-    const MAX_ATTEMPTS = 100; // Increased attempts to find a good solution
+    const MAX_ATTEMPTS = 121; // Increased attempts to find a good solution
     let bestScore = Infinity;
     let bestT1SwapCandidates = null;
     let bestT2SwapCandidates = null;
 
     Logger.verbose('TeamBalancer', 4, `Starting swap attempts (max ${MAX_ATTEMPTS})`);
 
-    for (let i = 0; i < MAX_ATTEMPTS; i++) {
-      // Emergency Squad Splitting (Partial Squad Break): If we can't find a good solution early, break unlocked squads
-      if (i === 25 && bestScore > 50) {
-        Logger.verbose('TeamBalancer', 2, 'High imbalance detected after 25 attempts. Engaging Partial Squad Break (Emergency Splitting).');
-        const decompose = (candidates) => {
-          const newCandidates = [];
-          for (const cand of candidates) {
-            // Decompose unlocked squads (that aren't already pseudo-squads)
-            if (!cand.locked && !cand.id.startsWith('Unassigned') && !cand.id.startsWith('Split')) {
-              for (const pid of cand.players) {
-                newCandidates.push({
-                  id: `Split-${pid}`,
-                  teamID: cand.teamID,
-                  players: [pid]
-                });
-              }
-            } else {
-              newCandidates.push(cand);
-            }
+    const decomposeList = (list, targetId = null, breakAll = false) => {
+      const result = [];
+      for (const item of list) {
+        const isTarget = breakAll || (targetId && item.id === targetId);
+        if (isTarget && !item.id.startsWith('Unassigned') && !item.id.startsWith('Split')) {
+          for (const pid of item.players) {
+            result.push({
+              id: `Split-${pid}`,
+              teamID: item.teamID,
+              players: [pid],
+              wasLocked: item.locked,
+              sourceSquadId: item.id
+            });
           }
-          return newCandidates;
-        };
-        t1Candidates = decompose(t1Candidates);
-        t2Candidates = decompose(t2Candidates);
+        } else {
+          result.push(item);
+        }
+      }
+      return result;
+    };
+
+    for (let i = 0; i < MAX_ATTEMPTS; i++) {
+      let localT1 = [...t1Candidates];
+      let localT2 = [...t2Candidates];
+
+      // Surgical Squad Splitting (Attempts 31-119)
+      if (i >= 30 && i < 120 && bestScore > 10) {
+        const getEligible = (list) => list.filter(s => !s.locked && !s.id.startsWith('Unassigned') && !s.id.startsWith('Split'));
+        const t1Eligible = getEligible(localT1);
+        const t2Eligible = getEligible(localT2);
+        const allEligible = [...t1Eligible, ...t2Eligible];
+
+        if (allEligible.length > 0) {
+          const victim = allEligible[Math.floor(Math.random() * allEligible.length)];
+          if (victim.teamID === '1') localT1 = decomposeList(localT1, victim.id);
+          else localT2 = decomposeList(localT2, victim.id);
+        }
+      }
+
+      // Nuclear Option (Attempt 120)
+      if (i === 120) {
+        Logger.verbose('TeamBalancer', 2, 'Engaging Nuclear Option: Decomposing all squads for final attempt.');
+        localT1 = decomposeList(localT1, null, true);
+        localT2 = decomposeList(localT2, null, true);
       }
 
       const currentUsedSquadIds = new Set(); // Reset for each attempt
       
-      shuffle(t1Candidates);
-      shuffle(t2Candidates);
+      shuffle(localT1);
+      shuffle(localT2);
       
       const teamDiff = initialCounts.team1Count - initialCounts.team2Count;
       let targetMoveFromT1 = Math.round((targetPlayersToMove / 2) + (teamDiff / 4));
@@ -227,15 +288,15 @@ export const Scrambler = {
       
       targetMoveFromT1 = Math.min(
         targetMoveFromT1,
-        t1Candidates.reduce((sum, s) => sum + s.players.length, 0)
+        localT1.reduce((sum, s) => sum + s.players.length, 0)
       );
       targetMoveFromT2 = Math.min(
         targetMoveFromT2,
-        t2Candidates.reduce((sum, s) => sum + s.players.length, 0)
+        localT2.reduce((sum, s) => sum + s.players.length, 0)
       );
       
-      const selT1 = selectTieredSquads(t1Candidates, targetMoveFromT1, currentUsedSquadIds);
-      const selT2 = selectTieredSquads(t2Candidates, targetMoveFromT2, currentUsedSquadIds);
+      const selT1 = selectTieredSquads(localT1, targetMoveFromT1, currentUsedSquadIds);
+      const selT2 = selectTieredSquads(localT2, targetMoveFromT2, currentUsedSquadIds);
 
       const currentScore = scoreSwap(
         selT1,

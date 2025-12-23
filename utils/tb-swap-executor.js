@@ -4,6 +4,11 @@
  * ╚═══════════════════════════════════════════════════════════════╝
  *
  * Part of the TeamBalancer Plugin
+ *
+ * This class is responsible for the execution of team scramble plans. It manages a queue of
+ * player moves, handling RCON commands with retry logic, timeout protection, and error handling.
+ * It supports both "dry runs" (simulation) and live execution, and provides real-time feedback
+ * to Discord via the DiscordHelpers module upon completion.
  */
 
 import Logger from '../../core/logger.js';

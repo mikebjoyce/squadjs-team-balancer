@@ -4,6 +4,11 @@
  * ╚═══════════════════════════════════════════════════════════════╝
  *
  * Part of the TeamBalancer Plugin
+ *
+ * This class manages the persistence layer for the TeamBalancer plugin using Sequelize (SQLite).
+ * It handles saving and restoring critical state data such as win streaks, team IDs, and timestamps
+ * across server restarts. It ensures data integrity by checking for stale state upon initialization
+ * and provides methods for the main plugin instance to update persistent records.
  */
 
 import Sequelize from 'sequelize';

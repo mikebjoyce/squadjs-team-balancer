@@ -1,5 +1,5 @@
 import Scrambler from '../utils/tb-scrambler.js';
-import { generateMockPlayers, generateMockSquads, transformForScrambler } from './mock-data-generator.js';
+import { generateMockPlayers, generateMockSquads, transformForScrambler, generateScenario_AllLocked, generateScenario_DavidGoliath } from './mock-data-generator.js';
 
 async function runTest(testName, config) {
   console.log(`\n--------------------------------------------------`);
@@ -58,6 +58,62 @@ async function runTest(testName, config) {
   checks.forEach(c => console.log(`   ${c.pass ? '✅' : '❌'} ${c.name}`));
 }
 
+async function runCustomTest(testName, dataGeneratorFn) {
+  console.log(`\n--------------------------------------------------`);
+  console.log(`🧪 TEST: ${testName}`);
+
+  // 1. Generate Data using custom generator
+  const { players, squads } = dataGeneratorFn();
+  const { squads: tfSquads, players: tfPlayers } = transformForScrambler(players, squads);
+
+  const t1Start = tfPlayers.filter(p => p.teamID === '1').length;
+  const t2Start = tfPlayers.filter(p => p.teamID === '2').length;
+  console.log(`   Initial State: Team 1: ${t1Start} | Team 2: ${t2Start} | Total: ${tfPlayers.length}`);
+
+  // 2. Run Scrambler
+  const startTime = Date.now();
+  const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+    squads: tfSquads,
+    players: tfPlayers,
+    winStreakTeam: 1,
+    scramblePercentage: 0.5
+  });
+  const duration = Date.now() - startTime;
+
+  // 3. Analyze Results
+  const moves = swapPlan.length;
+  const finalPlayers = tfPlayers.map(p => {
+    const move = swapPlan.find(m => m.steamID === p.steamID);
+    return move ? { ...p, teamID: move.targetTeamID } : p;
+  });
+
+  const t1End = finalPlayers.filter(p => p.teamID === '1').length;
+  const t2End = finalPlayers.filter(p => p.teamID === '2').length;
+  const diff = Math.abs(t1End - t2End);
+
+  console.log(`   Results:`);
+  console.log(`   - Execution Time: ${duration}ms`);
+  console.log(`   - Moves Generated: ${moves}`);
+  console.log(`   - Final State: Team 1: ${t1End} | Team 2: ${t2End} (Diff: ${diff})`);
+
+  // 4. Verify Broken Squads
+  const brokenSquads = [];
+  tfSquads.forEach(squad => {
+    const movedPlayers = squad.players.filter(pid => swapPlan.some(m => m.steamID === pid));
+    const allMoved = movedPlayers.length === squad.players.length;
+    const noneMoved = movedPlayers.length === 0;
+    
+    if (!allMoved && !noneMoved) {
+      brokenSquads.push({ id: squad.id, locked: squad.locked, size: squad.players.length, moved: movedPlayers.length });
+    }
+  });
+
+  if (brokenSquads.length > 0) {
+    console.log(`   ⚠️  Broken Squads:`);
+    brokenSquads.forEach(b => console.log(`      - ${b.id} (Locked: ${b.locked}): ${b.moved}/${b.size} moved`));
+  }
+}
+
 async function runAllTests() {
   console.log('🚀 Starting Scrambler Stress Tests...');
 
@@ -80,6 +136,15 @@ async function runAllTests() {
   // ✓ "Absolute Packed" test with 0% unassigned players
   await runTest('Absolute Packed (0% Unassigned)', { playerCount: 80, team1Ratio: 0.55, unassignedRatio: 0 });
 
+  // ✓ "The Wall of Locked Squads"
+  await runCustomTest('All Locked Squads (High Imbalance)', () => generateScenario_AllLocked(100, 0.8));
+
+  // ✓ "Unbreakable Large Squads"
+  await runCustomTest('Single Large Unlocked vs Many Small Locked', generateScenario_DavidGoliath);
+
+  // ✓ "Cap-Pressure Surgical"
+  await runTest('Max Capacity Surgical Trim', { playerCount: 102, team1Ratio: 0.5, unassignedRatio: 0 });
+
   console.log(`\n--------------------------------------------------`);
   console.log('🏁 All tests completed.');
 
@@ -96,6 +161,7 @@ async function runBulkTests(totalRuns = 100) {
     perfectBalance: 0, // diff <= 1
     acceptableBalance: 0, // diff == 2
     failedBalance: 0, // diff > 2
+    lockedSquadsBroken: 0,
     totalTime: 0,
     failures: []
   };
@@ -133,6 +199,20 @@ async function runBulkTests(totalRuns = 100) {
     const t2End = finalPlayers.filter((p) => p.teamID === '2').length;
     const diff = Math.abs(t1End - t2End);
 
+    // Check for broken locked squads
+    let hasBrokenLocked = false;
+    tfSquads.forEach(squad => {
+      if (!squad.locked) return;
+      const movedPlayers = squad.players.filter(pid => swapPlan.some(m => m.steamID === pid));
+      const allMoved = movedPlayers.length === squad.players.length;
+      const noneMoved = movedPlayers.length === 0;
+      if (!allMoved && !noneMoved) {
+        hasBrokenLocked = true;
+      }
+    });
+
+    if (hasBrokenLocked) results.lockedSquadsBroken++;
+
     // Aggregate results
     results.total++;
     results.totalTime += duration;
@@ -162,6 +242,7 @@ async function runBulkTests(totalRuns = 100) {
   console.log(`✅ Perfect Balance (Diff <= 1):   ${results.perfectBalance} (${perfectPercent}%)`);
   console.log(`👌 Acceptable Balance (Diff = 2): ${results.acceptableBalance} (${acceptablePercent}%)`);
   console.log(`❌ Failed Balance (Diff > 2):     ${results.failedBalance} (${failedPercent}%)`);
+  console.log(`🔓 Runs with Locked Squad Breaks:   ${results.lockedSquadsBroken}`);
   console.log(`--------------------------------`);
 
   if (results.failures.length > 0) {

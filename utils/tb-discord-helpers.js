@@ -5,7 +5,10 @@
  *
  * Part of the TeamBalancer Plugin
  *
- * Helper functions for Discord integration.
+ * This class provides static helper methods for constructing and sending Discord embeds and messages
+ * related to the TeamBalancer plugin. It handles the formatting of status reports, diagnostic results,
+ * scramble plans, and win streak notifications. It interacts with the main TeamBalancer instance to
+ * retrieve server state and configuration, ensuring consistent messaging across the plugin's operations.
  *
  * COMPATIBILITY NOTE:
  * This module uses raw JavaScript objects for embeds to ensure compatibility
@@ -16,7 +19,9 @@ import Logger from '../../core/logger.js';
 export const DiscordHelpers = {
   buildStatusEmbed(tb) {
     // Defensive checks
-    const effectiveStatus = tb.manuallyDisabled
+    const effectiveStatus = !tb.ready
+      ? 'INITIALIZING'
+      : tb.manuallyDisabled
       ? 'DISABLED (manual)'
       : tb.options?.enableWinStreakTracking
       ? 'ENABLED'
@@ -77,7 +82,7 @@ export const DiscordHelpers = {
     const embed = {
       color: color,
       title: '🩺 TeamBalancer Diagnostics',
-      description: `**Plugin Status:** ${tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`,
+      description: `**Plugin Status:** ${!tb.ready ? 'INITIALIZING' : tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`,
       fields: [],
       timestamp: new Date().toISOString()
     };

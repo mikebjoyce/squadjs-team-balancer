@@ -4,6 +4,11 @@
  * ╚═══════════════════════════════════════════════════════════════╝
  *
  * Part of the TeamBalancer Plugin
+ *
+ * This module registers command handlers for the TeamBalancer plugin, managing in-game chat interactions.
+ * It processes commands like !teambalancer (status, on, off, diag) and !scramble (now, dry, cancel),
+ * validating permissions and arguments. It utilizes DiscordHelpers to mirror command execution to Discord
+ * and interacts with the core TeamBalancer instance to trigger logic such as enabling/disabling tracking.
  */
 
 import Logger from '../../core/logger.js';
@@ -342,6 +347,15 @@ const CommandHandlers = {
               `Total Squads: ${squads.length}`,
               `Team 1 Squads: ${t1Squads.length}`,
               `Team 2 Squads: ${t2Squads.length}`,
+              '',
+              '----- CONFIGURATION -----',
+              `Dominant Win Threshold: ${this.options?.minTicketsToCountAsDominantWin || 150} tickets`,
+              `Single Round Scramble: ${this.options?.enableSingleRoundScramble ? `ON (> ${this.options?.singleRoundScrambleThreshold} tix)` : 'OFF'}`,
+              `Invasion Thresholds: Atk: ${this.options?.invasionAttackTeamThreshold} | Def: ${this.options?.invasionDefenceTeamThreshold}`,
+              `Scramble %: ${(this.options?.scramblePercentage || 0.5) * 100}%`,
+              `Scramble Delay: ${this.options?.scrambleAnnouncementDelay}s`,
+              `Max Scramble Time: ${this.options?.maxScrambleCompletionTime}ms`,
+              `Discord Options: Mirror: ${this.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${this.options?.postScrambleDetails ? 'Yes' : 'No'}`,
               `------------------------------------------`
             ].join('\n');
             const response = await this.respond(player, diagMsg);

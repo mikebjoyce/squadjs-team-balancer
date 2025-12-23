@@ -6,7 +6,8 @@
  * Part of the TeamBalancer Plugin
  *
  * Runs integrity checks on the database connection and performs
- * dry-run simulations of the Scrambler to verify plugin health.
+ * dry-run simulations of the Scrambler to verify plugin health. It interacts
+ * with the main TeamBalancer instance to access the database and server state.
  */
 import Logger from '../../core/logger.js';
 import Scrambler from './tb-scrambler.js';
