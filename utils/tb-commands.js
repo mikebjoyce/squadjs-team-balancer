@@ -16,12 +16,7 @@ const CommandHandlers = {
       const playerName = player?.name || 'Unknown Player';
       const steamID = player?.steamID || 'Unknown SteamID';
       let logMessage = `[TeamBalancer][Response to ${playerName}`;
-
-      if (this.options.debugLogs) {
-        logMessage += ` (${steamID})`;
-      }
-      logMessage += `]\n${msg}`; 
-      console.log("msg received:" + logMessage);
+      logMessage += ` (${steamID})]\n${msg}`;
       Logger.verbose('TeamBalancer', 2, logMessage);
 
       // The RCON warn part (if uncommented in future) would still use steamID
@@ -81,8 +76,7 @@ const CommandHandlers = {
       const steamID = info.steamID;
       const playerName = info.player?.name || 'Unknown';
 
-      // This debug log remains as is, as it's for internal debugging of the request itself
-      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `General teambalancer info requested by ${playerName} (${steamID})`);
+      Logger.verbose('TeamBalancer', 4, `General teambalancer info requested by ${playerName} (${steamID})`);
 
       const now = Date.now();
       const timeDifference = now - this.lastScrambleTime;
@@ -121,23 +115,18 @@ const CommandHandlers = {
         `Max Streak Threshold: ${this.options.maxWinStreak} dominant win(s)`
       ].join('\n');
 
-      // Conditional logging based on debugLogs
-      if (this.options.debugLogs) {
-        Logger.verbose('TeamBalancer', 4, `[TeamBalancer] !teambalancer response sent to ${playerName} (${steamID}):\n${infoMsg}`);
-      } else {
-        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] !teambalancer command received from ${playerName} and responded.`);
-      }
+      Logger.verbose('TeamBalancer', 4, `[TeamBalancer] !teambalancer response sent to ${playerName} (${steamID}):\n${infoMsg}`);
 
       try {
         // This is what gets sent in-game via RCON warn
         await this.server.rcon.warn(steamID, infoMsg);
       } catch (err) {
-        if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `Failed to send info message to ${steamID}: ${err.message || err}`);
+        Logger.verbose('TeamBalancer', 1, `Failed to send info message to ${steamID}: ${err.message || err}`);
       }
     };
 
     tb.onChatCommand = async function (command) {
-      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `Chat command received: !teambalancer ${command.message}`);
+      Logger.verbose('TeamBalancer', 4, `Chat command received: !teambalancer ${command.message}`);
 
       // This line ensures commands are only processed from admin chat when devMode is false
       // The public-facing '!teambalancer' (no args) is handled by onChatMessage.
@@ -152,7 +141,7 @@ const CommandHandlers = {
       // let onChatMessage handle the public status display.
       // This prevents an "Invalid command" response for the public status check.
       if (!message.trim()) {
-        if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, 'No subcommand provided for !teambalancer (admin chat), letting onChatMessage handle public status.');
+        Logger.verbose('TeamBalancer', 4, 'No subcommand provided for !teambalancer (admin chat), letting onChatMessage handle public status.');
         return;
       }
 
@@ -220,31 +209,6 @@ const CommandHandlers = {
             await this.resetStreak('Manual disable');
             break;
           }
-          case 'debug': {
-            const arg = args[1]?.toLowerCase();
-            if (arg === 'on') {
-              this.options.debugLogs = true;
-              Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Debug logging enabled by ${adminName}`);
-              this.respond(player, 'Debug logging enabled.');
-            } else if (arg === 'off') {
-              this.options.debugLogs = false;
-              Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Debug logging disabled by ${adminName}`);
-              this.respond(player, 'Debug logging disabled.');
-            } else {
-              this.respond(player, 'Usage: !teambalancer debug on|off');
-            }
-            if (this.discordChannel) {
-              const embed = {
-                color: 0x3498db,
-                title: `🎮 In-Game Command: !teambalancer debug ${arg}`,
-                description: `Executed by **${adminName}**`,
-                fields: [{ name: 'Response', value: `Debug logging ${arg === 'on' ? 'enabled' : 'disabled'}.`, inline: false }],
-                timestamp: new Date().toISOString()
-              };
-              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
-            }
-            break;
-          }
           case 'status': {
             // Determine the effective plugin status
             const effectiveStatus = this.manuallyDisabled
@@ -301,8 +265,7 @@ const CommandHandlers = {
             break;
           }
           case 'diag': {
-            if (this.options.debugLogs)
-              Logger.verbose('TeamBalancer', 4, 'Diagnostics command received.');
+            Logger.verbose('TeamBalancer', 4, 'Diagnostics command received.');
             await this.server.rcon.warn(steamID, 'Running diagnostics... please wait.');
 
             const diagnostics = new TBDiagnostics(this);
@@ -311,7 +274,7 @@ const CommandHandlers = {
             const dbResult = results.find((r) => r.name === 'Database');
             const scrambleResult = results.find((r) => r.name === 'Live Scramble Test');
 
-            // Restore detailed stats calculation
+            // Detailed stats calculation
             const players = this.server.players;
             const squads = this.server.squads;
             const t1Players = players.filter((p) => p.teamID === 1);
@@ -377,7 +340,7 @@ const CommandHandlers = {
           default: {
             this.respond(
               player,
-              'Invalid command. Usage: !teambalancer [status|diag|on|off|debug|help] or !scramble [now|dry|cancel]'
+              'Invalid command. Usage: !teambalancer [status|diag|on|off|help] or !scramble [now|dry|cancel]'
             );
           }
         }
@@ -388,7 +351,7 @@ const CommandHandlers = {
     };
 
     tb.onScrambleCommand = async function (command) {
-      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `Scramble command received: !scramble ${command.message}`);
+      Logger.verbose('TeamBalancer', 4, `Scramble command received: !scramble ${command.message}`);
       // This line ensures commands are only processed from admin chat when devMode is false
       if (!this.options.devMode && command.chat !== 'ChatAdmin') return;
 

@@ -76,7 +76,6 @@ Add to your `config.json`:
   "showWinStreakMessages": true,
   "warnOnSwap": true,
   "useGenericTeamNamesInBroadcasts": false,
-  "debugLogs": false,
   "discordClient": "discord",
   "discordChannelID": "",
   "discordAdminRoleID": "",
@@ -118,7 +117,6 @@ Admin Commands:
 !teambalancer diag             → Run self-diagnostics (DB check + Live Scramble Sim).
 !teambalancer on               → Enable win streak tracking.
 !teambalancer off              → Disable win streak tracking.
-!teambalancer debug on|off     → Enable/disable debug logging.
 !teambalancer help             → List available commands.
 
 !scramble                      → Manually trigger scramble with countdown.
@@ -162,7 +160,6 @@ requireScrambleConfirmation    - Require !scramble confirm before executing a sc
 scrambleConfirmationTimeout    - Time in seconds to wait for scramble confirmation.
 
 Debug & Dev:
-debugLogs                      - Enable verbose console logging.
 devMode                        - Enable dev mode.
 ```
 
@@ -190,22 +187,9 @@ Set `devMode = true` in the constructor to allow commands from all chat (not jus
 
 The plugin provides comprehensive logging for debugging and monitoring:
 
--   **Debug Logs**: Enable with `debugLogs: true` for verbose output
 -   **Console Output**: All major actions logged to server console
 -   **Player Warnings**: Optional RCON warnings sent to swapped players
 -   **Scramble Tracking**: Detailed retry attempts and completion status
-
-### Debug Mode
-
-Enable debug logging to see detailed scramble execution:
-
-```json
-{
-  "debugLogs": true
-}
-```
-
-This will show squad selection logic, player move attempts, and retry status in the console.
 
 # Critical Server Configuration
 

@@ -51,7 +51,7 @@ export default class TBDatabase {
       const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > staleCutoff;
 
       if (!isStale) {
-        if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);
+        Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);
         return {
           winStreakTeam: record.winStreakTeam,
           winStreakCount: record.winStreakCount,
@@ -61,7 +61,7 @@ export default class TBDatabase {
         };
       }
 
-      if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
+      Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
       const lastScrambleTime = record.lastScrambleTime;
       record.winStreakTeam = null;
       record.winStreakCount = 0;
@@ -96,7 +96,7 @@ export default class TBDatabase {
       record.winStreakCount = count;
       record.lastSyncTimestamp = Date.now();
       await record.save();
-      if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, `[DB] Updated: team=${team}, count=${count}`);
+      Logger.verbose('TeamBalancer', 4, `[DB] Updated: team=${team}, count=${count}`);
       return {
         winStreakTeam: record.winStreakTeam,
         winStreakCount: record.winStreakCount,
@@ -119,7 +119,7 @@ export default class TBDatabase {
       if (!record) return null;
       record.lastScrambleTime = timestamp;
       await record.save();
-      if (this.options?.debugLogs) Logger.verbose('TeamBalancer', 4, `[DB] Updated lastScrambleTime: ${timestamp}`);
+      Logger.verbose('TeamBalancer', 4, `[DB] Updated lastScrambleTime: ${timestamp}`);
       return { lastScrambleTime: record.lastScrambleTime };
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] saveScrambleTime failed: ${err.message}`);

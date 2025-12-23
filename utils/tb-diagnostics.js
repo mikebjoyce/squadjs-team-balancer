@@ -84,7 +84,6 @@ export class TBDiagnostics {
         players,
         winStreakTeam: this.tb.winStreakTeam,
         scramblePercentage: this.tb.options.scramblePercentage,
-        debug: this.tb.options.debugLogs
       });
 
       if (swapPlan && Array.isArray(swapPlan)) {

@@ -25,7 +25,7 @@ export default class SwapExecutor {
 
   async queueMove(steamID, targetTeamID, isSimulated = false) {
     if (isSimulated) {
-      if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor][Dry Run] Would queue ${steamID} -> ${targetTeamID}`);
+      Logger.verbose('TeamBalancer', 4, `[SwapExecutor][Dry Run] Would queue ${steamID} -> ${targetTeamID}`);
       return;
     }
 
@@ -35,7 +35,7 @@ export default class SwapExecutor {
       startTime: Date.now()
     });
 
-    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor] Queued move for ${steamID} -> ${targetTeamID}`);
+    Logger.verbose('TeamBalancer', 4, `[SwapExecutor] Queued move for ${steamID} -> ${targetTeamID}`);
 
     if (!this.scrambleRetryTimer) {
       this.startMonitoring();
@@ -45,7 +45,7 @@ export default class SwapExecutor {
   }
 
   startMonitoring() {
-    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, '[SwapExecutor] Starting monitoring');
+    Logger.verbose('TeamBalancer', 4, '[SwapExecutor] Starting monitoring');
 
     this.activeSession = {
       startTime: Date.now(),
@@ -91,7 +91,7 @@ export default class SwapExecutor {
             continue;
           }
 
-          // Bugfix: Check if player is already on the target team to prevent RCON spam
+          // Check if player is already on the target team to prevent RCON spam
           if (String(player.teamID) === String(moveData.targetTeamID)) {
             this.activeSession.completedMoves++;
             playersToRemove.push(steamID);
@@ -108,10 +108,8 @@ export default class SwapExecutor {
               playersToRemove.push(steamID);
               if (this.options.warnOnSwap) {
                 try {
-                    await this.server.rcon.warn(steamID, this.RconMessages.playerScrambledWarning);
-                  } catch (err) {
-                    if (this.options.debugLogs) Logger.verbose('TeamBalancer', 4, `[SwapExecutor] warn failed for ${steamID}: ${err}`);
-                }
+                  await this.server.rcon.warn(steamID, this.RconMessages.playerScrambledWarning);
+                } catch (err) { Logger.verbose('TeamBalancer', 4, `[SwapExecutor] warn failed for ${steamID}: ${err}`); }
               }
             } catch (err) {
               Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Move attempt ${moveData.attempts} failed for ${steamID}: ${err?.message || err}`);

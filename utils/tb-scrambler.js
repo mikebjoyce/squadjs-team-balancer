@@ -31,12 +31,11 @@ export const Scrambler = {
     players,
     winStreakTeam,
     scramblePercentage = 0.5,
-    debug = false
   }) {
     const maxTeamSize = 50;
     const maxTotalPlayersAllowed = maxTeamSize * 2 + 2;
 
-    if (debug) Logger.verbose('TeamBalancer', 2, `========== Starting Team Scramble (Max cap = ${maxTeamSize}, Total cap = ${maxTotalPlayersAllowed}) ==========`);
+    Logger.verbose('TeamBalancer', 2, `========== Starting Team Scramble (Max cap = ${maxTeamSize}, Total cap = ${maxTotalPlayersAllowed}) ==========`);
 
     const totalPlayers = players.length;
     if (totalPlayers > maxTotalPlayersAllowed) {
@@ -47,7 +46,7 @@ export const Scrambler = {
 
     if (![1, 2].includes(winStreakTeam)) {
       winStreakTeam = Math.random() < 0.5 ? 1 : 2;
-      if (debug) Logger.verbose('TeamBalancer', 4, `No win streak team set. Randomly selecting Team ${winStreakTeam} as starting side.`);
+      Logger.verbose('TeamBalancer', 4, `No win streak team set. Randomly selecting Team ${winStreakTeam} as starting side.`);
     }
 
     const workingPlayers = players.map((p) => ({
@@ -78,15 +77,15 @@ export const Scrambler = {
     };
 
     const initialCounts = getCurrentTeamCounts();
-    if (debug) Logger.verbose('TeamBalancer', 4, `Initial team sizes: Team1 = ${initialCounts.team1Count}, Team2 = ${initialCounts.team2Count}, Unassigned (no squad) = ${initialCounts.unassignedCount}`);
+    Logger.verbose('TeamBalancer', 4, `Initial team sizes: Team1 = ${initialCounts.team1Count}, Team2 = ${initialCounts.team2Count}, Unassigned (no squad) = ${initialCounts.unassignedCount}`);
 
     const targetPlayersToMove = Math.round(totalPlayers * scramblePercentage);
-    if (debug) Logger.verbose('TeamBalancer', 4, `Target players to move (total): ${targetPlayersToMove} (${scramblePercentage * 100}%)`);
+    Logger.verbose('TeamBalancer', 4, `Target players to move (total): ${targetPlayersToMove} (${scramblePercentage * 100}%)`);
 
     const allSquads = workingSquads.filter((s) => s.players?.length > 0);
     const unassigned = workingPlayers.filter((p) => p.squadID === null);
 
-    if (debug) Logger.verbose('TeamBalancer', 4, `Total players: ${totalPlayers}, Max per team: ${maxTeamSize}, Scramble Percentage: ${scramblePercentage * 100}%`);
+    Logger.verbose('TeamBalancer', 4, `Total players: ${totalPlayers}, Max per team: ${maxTeamSize}, Scramble Percentage: ${scramblePercentage * 100}%`);
     const unassignedPseudoSquads = unassigned.map((p) => ({
       id: `Unassigned - ${p.steamID}`,
       teamID: p.teamID, // Their actual team (1 or 2)
@@ -100,7 +99,7 @@ export const Scrambler = {
     let t1Candidates = filterCandidates('1');
     let t2Candidates = filterCandidates('2');
 
-    if (debug) Logger.verbose('TeamBalancer', 4, `Candidate squads filtered: Team1 = ${t1Candidates.length}, Team2 = ${t2Candidates.length}`);
+    Logger.verbose('TeamBalancer', 4, `Candidate squads filtered: Team1 = ${t1Candidates.length}, Team2 = ${t2Candidates.length}`);
 
     const shuffle = (arr) => {
       for (let i = arr.length - 1; i > 0; i--) {
@@ -193,12 +192,12 @@ export const Scrambler = {
     let bestT1SwapCandidates = null;
     let bestT2SwapCandidates = null;
 
-    if (debug) Logger.verbose('TeamBalancer', 4, `Starting swap attempts (max ${MAX_ATTEMPTS})`);
+    Logger.verbose('TeamBalancer', 4, `Starting swap attempts (max ${MAX_ATTEMPTS})`);
 
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
       // Emergency Squad Splitting (Partial Squad Break): If we can't find a good solution early, break unlocked squads
       if (i === 25 && bestScore > 50) {
-        if (debug) Logger.verbose('TeamBalancer', 2, 'High imbalance detected after 25 attempts. Engaging Partial Squad Break (Emergency Splitting).');
+        Logger.verbose('TeamBalancer', 2, 'High imbalance detected after 25 attempts. Engaging Partial Squad Break (Emergency Splitting).');
         const decompose = (candidates) => {
           const newCandidates = [];
           for (const cand of candidates) {
@@ -259,8 +258,8 @@ export const Scrambler = {
         4,
         `Attempt ${i + 1}: Score = ${currentScore.toFixed(2)}, Move T1->T2 = ${selT1.reduce((n, s) => n + s.players.length, 0)}, Move T2->T1 = ${selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T1 = ${initialCounts.team1Count - selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T2 = ${initialCounts.team2Count - selT2.reduce((n, s) => n + s.players.length, 0) + selT1.reduce((n, s) => n + s.players.length, 0)}`
       );
-      if (debug) Logger.verbose('TeamBalancer', 4, `Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
-      if (debug) Logger.verbose('TeamBalancer', 4, `Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
+      Logger.verbose('TeamBalancer', 4, `Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
+      Logger.verbose('TeamBalancer', 4, `Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
 
       const t1Ids = new Set(selT1.map((s) => s.id));
       const t2Ids = new Set(selT2.map((s) => s.id));
@@ -275,9 +274,9 @@ export const Scrambler = {
         bestScore = currentScore;
         bestT1SwapCandidates = selT1;
         bestT2SwapCandidates = selT2;
-        if (debug) Logger.verbose('TeamBalancer', 4, `New best score found: ${bestScore.toFixed(2)} at attempt ${i + 1}`);        
+        Logger.verbose('TeamBalancer', 4, `New best score found: ${bestScore.toFixed(2)} at attempt ${i + 1}`);
         if (bestScore <= 5) {          
-          if (debug) Logger.verbose('TeamBalancer', 4, `Very good score (${bestScore}) found. Breaking early from swap attempts.`);
+          Logger.verbose('TeamBalancer', 4, `Very good score (${bestScore}) found. Breaking early from swap attempts.`);
           break;
         }
       }
@@ -299,7 +298,7 @@ export const Scrambler = {
     }
 
     const preSwapCounts = getCurrentTeamCounts();
-    if (debug) Logger.verbose('TeamBalancer', 4, `Pre-swap team sizes: Team1 = ${preSwapCounts.team1Count}, Team2 = ${preSwapCounts.team2Count}`);
+    Logger.verbose('TeamBalancer', 4, `Pre-swap team sizes: Team1 = ${preSwapCounts.team1Count}, Team2 = ${preSwapCounts.team2Count}`);
     const finalPlayerMovesMap = new Map();
 
     for (const squad of bestT1SwapCandidates) {
@@ -318,7 +317,7 @@ export const Scrambler = {
     }
 
     const postInitialSwapCounts = getCurrentTeamCounts();
-    if (debug) Logger.verbose('TeamBalancer', 4, `Post-initial-swap internal team sizes: Team1 = ${postInitialSwapCounts.team1Count}, Team2 = ${postInitialSwapCounts.team2Count}`);
+    Logger.verbose('TeamBalancer', 4, `Post-initial-swap internal team sizes: Team1 = ${postInitialSwapCounts.team1Count}, Team2 = ${postInitialSwapCounts.team2Count}`);
 
     
     const getPlayersForTrimming = (
@@ -374,7 +373,7 @@ export const Scrambler = {
           if (getCurrentTeamCounts().team1Count > getCurrentTeamCounts().team2Count + 1) {
             finalPlayerMovesMap.set(player.steamID, { steamID: player.steamID, targetTeamID: '2' });
             updatePlayerTeam(player.steamID, '2');
-            Logger.verbose('TeamBalancer', 3, `Trimming: Player ${player.steamID} from Team 1 to Team 2 (overcap fix)`);
+            Logger.verbose('TeamBalancer', 4, `Trimming: Player ${player.steamID} from Team 1 to Team 2 (overcap fix)`);
             madeProgress = true;
             break; // Move one player at a time and re-evaluate
           }
@@ -400,7 +399,7 @@ export const Scrambler = {
           if (getCurrentTeamCounts().team2Count > getCurrentTeamCounts().team1Count + 1) {
             finalPlayerMovesMap.set(player.steamID, { steamID: player.steamID, targetTeamID: '1' });
             updatePlayerTeam(player.steamID, '1');
-            Logger.verbose('TeamBalancer', 3, `Trimming: Player ${player.steamID} from Team 2 to Team 1 (overcap fix)`);
+            Logger.verbose('TeamBalancer', 4, `Trimming: Player ${player.steamID} from Team 2 to Team 1 (overcap fix)`);
             madeProgress = true;
             break; // Move one player at a time and re-evaluate
           }
@@ -414,7 +413,7 @@ export const Scrambler = {
     }
 
     const finalInternalCounts = getCurrentTeamCounts();
-    if (debug) Logger.verbose('TeamBalancer', 4, `Final internal team sizes after all adjustments: Team1 = ${finalInternalCounts.team1Count}, Team2 = ${finalInternalCounts.team2Count}, Unassigned (no squad) = ${finalInternalCounts.unassignedCount}`);
+    Logger.verbose('TeamBalancer', 4, `Final internal team sizes after all adjustments: Team1 = ${finalInternalCounts.team1Count}, Team2 = ${finalInternalCounts.team2Count}, Unassigned (no squad) = ${finalInternalCounts.unassignedCount}`);
 
     
     const finalTeam1Overcap = finalInternalCounts.team1Count - maxTeamSize;
