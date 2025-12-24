@@ -42,7 +42,7 @@ export default class TBDatabase {
 
       await this.TeamBalancerStateModel.sync({ alter: true });
 
-      return await this.sequelize.transaction(async (t) => {
+      return await this.sequelize.transaction({ type: Sequelize.Transaction.TYPES.IMMEDIATE }, async (t) => {
         const [record] = await this.TeamBalancerStateModel.findOrCreate({
           where: { id: 1 },
           defaults: {
@@ -51,8 +51,7 @@ export default class TBDatabase {
             lastSyncTimestamp: Date.now(),
             lastScrambleTime: null
           },
-          transaction: t,
-          lock: Sequelize.Transaction.LOCK.UPDATE
+          transaction: t
         });
 
         const staleCutoff = 2.5 * 60 * 60 * 1000;
@@ -96,10 +95,9 @@ export default class TBDatabase {
         Logger.verbose('TeamBalancer', 1, '[DB] saveState called before initDB.');
         return null;
       }
-      return await this.sequelize.transaction(async (t) => {
+      return await this.sequelize.transaction({ type: Sequelize.Transaction.TYPES.IMMEDIATE }, async (t) => {
         const record = await this.TeamBalancerStateModel.findByPk(1, {
-          transaction: t,
-          lock: Sequelize.Transaction.LOCK.UPDATE
+          transaction: t
         });
         if (!record) {
           Logger.verbose('TeamBalancer', 1, '[DB] saveState: state record missing.');
@@ -123,16 +121,46 @@ export default class TBDatabase {
     }
   }
 
+  async incrementStreak(winnerID) {
+    try {
+      return await this.sequelize.transaction({
+        type: Sequelize.Transaction.TYPES.IMMEDIATE
+      }, async (t) => {
+        const record = await this.TeamBalancerStateModel.findByPk(1, { transaction: t });
+        
+        if (!record) return null;
+
+        if (record.winStreakTeam === winnerID) {
+          record.winStreakCount += 1;
+        } else {
+          record.winStreakTeam = winnerID;
+          record.winStreakCount = 1;
+        }
+
+        record.lastSyncTimestamp = Date.now();
+        await record.save({ transaction: t });
+        
+        return {
+          winStreakTeam: record.winStreakTeam,
+          winStreakCount: record.winStreakCount,
+          lastSyncTimestamp: record.lastSyncTimestamp
+        };
+      });
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 1, `[DB] incrementStreak failed: ${err.message}`);
+      return null;
+    }
+  }
+
   async saveScrambleTime(timestamp) {
     try {
       if (!this.TeamBalancerStateModel) {
         Logger.verbose('TeamBalancer', 1, '[DB] saveScrambleTime called before initDB.');
         return null;
       }
-      return await this.sequelize.transaction(async (t) => {
+      return await this.sequelize.transaction({ type: Sequelize.Transaction.TYPES.IMMEDIATE }, async (t) => {
         const record = await this.TeamBalancerStateModel.findByPk(1, {
-          transaction: t,
-          lock: Sequelize.Transaction.LOCK.UPDATE
+          transaction: t
         });
         if (!record) return null;
         record.lastScrambleTime = timestamp;

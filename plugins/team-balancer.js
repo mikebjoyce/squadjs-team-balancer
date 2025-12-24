@@ -786,10 +786,6 @@ export default class TeamBalancer extends BasePlugin {
       }
       Logger.verbose('TeamBalancer', 4, `Dominance state: isDominant=${isDominant}, isStomp=${isStomp}`);
 
-      const nextStreakCount = this.winStreakTeam === winnerID ? this.winStreakCount + 1 : 1;
-      const maxStreakReached = nextStreakCount >= this.options.maxWinStreak;
-      Logger.verbose('TeamBalancer', 4, `Streak info: nextStreakCount=${nextStreakCount}, maxStreakReached=${maxStreakReached}`);
-
       const winnerName =
         (this.options.useGenericTeamNamesInBroadcasts
           ? `Team ${winnerID}`
@@ -872,15 +868,19 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       try {
-        const dbRes = await this.db.saveState(winnerID, nextStreakCount);
+        const dbRes = await this.db.incrementStreak(winnerID);
         if (dbRes) {
           this.winStreakTeam = dbRes.winStreakTeam;
           this.winStreakCount = dbRes.winStreakCount;
           this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
+        } else {
+          // Fallback if DB fails
+          this.winStreakTeam = winnerID;
+          this.winStreakCount++;
         }
         Logger.verbose('TeamBalancer', 4, `New win streak started: team ${this.winStreakTeam}, count ${this.winStreakCount}`);
       } catch (err) {
-        Logger.verbose('TeamBalancer', 1, `[DB] saveState failed: ${err.message}`);
+        Logger.verbose('TeamBalancer', 1, `[DB] incrementStreak failed: ${err.message}`);
       }
 
       if (this.discordChannel && isDominant) {
