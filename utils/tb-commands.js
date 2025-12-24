@@ -35,6 +35,10 @@ const CommandHandlers = {
     };
 
     tb.formatMessage = (template, values) => {
+      if (typeof template !== 'string') {
+        Logger.verbose('TeamBalancer', 1, `[Error] formatMessage received invalid template: ${typeof template}`);
+        return '';
+      }
       for (const key in values) {
         template = template.split(`{${key}}`).join(values[key]);
       }
@@ -43,9 +47,12 @@ const CommandHandlers = {
 
     tb.RconMessages = {
       prefix: '[TeamBalancer]',
+      draw: 'Round ended in a Draw!',
 
       nonDominant: {
         streakBroken: "{team} ended {loser}'s domination streak | ({margin} tickets)",
+        invasionAttackWin: '{team} defeated defenders | ({margin} tickets)',
+        invasionDefendWin: '{team} held off attackers | ({margin} tickets)',
 
         narrowVictory: '{team} narrowly defeated {loser} | ({margin} tickets)',
         marginalVictory: '{team} gained ground on {loser} | ({margin} tickets)',

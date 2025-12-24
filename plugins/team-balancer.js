@@ -734,6 +734,19 @@ export default class TeamBalancer extends BasePlugin {
       this.stopPollingGameInfo();
       this.stopPollingTeamAbbreviations();
 
+      // Check for Draw (Winner is null)
+      if (!data || !data.winner) {
+        Logger.verbose('TeamBalancer', 2, 'Round ended in a Draw.');
+        const msg = `${this.RconMessages.prefix} ${this.RconMessages.draw}`;
+        try {
+          await this.server.rcon.broadcast(msg);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `Failed to broadcast draw message: ${err.message}`);
+        }
+        await this.mirrorRconToDiscord(msg, 'info');
+        return await this.resetStreak('Draw');
+      }
+
       const winnerID = parseInt(data?.winner?.team);
       const winnerTickets = parseInt(data?.winner?.tickets);
       const loserTickets = parseInt(data?.loser?.tickets);
