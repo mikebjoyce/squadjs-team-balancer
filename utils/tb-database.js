@@ -152,6 +152,42 @@ export default class TBDatabase {
     }
   }
 
+  async runConcurrencyTest() {
+    Logger.verbose('TeamBalancer', 1, '[DB] Starting concurrency test...');
+    let originalState = null;
+    try {
+      // 1. Backup current state
+      originalState = await this.TeamBalancerStateModel.findByPk(1);
+      
+      // 2. Reset to known state (Team 1, Count 0)
+      if (!await this.saveState(1, 0)) throw new Error("Setup saveState failed");
+
+      // 3. Run parallel increments
+      const iterations = 5;
+      const promises = [];
+      for (let i = 0; i < iterations; i++) {
+        promises.push(this.incrementStreak(1));
+      }
+      
+      const results = await Promise.all(promises);
+      const successCount = results.filter(r => r !== null).length;
+
+      // 4. Verify
+      const finalRecord = await this.TeamBalancerStateModel.findByPk(1);
+      const finalCount = finalRecord ? finalRecord.winStreakCount : -1;
+
+      // 5. Restore
+      if (originalState) await this.saveState(originalState.winStreakTeam, originalState.winStreakCount);
+
+      return finalCount === successCount
+        ? { success: true, message: `Passed (${successCount}/${iterations} txs committed).` }
+        : { success: false, message: `Failed. Committed: ${finalCount}, Expected: ${successCount}.` };
+    } catch (err) {
+      if (originalState) await this.saveState(originalState.winStreakTeam, originalState.winStreakCount);
+      return { success: false, message: `Error: ${err.message}` };
+    }
+  }
+
   async saveScrambleTime(timestamp) {
     try {
       if (!this.TeamBalancerStateModel) {

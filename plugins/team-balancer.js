@@ -537,8 +537,16 @@ export default class TeamBalancer extends BasePlugin {
         const diagnostics = new TBDiagnostics(this);
         const results = await diagnostics.runAll();
 
+        const dbTest = await this.db.runConcurrencyTest();
+
         const embed = DiscordHelpers.buildDiagEmbed(this, results);
         embed.description = `Executed by ${message.author}\n${embed.description}`;
+
+        const selfTestField = embed.fields.find(f => f.name.includes('Self-Test Results'));
+        if (selfTestField) {
+          selfTestField.value = selfTestField.value.replace(/^DB:/m, 'Connectivity:');
+          selfTestField.value += `\nConcurrency: ${dbTest.message}`;
+        }
 
         await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });
         break;
