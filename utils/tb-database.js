@@ -180,8 +180,8 @@ export default class TBDatabase {
       if (originalState) await this.saveState(originalState.winStreakTeam, originalState.winStreakCount);
 
       return finalCount === successCount
-        ? { success: true, message: `Passed (${successCount}/${iterations} txs committed).` }
-        : { success: false, message: `Failed. Committed: ${finalCount}, Expected: ${successCount}.` };
+        ? { success: true, message: `PASS (${successCount}/${iterations} txs committed)` }
+        : { success: false, message: `FAIL (Committed: ${finalCount}, Expected: ${successCount})` };
     } catch (err) {
       if (originalState) await this.saveState(originalState.winStreakTeam, originalState.winStreakCount);
       return { success: false, message: `Error: ${err.message}` };

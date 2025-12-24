@@ -25,7 +25,7 @@ export class TBDiagnostics {
   }
 
   async testDatabase() {
-    const result = { name: 'Database', pass: false, message: 'Test not run' };
+    const result = { name: 'DB Connectivity', pass: false, message: 'Test not run' };
     try {
       if (!this.tb.db || !this.tb.db.TeamBalancerStateModel) {
         throw new Error('Database connector or model not initialized.');

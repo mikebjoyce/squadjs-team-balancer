@@ -292,7 +292,7 @@ const CommandHandlers = {
             const diagnostics = new TBDiagnostics(this);
             const results = await diagnostics.runAll();
 
-            const dbResult = results.find((r) => r.name === 'Database');
+            const dbResult = results.find((r) => r.name === 'DB Connectivity');
             const scrambleResult = results.find((r) => r.name === 'Live Scramble Test');
 
             // Detailed stats calculation

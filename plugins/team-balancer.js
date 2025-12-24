@@ -538,15 +538,19 @@ export default class TeamBalancer extends BasePlugin {
         const results = await diagnostics.runAll();
 
         const dbTest = await this.db.runConcurrencyTest();
+        
+        // Insert concurrency result after connectivity result
+        const connIndex = results.findIndex(r => r.name === 'DB Connectivity');
+        const insertIndex = connIndex >= 0 ? connIndex + 1 : results.length;
+        
+        results.splice(insertIndex, 0, {
+          name: 'DB Concurrency',
+          pass: dbTest.success,
+          message: dbTest.message
+        });
 
         const embed = DiscordHelpers.buildDiagEmbed(this, results);
         embed.description = `Executed by ${message.author}\n${embed.description}`;
-
-        const selfTestField = embed.fields.find(f => f.name.includes('Self-Test Results'));
-        if (selfTestField) {
-          selfTestField.value = selfTestField.value.replace(/^DB:/m, 'Connectivity:');
-          selfTestField.value += `\nConcurrency: ${dbTest.message}`;
-        }
 
         await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });
         break;

@@ -88,10 +88,8 @@ export const DiscordHelpers = {
     };
 
     if (diagnosticResults) {
-      const dbRes = diagnosticResults.find((r) => r.name === 'Database');
-      const scramRes = diagnosticResults.find((r) => r.name === 'Live Scramble Test');
-      const diagText = `**DB:** [${dbRes?.message || 'N/A'}]\n**Scramble:** [${scramRes?.message || 'N/A'}]`;
-      embed.fields.push({ name: '🔍 Self-Test Results', value: diagText, inline: false });
+      const lines = diagnosticResults.map(r => `**${r.name}:** [${r.message}]`);
+      embed.fields.push({ name: '🔍 Self-Test Results', value: lines.join('\n'), inline: false });
     }
 
     embed.fields.push(
