@@ -1,6 +1,39 @@
 import Scrambler from '../utils/tb-scrambler.js';
 import { generateMockPlayers, generateMockSquads, transformForScrambler, generateScenario_AllLocked, generateScenario_DavidGoliath } from './mock-data-generator.js';
 
+// Helper to analyze team composition (Large vs Small vs Solo)
+function getComposition(players) {
+  const stats = {
+    1: { large: 0, small: 0, solo: 0 },
+    2: { large: 0, small: 0, solo: 0 }
+  };
+
+  // Group by SquadID + TeamID to handle splits naturally
+  // Key: "SquadID::TeamID"
+  const fragments = {};
+
+  players.forEach(p => {
+    if (!p.squadID) {
+      stats[p.teamID].solo++;
+    } else {
+      const key = `${p.squadID}::${p.teamID}`;
+      if (!fragments[key]) fragments[key] = 0;
+      fragments[key]++;
+    }
+  });
+
+  Object.entries(fragments).forEach(([key, count]) => {
+    const teamID = key.split('::')[1];
+    const target = stats[teamID];
+
+    if (count >= 7) target.large++;
+    else if (count >= 2) target.small++;
+    else target.solo++;
+  });
+
+  return stats;
+}
+
 async function runTest(testName, config) {
   console.log(`\n--------------------------------------------------`);
   console.log(`🧪 TEST: ${testName}`);
@@ -42,10 +75,14 @@ async function runTest(testName, config) {
   const t2End = finalPlayers.filter(p => p.teamID === '2').length;
   const diff = Math.abs(t1End - t2End);
 
+  const comp = getComposition(finalPlayers);
+
   console.log(`   Results:`);
   console.log(`   - Execution Time: ${duration}ms`);
   console.log(`   - Moves Generated: ${moves}`);
   console.log(`   - Final State: Team 1: ${t1End} | Team 2: ${t2End} (Diff: ${diff})`);
+  console.log(`   - Composition T1: [ Large: ${comp[1].large} | Small: ${comp[1].small} | Solo: ${comp[1].solo} ]`);
+  console.log(`   - Composition T2: [ Large: ${comp[2].large} | Small: ${comp[2].small} | Solo: ${comp[2].solo} ]`);
 
   // 6. Verifications
   const checks = [];
@@ -91,10 +128,14 @@ async function runCustomTest(testName, dataGeneratorFn) {
   const t2End = finalPlayers.filter(p => p.teamID === '2').length;
   const diff = Math.abs(t1End - t2End);
 
+  const comp = getComposition(finalPlayers);
+
   console.log(`   Results:`);
   console.log(`   - Execution Time: ${duration}ms`);
   console.log(`   - Moves Generated: ${moves}`);
   console.log(`   - Final State: Team 1: ${t1End} | Team 2: ${t2End} (Diff: ${diff})`);
+  console.log(`   - Composition T1: [ Large: ${comp[1].large} | Small: ${comp[1].small} | Solo: ${comp[1].solo} ]`);
+  console.log(`   - Composition T2: [ Large: ${comp[2].large} | Small: ${comp[2].small} | Solo: ${comp[2].solo} ]`);
 
   // 4. Verify Broken Squads
   const brokenSquads = [];
@@ -145,10 +186,20 @@ async function runAllTests() {
   // ✓ "Cap-Pressure Surgical"
   await runTest('Max Capacity Surgical Trim', { playerCount: 102, team1Ratio: 0.5, unassignedRatio: 0 });
 
+  // Additional Tests
+  // ✓ Low Pop
+  await runTest('Low Pop (40 Players)', { playerCount: 40, team1Ratio: 0.5 });
+
+  // ✓ Mid-Game Join Wave
+  await runTest('Mid-Game Join Wave (60 Players)', { playerCount: 60, team1Ratio: 0.4 });
+
+  // ✓ Seeding Mode
+  await runTest('Seeding Mode (20 Players)', { playerCount: 20, team1Ratio: 0.5 });
+
   console.log(`\n--------------------------------------------------`);
   console.log('🏁 All tests completed.');
 
-  await runBulkTests(2000);
+  await runBulkTests(25000);
 }
 
 async function runBulkTests(totalRuns = 100) {
@@ -162,7 +213,11 @@ async function runBulkTests(totalRuns = 100) {
     acceptableBalance: 0, // diff == 2
     failedBalance: 0, // diff > 2
     lockedSquadsBroken: 0,
+    infantryOverloadRuns: 0, // Runs where a team has > 2 large squads
+    totalUtilitySquads: 0,
+    totalLargeSquadsMoved: 0,
     totalTime: 0,
+    totalChurn: 0,
     failures: []
   };
 
@@ -199,6 +254,11 @@ async function runBulkTests(totalRuns = 100) {
     const t2End = finalPlayers.filter((p) => p.teamID === '2').length;
     const diff = Math.abs(t1End - t2End);
 
+    // Composition Analysis
+    const comp = getComposition(finalPlayers);
+    if (comp[1].large > 2 || comp[2].large > 2) results.infantryOverloadRuns++;
+    results.totalUtilitySquads += (comp[1].small + comp[2].small);
+
     // Check for broken locked squads
     let hasBrokenLocked = false;
     tfSquads.forEach(squad => {
@@ -213,9 +273,20 @@ async function runBulkTests(totalRuns = 100) {
 
     if (hasBrokenLocked) results.lockedSquadsBroken++;
 
+    // Calculate Large Squads Moved
+    let largeSquadsMoved = 0;
+    tfSquads.forEach(s => {
+      if (s.players.length >= 7) {
+        const movedPlayers = s.players.filter(pid => swapPlan.some(m => m.steamID === pid));
+        if (movedPlayers.length === s.players.length) largeSquadsMoved++;
+      }
+    });
+    results.totalLargeSquadsMoved += largeSquadsMoved;
+
     // Aggregate results
     results.total++;
     results.totalTime += duration;
+    results.totalChurn += swapPlan.length;
     if (diff <= 1) results.perfectBalance++;
     else if (diff === 2) results.acceptableBalance++;
     else {
@@ -243,6 +314,11 @@ async function runBulkTests(totalRuns = 100) {
   console.log(`👌 Acceptable Balance (Diff = 2): ${results.acceptableBalance} (${acceptablePercent}%)`);
   console.log(`❌ Failed Balance (Diff > 2):     ${results.failedBalance} (${failedPercent}%)`);
   console.log(`🔓 Runs with Locked Squad Breaks:   ${results.lockedSquadsBroken}`);
+  console.log(`⚠️ Runs with Infantry Overload (>2 Large): ${results.infantryOverloadRuns} (${((results.infantryOverloadRuns / results.total) * 100).toFixed(2)}%)`);
+  console.log(`🛠️ Avg Utility Squads per Run: ${(results.totalUtilitySquads / results.total).toFixed(2)}`);
+  console.log('⚓ Avg. Large Squads Moved: ' + (results.totalLargeSquadsMoved / results.total).toFixed(2));
+  console.log('🔄 Avg. Churn (Players Moved): ' + (results.totalChurn / results.total).toFixed(2));
+  console.log('🎯 Success Rate (Diff <= 2): ' + (((results.perfectBalance + results.acceptableBalance) / results.total) * 100).toFixed(2) + '%');
   console.log(`--------------------------------`);
 
   if (results.failures.length > 0) {

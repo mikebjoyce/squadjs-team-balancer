@@ -128,7 +128,10 @@ export const Scrambler = {
       const sortedCandidates = [...candidates].sort((a, b) => {
         if (a.players.length === 1 && b.players.length !== 1) return 1;
         if (a.players.length !== 1 && b.players.length === 1) return -1;
-        return b.players.length - a.players.length;
+        
+        const lenA = a.players.length + (Math.random() * 20 - 10);
+        const lenB = b.players.length + (Math.random() * 20 - 10);
+        return lenB - lenA;
       });
 
       for (const squad of sortedCandidates) {
@@ -152,6 +155,22 @@ export const Scrambler = {
       return selected;
     };
 
+    const analyzeComposition = (squads) => {
+      let largeInfantryCount = 0;
+      let utilityCount = 0;
+      let hasLockedInfantry = false;
+      for (const s of squads) {
+        const size = s.players.length;
+        if (size >= 7) {
+          largeInfantryCount++;
+          if (s.locked) hasLockedInfantry = true;
+        } else if (size >= 2 && size <= 6) {
+          utilityCount++;
+        }
+      }
+      return { largeInfantryCount, utilityCount, hasLockedInfantry };
+    };
+
     const scoreSwap = (
       selectedT1Squads,
       selectedT2Squads,
@@ -170,8 +189,13 @@ export const Scrambler = {
       const hypotheticalNewT2 = initialT2Count - playersMovedFromT2 + playersMovedFromT1;
       
       const churnScore = Math.abs(actualPlayersMoved - targetPlayersToMoveOverall);
+      let churnUnderPenalty = 0;
+      if (actualPlayersMoved < targetPlayersToMoveOverall) {
+        churnUnderPenalty = (targetPlayersToMoveOverall - actualPlayersMoved) * 15;
+      }
       
-      const balanceScore = Math.abs(hypotheticalNewT1 - hypotheticalNewT2);
+      const diff = Math.abs(hypotheticalNewT1 - hypotheticalNewT2);
+      const balanceScore = diff <= 2 ? diff * 80 : (diff * diff) * 60;
       
       const penaltyT1Overcap = Math.max(0, hypotheticalNewT1 - maxTeamSize) * 10000; // Increased penalty
       const penaltyT2Overcap = Math.max(0, hypotheticalNewT2 - maxTeamSize) * 10000; // Increased penalty
@@ -196,33 +220,60 @@ export const Scrambler = {
         let penalty = 0;
         for (const s of squads) {
           if (s.id.startsWith('Split-') && !s.wasLocked) {
-            penalty += 25;
+            penalty += 10;
           }
         }
         return penalty;
       };
       const cohesionPenalty = calcCohesionPenalty(selectedT1Squads) + calcCohesionPenalty(selectedT2Squads);
 
+      const countLarge = (squads) => squads.filter(s => s.players.length >= 7).length;
+      const movedLargeSquadsT1 = countLarge(selectedT1Squads);
+      const movedLargeSquadsT2 = countLarge(selectedT2Squads);
+      let anchorPenalty = 0;
+      if (movedLargeSquadsT1 > 2) anchorPenalty += 500;
+      if (movedLargeSquadsT2 > 2) anchorPenalty += 500;
+
+      const t1Stats = analyzeComposition(selectedT1Squads);
+      const t2Stats = analyzeComposition(selectedT2Squads);
+
+      let infantryOverload = 0;
+      if (t1Stats.largeInfantryCount > 2) infantryOverload += 180;
+      if (t2Stats.largeInfantryCount > 2) infantryOverload += 180;
+
+      let utilityReward = 0;
+      utilityReward -= (Math.min(t1Stats.utilityCount, 3) * 60);
+      utilityReward -= (Math.min(t2Stats.utilityCount, 3) * 60);
+
+      let winStreakTax = 0;
+      if (String(winStreakTeam) === '1' && !selectedT1Squads.some(s => s.locked)) winStreakTax += 150;
+      if (String(winStreakTeam) === '2' && !selectedT2Squads.some(s => s.locked)) winStreakTax += 150;
+
       let combinedScore =
         churnScore * 2 + // Reduced weight (tie-breaker only)
-        balanceScore * 50 + // Massive weight for numerical parity
+        churnUnderPenalty + // Heavy penalty for missing churn target
+        balanceScore + // Massive weight for numerical parity
         penaltyT1Overcap +
         penaltyT2Overcap + 
         sizeDeviationPenalty +
         lockedPenalty +
-        cohesionPenalty;
+        cohesionPenalty +
+        anchorPenalty +
+        infantryOverload +
+        utilityReward +
+        winStreakTax;
       
       if (
         targetPlayersToMoveOverall > 10 &&
         actualPlayersMoved < targetPlayersToMoveOverall * 0.5
       ) {
-        combinedScore += 100; // Significant penalty for not meeting at least half the churn target
+        combinedScore += 300; // Significant penalty for not meeting at least half the churn target
       }
 
       return combinedScore;
     };
 
-    const MAX_ATTEMPTS = 121; // Increased attempts to find a good solution
+    const MAX_ATTEMPTS = 200; // Increased attempts to find a good solution
     let bestScore = Infinity;
     let bestT1SwapCandidates = null;
     let bestT2SwapCandidates = null;
@@ -308,10 +359,13 @@ export const Scrambler = {
         targetPlayersToMove
       );
 
+      const t1Stats = analyzeComposition(selT1);
+      const t2Stats = analyzeComposition(selT2);
+
       Logger.verbose(
         'TeamBalancer',
         4,
-        `Attempt ${i + 1}: Score = ${currentScore.toFixed(2)}, Move T1->T2 = ${selT1.reduce((n, s) => n + s.players.length, 0)}, Move T2->T1 = ${selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T1 = ${initialCounts.team1Count - selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T2 = ${initialCounts.team2Count - selT2.reduce((n, s) => n + s.players.length, 0) + selT1.reduce((n, s) => n + s.players.length, 0)}`
+        `Attempt ${i + 1}: Score = ${currentScore.toFixed(2)}, Move T1->T2 = ${selT1.reduce((n, s) => n + s.players.length, 0)}, Move T2->T1 = ${selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T1 = ${initialCounts.team1Count - selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T2 = ${initialCounts.team2Count - selT2.reduce((n, s) => n + s.players.length, 0) + selT1.reduce((n, s) => n + s.players.length, 0)} | Comp: T1[L:${t1Stats.largeInfantryCount}/U:${t1Stats.utilityCount}] T2[L:${t2Stats.largeInfantryCount}/U:${t2Stats.utilityCount}] | Churn: ${selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}/${targetPlayersToMove}`
       );
       Logger.verbose('TeamBalancer', 4, `Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
       Logger.verbose('TeamBalancer', 4, `Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
@@ -330,10 +384,6 @@ export const Scrambler = {
         bestT1SwapCandidates = selT1;
         bestT2SwapCandidates = selT2;
         Logger.verbose('TeamBalancer', 4, `New best score found: ${bestScore.toFixed(2)} at attempt ${i + 1}`);
-        if (bestScore <= 5) {          
-          Logger.verbose('TeamBalancer', 4, `Very good score (${bestScore}) found. Breaking early from swap attempts.`);
-          break;
-        }
       }
     }
 
