@@ -118,7 +118,7 @@ import { TBDiagnostics } from '../utils/tb-diagnostics.js';
 
 export default class TeamBalancer extends BasePlugin {
   static get version() {
-    return '2.0.2';
+    return '2.1.0';
   }
 
   static get description() {
@@ -1167,6 +1167,11 @@ export default class TeamBalancer extends BasePlugin {
         Logger.verbose('TeamBalancer', 2, `Dry run: Scrambler returned ${swapPlan.length} player moves (Calculation: ${swapPlan.calculationTime}ms).`);
 
         if (!isSimulated) {          
+          const affectedPlayers = this.server.players.map(p => ({ steamID: p.steamID, name: p.name }));
+          this.server.emit('TEAM_BALANCER_SCRAMBLE_EXECUTED', {
+            affectedPlayers
+          });
+
           for (const move of swapPlan) {            
             await this.reliablePlayerMove(move.steamID, move.targetTeamID, isSimulated);
           }          

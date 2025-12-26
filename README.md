@@ -1,4 +1,4 @@
-# Team Balancer Plugin v2.0.2
+# Team Balancer Plugin v2.1.0
 
 **SquadJS Plugin for Fair Match Enforcement**
 
@@ -6,7 +6,7 @@
 
 Tracks dominant win streaks and rebalances teams using a squad-preserving scramble algorithm. Designed for Squad servers to avoid steamrolling, reduce churn, and maintain match fairness over time.
 
-Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion. Includes dry-run mode, configurable thresholds, and fallback logic for emergency  up squads in the worst case if needed.
+Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion. Includes dry-run mode, configurable thresholds, and fallback logic for emergency breakup squads in the worst case if needed.
 
 ## Core Features
 
@@ -25,6 +25,20 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 * **Reliable Execution**: Handles RCON command retries and timeouts to ensure players are moved successfully.
 
 * **Customizable Messaging**: Options for RCON warnings, win streak broadcasts, and generic team naming.
+
+* **Switch Plugin Integration**: Fires `TEAM_BALANCER_SCRAMBLE_EXECUTED` event for integration with compatible plugins.
+
+## Recommended Plugins
+
+### Switch Plugin (TeamBalancer-Aware Fork)
+
+**[squadjs-switch-teambalancer-aware](https://github.com/mikebjoyce/squadjs-switch-teambalancer-aware)**
+
+Prevents players from changing teams immediately after a scramble. When Team Balancer executes a scramble, it fires the `TEAM_BALANCER_SCRAMBLE_EXECUTED` event. The Switch plugin listens for this event and automatically locks all players from switching teams for a configurable duration (default 20 minutes).
+
+**Why this matters**: Without this plugin, players moved during a scramble can immediately switch back to their original team, defeating the purpose of team balancing.
+
+**Setup**: Install the Switch plugin alongside Team Balancer. No additional configuration needed—the event integration is automatic.
 
 ## Scramble Algorithm (Optimal Exhaustive Search)
 
@@ -244,6 +258,7 @@ All timings below are relative to the exact moment the round ends:
 ```
 Discord: `real_slacker`
 Email: `mike.b.joyce@gmail.com`
+GitHub: https://github.com/mikebjoyce
 ```
 
 ---
