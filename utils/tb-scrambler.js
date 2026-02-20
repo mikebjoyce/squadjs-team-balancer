@@ -54,6 +54,7 @@ export const Scrambler = {
     players,
     winStreakTeam,
     scramblePercentage = 0.5,
+    eloMap = null
   }) {
     const startTime = Date.now();
     const totalPlayers = players.length;
@@ -70,14 +71,23 @@ export const Scrambler = {
       ...p,
       teamID: String(p.teamID)
     }));
+
+    const playerEloMap = new Map();
+    if (eloMap) {
+      for (const [eosID, rating] of eloMap.entries()) {
+        playerEloMap.set(eosID, rating.mu);
+      }
+    }
+    const defaultMu = 25.0; // fallback for unrated players
+
     const workingSquads = squads.map((s) => ({
       ...s,
       teamID: String(s.teamID),
       players: [...s.players]
     }));
 
-    const updatePlayerTeam = (steamID, newTeamID) => {
-      const player = workingPlayers.find((p) => p.steamID === steamID);
+    const updatePlayerTeam = (eosID, newTeamID) => {
+      const player = workingPlayers.find((p) => p.eosID === eosID);
       if (player) {
         player.teamID = String(newTeamID);
       }
@@ -104,9 +114,9 @@ export const Scrambler = {
 
     Logger.verbose('TeamBalancer', 4, `Total players: ${totalPlayers}, Max per team: ${maxTeamSize}, Scramble Percentage: ${scramblePercentage * 100}%`);
     const unassignedPseudoSquads = unassigned.map((p) => ({
-      id: `Unassigned - ${p.steamID}`,
+      id: `Unassigned - ${p.eosID}`,
       teamID: p.teamID, // Their actual team (1 or 2)
-      players: [p.steamID]
+      players: [p.eosID]
     }));
     const filterCandidates = (teamID) =>
       allSquads
@@ -253,6 +263,31 @@ export const Scrambler = {
       if (String(winStreakTeam) === '1' && !selectedT1Squads.some(s => s.locked)) winStreakTax += 150;
       if (String(winStreakTeam) === '2' && !selectedT2Squads.some(s => s.locked)) winStreakTax += 150;
 
+      let eloBalancePenalty = 0;
+      if (playerEloMap.size > 0) {
+        // Identify which eosIDs are being moved
+        const movingToT2 = new Set(selectedT1Squads.flatMap(s => s.players));
+        const movingToT1 = new Set(selectedT2Squads.flatMap(s => s.players));
+
+        const getElo = (id) => playerEloMap.get(id) ?? defaultMu;
+
+        const t1AfterElos = workingPlayers
+          .filter(p => p.teamID === '1')
+          .filter(p => !movingToT2.has(p.eosID))
+          .map(p => getElo(p.eosID))
+          .concat([...movingToT1].map(getElo));
+
+        const t2AfterElos = workingPlayers
+          .filter(p => p.teamID === '2')
+          .filter(p => !movingToT1.has(p.eosID))
+          .map(p => getElo(p.eosID))
+          .concat([...movingToT2].map(getElo));
+
+        const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : defaultMu;
+        const eloDiff = Math.abs(avg(t1AfterElos) - avg(t2AfterElos));
+        eloBalancePenalty = eloDiff * 5; // weight placeholder — tuned in Phase 3
+      }
+
       let combinedScore =
         churnScore * 2 + // Reduced weight (tie-breaker only)
         churnUnderPenalty + // Heavy penalty for missing churn target
@@ -265,7 +300,8 @@ export const Scrambler = {
         anchorPenalty +
         infantryOverload +
         utilityReward +
-        winStreakTax;
+        winStreakTax +
+        eloBalancePenalty;
       
       if (
         targetPlayersToMoveOverall > 10 &&
@@ -419,17 +455,17 @@ export const Scrambler = {
     const finalPlayerMovesMap = new Map();
 
     for (const squad of bestT1SwapCandidates) {
-      for (const steamID of squad.players) {
-        finalPlayerMovesMap.set(steamID, { steamID, targetTeamID: '2' });
-        updatePlayerTeam(steamID, '2'); // Update internal working copy
+      for (const eosID of squad.players) {
+        finalPlayerMovesMap.set(eosID, { eosID, targetTeamID: '2' });
+        updatePlayerTeam(eosID, '2'); // Update internal working copy
       }
     }
 
     
     for (const squad of bestT2SwapCandidates) {
-      for (const steamID of squad.players) {
-        finalPlayerMovesMap.set(steamID, { steamID, targetTeamID: '1' });
-        updatePlayerTeam(steamID, '1'); // Update internal working copy
+      for (const eosID of squad.players) {
+        finalPlayerMovesMap.set(eosID, { eosID, targetTeamID: '1' });
+        updatePlayerTeam(eosID, '1'); // Update internal working copy
       }
     }
 
@@ -446,7 +482,7 @@ export const Scrambler = {
       const playersOnTeam = currentWorkingPlayers.filter((p) => p.teamID === String(teamID));
 
       
-      const eligiblePlayers = playersOnTeam.filter((p) => !existingMovesMap.has(p.steamID));
+      const eligiblePlayers = playersOnTeam.filter((p) => !existingMovesMap.has(p.eosID));
 
       const unassignedPlayers = eligiblePlayers.filter((p) => p.squadID === null);
 
@@ -488,9 +524,9 @@ export const Scrambler = {
         for (const player of playersToConsider) {
           
           if (getCurrentTeamCounts().team1Count > getCurrentTeamCounts().team2Count + 1) {
-            finalPlayerMovesMap.set(player.steamID, { steamID: player.steamID, targetTeamID: '2' });
-            updatePlayerTeam(player.steamID, '2');
-            Logger.verbose('TeamBalancer', 4, `Trimming: Player ${player.steamID} from Team 1 to Team 2 (overcap fix)`);
+            finalPlayerMovesMap.set(player.eosID, { eosID: player.eosID, targetTeamID: '2' });
+            updatePlayerTeam(player.eosID, '2');
+            Logger.verbose('TeamBalancer', 4, `Trimming: Player ${player.eosID} from Team 1 to Team 2 (overcap fix)`);
             madeProgress = true;
             break; // Move one player at a time and re-evaluate
           }
@@ -514,9 +550,9 @@ export const Scrambler = {
         for (const player of playersToConsider) {
           
           if (getCurrentTeamCounts().team2Count > getCurrentTeamCounts().team1Count + 1) {
-            finalPlayerMovesMap.set(player.steamID, { steamID: player.steamID, targetTeamID: '1' });
-            updatePlayerTeam(player.steamID, '1');
-            Logger.verbose('TeamBalancer', 4, `Trimming: Player ${player.steamID} from Team 2 to Team 1 (overcap fix)`);
+            finalPlayerMovesMap.set(player.eosID, { eosID: player.eosID, targetTeamID: '1' });
+            updatePlayerTeam(player.eosID, '1');
+            Logger.verbose('TeamBalancer', 4, `Trimming: Player ${player.eosID} from Team 2 to Team 1 (overcap fix)`);
             madeProgress = true;
             break; // Move one player at a time and re-evaluate
           }

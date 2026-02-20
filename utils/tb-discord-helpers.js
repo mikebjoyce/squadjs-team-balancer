@@ -142,9 +142,9 @@ export const DiscordHelpers = {
 
     for (const move of swapPlan) {
       teamCounts[move.targetTeamID]++;
-      teamLists[move.targetTeamID].push(move.steamID);
+      teamLists[move.targetTeamID].push(move.eosID);
       
-      const player = players.find(p => p.steamID === move.steamID);
+      const player = players.find(p => p.eosID === move.eosID);
       if (player) {
         if (player.squadID) {
           const uniqueKey = `${player.teamID}-${player.squadID}`;
@@ -210,8 +210,8 @@ export const DiscordHelpers = {
     }
 
     // --- PLAYERS SECTION ---
-    const namesT1 = await DiscordHelpers.resolveSteamIDsToNames(teamLists['1'], teamBalancer);
-    const namesT2 = await DiscordHelpers.resolveSteamIDsToNames(teamLists['2'], teamBalancer);
+    const namesT1 = await DiscordHelpers.resolveEOSIDsToNames(teamLists['1'], teamBalancer);
+    const namesT2 = await DiscordHelpers.resolveEOSIDsToNames(teamLists['2'], teamBalancer);
 
     if (namesT1.length > 0 || namesT2.length > 0) {
       embed.fields.push(
@@ -228,10 +228,10 @@ export const DiscordHelpers = {
     return embed;
   },
 
-  async resolveSteamIDsToNames(steamIDs, teamBalancer) {
-    return steamIDs.map(steamID => {
-      const player = teamBalancer.server.players.find(p => p.steamID === steamID);
-      return player ? player.name : `Unknown (${steamID.slice(0, 8)}...)`;
+  async resolveEOSIDsToNames(eosIDs, teamBalancer) {
+    return eosIDs.map(eosID => {
+      const player = teamBalancer.server.players.find(p => p.eosID === eosID);
+      return player ? player.name : `Unknown (${eosID.slice(0, 8)}...)`;
     });
   },
 

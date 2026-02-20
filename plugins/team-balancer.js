@@ -234,6 +234,10 @@ export default class TeamBalancer extends BasePlugin {
         type: 'number',
         description: 'Time in seconds to wait for scramble confirmation.'
       },
+      useEloForBalance: {
+        default: true,
+        type: 'boolean'
+      },
       devMode: {
         default: false,
         type: 'boolean'
@@ -305,6 +309,7 @@ export default class TeamBalancer extends BasePlugin {
     this._gameInfoPollingInterval = null;
     this.gameModeCached = null;
     this.cachedAbbreviations = {};
+    this.eloTracker = null;
   }
   async mount() {
     if (this._isMounted) {
@@ -370,6 +375,20 @@ export default class TeamBalancer extends BasePlugin {
     this.validateOptions();
     this._isMounted = true;
     this.ready = true;
+
+    if(this.options.useEloForBalance)
+    {
+      this.eloTracker = this.server.plugins?.find(p => p.constructor.name === 'EloTracker') ?? null;
+      if (this.eloTracker)
+        Logger.verbose('TeamBalancer', 2, '[TeamBalancer] EloTracker integration active.');
+      else
+        Logger.verbose('TeamBalancer', 2, '[TeamBalancer] EloTracker not found. Scrambling without ELO data.');
+    }
+    else
+    {
+      Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Use EloTracker disabled. Scrambling without ELO data.');
+    }
+    
     Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Plugin is now fully ready.');
   }
 
@@ -1120,9 +1139,9 @@ export default class TeamBalancer extends BasePlugin {
     const normalizedPlayers = (players || []).filter(
       (player) =>
         player &&
-        player.steamID &&
+        player.eosID &&
         player.teamID &&
-        typeof player.steamID === 'string' &&
+        typeof player.eosID === 'string' &&
         typeof player.teamID !== 'undefined'
     );
 
@@ -1136,7 +1155,7 @@ export default class TeamBalancer extends BasePlugin {
         if (!squadPlayerMap.has(squadKey)) {
           squadPlayerMap.set(squadKey, []);
         }
-        squadPlayerMap.get(squadKey).push(player.steamID);
+        squadPlayerMap.get(squadKey).push(player.eosID);
       }
     }
 
@@ -1159,7 +1178,7 @@ export default class TeamBalancer extends BasePlugin {
     });
     
     const transformedPlayers = normalizedPlayers.map((player) => ({
-      steamID: player.steamID,
+      eosID: player.eosID,
       teamID: String(player.teamID), // Ensure string format
       squadID: player.squadID ? `T${player.teamID}-S${player.squadID}` : null
     }));
@@ -1214,6 +1233,18 @@ export default class TeamBalancer extends BasePlugin {
         this.server.players
       );
 
+      let eloMap = null;
+      if (this.options.useEloForBalance && this.eloTracker) {
+        try {
+          const eosIDs = transformedPlayers.map(p => p.eosID);
+          eloMap = await this.eloTracker.getRatingsByEosIDs(eosIDs);
+          Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ELO ratings fetched for ${eloMap.size} players.`);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[TeamBalancer] ELO fetch failed, scrambling without ratings: ${err.message}`);
+          eloMap = null;
+        }
+      }
+
       Logger.verbose('TeamBalancer', 4, `Calling scrambler with ${transformedSquads.length} squads and ${transformedPlayers.length} players`);
 
       const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
@@ -1221,7 +1252,8 @@ export default class TeamBalancer extends BasePlugin {
         players: transformedPlayers,
         winStreakTeam: this.winStreakTeam,
         scramblePercentage: this.options.scramblePercentage,
-        debug: this.options.debugLogs
+        debug: this.options.debugLogs,
+        eloMap
       });
 
       if (this.discordChannel && this.options.postScrambleDetails) {
@@ -1233,13 +1265,13 @@ export default class TeamBalancer extends BasePlugin {
         Logger.verbose('TeamBalancer', 2, `Dry run: Scrambler returned ${swapPlan.length} player moves (Calculation: ${swapPlan.calculationTime}ms).`);
 
         if (!isSimulated) {          
-          const affectedPlayers = this.server.players.map(p => ({ steamID: p.steamID, name: p.name }));
+          const affectedPlayers = this.server.players.map(p => ({ eosID: p.eosID, name: p.name }));
           this.server.emit('TEAM_BALANCER_SCRAMBLE_EXECUTED', {
             affectedPlayers
           });
 
           for (const move of swapPlan) {            
-            await this.reliablePlayerMove(move.steamID, move.targetTeamID, isSimulated);
+            await this.reliablePlayerMove(move.eosID, move.targetTeamID, isSimulated);
           }          
           await this.waitForScrambleToFinish(this.options.maxScrambleCompletionTime);
 
@@ -1263,7 +1295,7 @@ export default class TeamBalancer extends BasePlugin {
         } else {
           Logger.verbose('TeamBalancer', 2, `Dry run: Would have queued ${swapPlan.length} player moves.`);
           for (const move of swapPlan) {
-            Logger.verbose('TeamBalancer', 4, `  [Dry Run] Player ${move.steamID} to Team ${move.targetTeamID}`);
+            Logger.verbose('TeamBalancer', 4, `  [Dry Run] Player ${move.eosID} to Team ${move.targetTeamID}`);
           }
           Logger.verbose('TeamBalancer', 2, `[Diagnostics] Dry run successful. No players were harmed.`);
           Logger.verbose('TeamBalancer', 2, `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`);
@@ -1358,13 +1390,13 @@ export default class TeamBalancer extends BasePlugin {
     Logger.verbose('TeamBalancer', 4, 'All player moves processed or timeout reached.');
   }
   
-  async reliablePlayerMove(steamID, targetTeamID, isSimulated = false) {
+  async reliablePlayerMove(eosID, targetTeamID, isSimulated = false) {
     if (isSimulated) {
-      Logger.verbose('TeamBalancer', 4, `[Dry Run] Would queue player move for ${steamID} to team ${targetTeamID}`);
+      Logger.verbose('TeamBalancer', 4, `[Dry Run] Would queue player move for ${eosID} to team ${targetTeamID}`);
       return;
     }
 
-    return this.swapExecutor.queueMove(steamID, targetTeamID, isSimulated);
+    return this.swapExecutor.queueMove(eosID, targetTeamID, isSimulated);
   }
 
   cleanupScrambleTracking() {
