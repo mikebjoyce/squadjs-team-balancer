@@ -112,6 +112,10 @@ export default class SwapExecutor {
           if (moveData.attempts <= maxRconAttempts) {
             try {
               const rconIdentifier = player?.steamID ?? player?.name;
+              if (!player?.steamID) {
+                Logger.verbose('TeamBalancer', 1, 
+                  `[SwapExecutor] No steamID for ${eosID}, falling back to name: ${player?.name}`);
+              }
               await this.server.rcon.switchTeam(rconIdentifier, moveData.targetTeamID);
               this.activeSession.completedMoves++;
               playersToRemove.push(eosID);

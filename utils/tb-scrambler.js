@@ -263,6 +263,7 @@ export const Scrambler = {
       if (String(winStreakTeam) === '1' && !selectedT1Squads.some(s => s.locked)) winStreakTax += 150;
       if (String(winStreakTeam) === '2' && !selectedT2Squads.some(s => s.locked)) winStreakTax += 150;
 
+      // --- ELO / SKILL BALANCE PENALTY (Weighted Backbone Strategy) ---
       let eloBalancePenalty = 0;
       if (playerEloMap.size > 0) {
         // Identify which eosIDs are being moved
@@ -271,21 +272,43 @@ export const Scrambler = {
 
         const getElo = (id) => playerEloMap.get(id) ?? defaultMu;
 
+        // Construct hypothetical ELO arrays for both teams after the proposed swap
+        // Sorting DESCENDING is critical for the Backbone/Ace slices
         const t1AfterElos = workingPlayers
           .filter(p => p.teamID === '1')
           .filter(p => !movingToT2.has(p.eosID))
           .map(p => getElo(p.eosID))
-          .concat([...movingToT1].map(getElo));
+          .concat([...movingToT1].map(getElo))
+          .sort((a, b) => b - a);
 
         const t2AfterElos = workingPlayers
           .filter(p => p.teamID === '2')
           .filter(p => !movingToT1.has(p.eosID))
           .map(p => getElo(p.eosID))
-          .concat([...movingToT2].map(getElo));
+          .concat([...movingToT2].map(getElo))
+          .sort((a, b) => b - a);
 
-        const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : defaultMu;
-        const eloDiff = Math.abs(avg(t1AfterElos) - avg(t2AfterElos));
-        eloBalancePenalty = eloDiff * 5; // weight placeholder — tuned in Phase 3
+        const getSliceAvg = (arr, count) => {
+          const slice = arr.slice(0, count);
+          return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : defaultMu;
+        };
+
+        // 1. Global Mean (The baseline)
+        const globalDiff = Math.abs(getSliceAvg(t1AfterElos, 50) - getSliceAvg(t2AfterElos, 50));
+
+        // 2. The Backbone (Top 15 - Represents the SLs and force multipliers)
+        const backboneDiff = Math.abs(getSliceAvg(t1AfterElos, 15) - getSliceAvg(t2AfterElos, 15));
+
+        // 3. The Aces (Top 5 - High impact carry players)
+        const aceDiff = Math.abs(getSliceAvg(t1AfterElos, 5) - getSliceAvg(t2AfterElos, 5));
+
+        // 4. Weighted Penalty Calculation
+        // Priority: Backbone (55%) > Global (25%) > Aces (20%)
+        const calculatedPenalty = (globalDiff * 25) + (backboneDiff * 55) + (aceDiff * 20);
+
+        // 5. The Hard Cap (Safety Valve)
+        // Capped at 450 so ELO can never override your 500-point Locked Squad protection.
+        eloBalancePenalty = Math.min(calculatedPenalty, 450);
       }
 
       let combinedScore =

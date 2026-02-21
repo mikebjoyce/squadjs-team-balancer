@@ -235,8 +235,9 @@ export default class TeamBalancer extends BasePlugin {
         description: 'Time in seconds to wait for scramble confirmation.'
       },
       useEloForBalance: {
-        default: true,
-        type: 'boolean'
+        default: false,
+        type: 'boolean',
+        description: 'Use EloTracker ratings to influence team balance during scrambles. Requires EloTracker plugin to be active.'
       },
       devMode: {
         default: false,
@@ -804,18 +805,33 @@ export default class TeamBalancer extends BasePlugin {
 
       Logger.verbose('TeamBalancer', 4, `Parsed winnerID=${winnerID}, winnerTickets=${winnerTickets}, loserTickets=${loserTickets}, margin=${margin}`);
 
+      const gameMode = this.gameModeCached?.toLowerCase() || '';
       // --- Consecutive Wins Tracking (Independent of Dominance) ---
-      if (this.consecutiveWinsTeam === winnerID) {
-        this.consecutiveWinsCount++;
+      // Define allowed modes for consecutive tracking
+      const isConsecutiveTracked = 
+        gameMode.includes('aas') || 
+        gameMode.includes('raas') || 
+        gameMode.includes('invasion');
+
+      if (isConsecutiveTracked) {
+        if (this.consecutiveWinsTeam === winnerID) {
+          this.consecutiveWinsCount++;
+        } else {
+          this.consecutiveWinsTeam = winnerID;
+          this.consecutiveWinsCount = 1;
+        }
+        Logger.verbose('TeamBalancer', 4, `Consecutive wins: Team ${this.consecutiveWinsTeam} has ${this.consecutiveWinsCount} wins.`);
       } else {
-        this.consecutiveWinsTeam = winnerID;
-        this.consecutiveWinsCount = 1;
+        // Reset tracker if the current mode is not AAS/RAAS/Invasion
+        this.consecutiveWinsTeam = null;
+        this.consecutiveWinsCount = 0;
+        Logger.verbose('TeamBalancer', 4, `Resetting consecutive win tracking for non-standard mode: ${this.gameModeCached}`);
       }
       Logger.verbose('TeamBalancer', 4, `Consecutive wins: Team ${this.consecutiveWinsTeam} has ${this.consecutiveWinsCount} wins.`);
 
       if (this._scramblePending || this._scrambleInProgress) return;
 
-      if (this.options.maxConsecutiveWinsWithoutThreshold > 0 && this.consecutiveWinsCount >= this.options.maxConsecutiveWinsWithoutThreshold) {
+      if (isConsecutiveTracked && this.options.maxConsecutiveWinsWithoutThreshold > 0 && this.consecutiveWinsCount >= this.options.maxConsecutiveWinsWithoutThreshold) {
         Logger.verbose('TeamBalancer', 2, `[ConsecutiveWins] Triggered! Count: ${this.consecutiveWinsCount} >= Threshold: ${this.options.maxConsecutiveWinsWithoutThreshold}`);
         const message = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.consecutiveWinsScramble, {
           team: this.getTeamName(winnerID),
@@ -857,13 +873,13 @@ export default class TeamBalancer extends BasePlugin {
       const moderateWinThreshold = Math.floor((dominantThreshold + closeGameMargin) / 2);
 
       Logger.verbose('TeamBalancer', 4, `Thresholds computed: {
-    gameMode: ${this.gameModeCached},
-    isInvasion: ${isInvasion},
-    dominantThreshold: ${dominantThreshold},
-    stompThreshold: ${stompThreshold},
-    closeGameMargin: ${closeGameMargin},
-    moderateWinThreshold: ${moderateWinThreshold}
-}`);
+        gameMode: ${this.gameModeCached},
+        isInvasion: ${isInvasion},
+        dominantThreshold: ${dominantThreshold},
+        stompThreshold: ${stompThreshold},
+        closeGameMargin: ${closeGameMargin},
+        moderateWinThreshold: ${moderateWinThreshold}
+      }`);
 
       const invasionAttackThreshold = this.options.invasionAttackTeamThreshold ?? 300;
       const invasionDefenceThreshold = this.options.invasionDefenceTeamThreshold ?? 650;
