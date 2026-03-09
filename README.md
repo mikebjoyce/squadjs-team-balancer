@@ -283,7 +283,7 @@ All timings below are relative to the exact moment the round ends:
 
 1. **T+0s (Round End)**: The server starts its internal `TimeBeforeVote` countdown. Simultaneously, TeamBalancer receives the "Round End" event and starts its own `scrambleAnnouncementDelay` timer.
 2. **T+30s**: The plugin's delay expires and it begins executing the scramble. It takes roughly 4–8 seconds to process and send all RCON move commands.
-3. **T+45s**: The server's `TimeBeforeVote` expires. The server transitions to the Map/Faction Voting screen. Team changes are now locked by the game engine.
+3. **T+45s**: The server's `TimeBeforeVote` expires. The server transitions to the Faction Voting screen. Team changes are now locked by the game engine.
 
 > [!IMPORTANT]  
 > If `TimeBeforeVote` is set too low (e.g., 20s), the plugin will still be mid-execution when the server hits the Faction Voting phase. Players will not be successfully swapped, rendering the team balancing ineffective for that round.
