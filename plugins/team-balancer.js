@@ -561,7 +561,7 @@ export default class TeamBalancer extends BasePlugin {
 
     switch (subcommand) {
       case 'status':
-        await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [DiscordHelpers.buildStatusEmbed(this)] });
+        DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [DiscordHelpers.buildStatusEmbed(this)] });
         break;
       case 'diag':
         await message.channel.send('🔄 Running diagnostics... please wait.');
@@ -583,7 +583,7 @@ export default class TeamBalancer extends BasePlugin {
         const embed = DiscordHelpers.buildDiagEmbed(this, results);
         embed.description = `Executed by ${message.author}\n${embed.description}`;
 
-        await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });
         break;
       case 'on':
       case 'off':
@@ -605,7 +605,7 @@ export default class TeamBalancer extends BasePlugin {
               '`!scramble cancel` - Cancel pending countdown' }
           ]
         };
-        await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [helpEmbed] });
+        DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [helpEmbed] });
         break;
       default:
         await message.reply('Invalid command. Use: `status`, `diag`, `on`, `off`, `help` or `!scramble <now|dry|cancel>`.');
@@ -692,7 +692,7 @@ export default class TeamBalancer extends BasePlugin {
       }
       await message.reply('✅ Win streak tracking enabled.');
       await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingEnabled}`);
-      await this.mirrorRconToDiscord(this.RconMessages.system.trackingEnabled, 'info');
+      this.mirrorRconToDiscord(this.RconMessages.system.trackingEnabled, 'info');
     } else {
       if (this.manuallyDisabled) return message.reply('✅ Win streak tracking is already disabled.');
       this.manuallyDisabled = true;
@@ -704,7 +704,7 @@ export default class TeamBalancer extends BasePlugin {
       await message.reply('✅ Win streak tracking disabled.');
       await this.resetStreak('Manual disable via Discord');
       await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`);
-      await this.mirrorRconToDiscord(this.RconMessages.system.trackingDisabled, 'info');
+      this.mirrorRconToDiscord(this.RconMessages.system.trackingDisabled, 'info');
     }
   }
 
@@ -789,7 +789,7 @@ export default class TeamBalancer extends BasePlugin {
         } catch (err) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast draw message: ${err.message}`);
         }
-        await this.mirrorRconToDiscord(msg, 'info');
+        this.mirrorRconToDiscord(msg, 'info');
         return await this.resetStreak('Draw');
       }
 
@@ -844,7 +844,8 @@ export default class TeamBalancer extends BasePlugin {
         } catch (e) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast consecutive wins scramble message: ${e.message}`);
         }
-        await this.mirrorRconToDiscord(message, 'warning');
+        this.mirrorRconToDiscord(message, 'warning');
+        this.mirrorRconToDiscord(message, 'warning');
         this.initiateScramble(false, false);
         return;
       }
@@ -862,7 +863,7 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast single-round scramble message: ${broadcastErr.message}`);
         }
-        await this.mirrorRconToDiscord(message, 'warning');
+        this.mirrorRconToDiscord(message, 'warning');
         this.initiateScramble(false, false);
         return;
       }
@@ -968,7 +969,7 @@ export default class TeamBalancer extends BasePlugin {
           } catch (broadcastErr) {
             Logger.verbose('TeamBalancer', 1, `Failed to broadcast non-dominant message: ${broadcastErr.message}`);
           }
-          await this.mirrorRconToDiscord(message, 'info');
+          this.mirrorRconToDiscord(message, 'info');
         }
         return await this.resetStreak(`Non-dominant win by team ${winnerID}`, false);
       }
@@ -1001,7 +1002,7 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       if (this.discordChannel && isDominant) {
-        await DiscordHelpers.sendDiscordMessage(this.discordChannel, {
+        DiscordHelpers.sendDiscordMessage(this.discordChannel, {
           embeds: [DiscordHelpers.buildWinStreakEmbed(
             teamNames.winnerName,
             winnerID,
@@ -1042,7 +1043,8 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast dominant win message: ${broadcastErr.message}`);
         }
-        await this.mirrorRconToDiscord(message, 'info');
+          this.mirrorRconToDiscord(message, 'info');
+        this.mirrorRconToDiscord(message, 'info');
       }
 
       Logger.verbose('TeamBalancer', 4, `Evaluating scramble trigger: streakCount=${this.winStreakCount}, streakTeam=${this.winStreakTeam}, margin=${margin}`);
@@ -1064,9 +1066,9 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble announcement: ${broadcastErr.message}`);
         }
-        await this.mirrorRconToDiscord(`${this.RconMessages.prefix} ${message}`, 'warning');
+        this.mirrorRconToDiscord(`${this.RconMessages.prefix} ${message}`, 'warning');
         if (this.discordChannel) {
-          await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [DiscordHelpers.buildScrambleTriggeredEmbed('Win streak threshold reached', teamNames.winnerName, this.winStreakCount, this.options.scrambleAnnouncementDelay)] });
+          DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [DiscordHelpers.buildScrambleTriggeredEmbed('Win streak threshold reached', teamNames.winnerName, this.winStreakCount, this.options.scrambleAnnouncementDelay)] });
         }
         this.initiateScramble(false, false);
       }
@@ -1075,7 +1077,7 @@ export default class TeamBalancer extends BasePlugin {
       
       if (this.discordChannel) {
         const embed = DiscordHelpers.buildFatalErrorEmbed(err, 'Round End Processing', this);
-        await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
       }
 
       this.winStreakTeam = null;
@@ -1241,7 +1243,7 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {          
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble execution message: ${broadcastErr.message}`);
         }
-        await this.mirrorRconToDiscord(broadcastMessage, 'scramble');
+        this.mirrorRconToDiscord(broadcastMessage, 'scramble');
       }
 
       const { squads: transformedSquads, players: transformedPlayers } = this.transformSquadJSData(
@@ -1274,7 +1276,7 @@ export default class TeamBalancer extends BasePlugin {
 
       if (this.discordChannel && this.options.postScrambleDetails) {
         const embed = await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this);
-        await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
       }
 
       if (swapPlan && swapPlan.length > 0) {
@@ -1298,7 +1300,7 @@ export default class TeamBalancer extends BasePlugin {
           } catch (broadcastErr) {
             Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble complete message: ${broadcastErr.message}`);
           }
-          await this.mirrorRconToDiscord(msg, 'success');
+          this.mirrorRconToDiscord(msg, 'success');
           const scrambleTimestamp = Date.now();
           this.lastScrambleTime = scrambleTimestamp;
           try {
@@ -1327,10 +1329,10 @@ export default class TeamBalancer extends BasePlugin {
           } catch (broadcastErr) {
             Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble failed message: ${broadcastErr.message}`);
           }
-          await this.mirrorRconToDiscord(msg, 'warning');
+          this.mirrorRconToDiscord(msg, 'warning');
           if (this.discordChannel) {
             const embed = DiscordHelpers.buildScrambleFailedEmbed('No valid swap solution found.', swapPlan?.calculationTime || 0, this);
-            await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+            DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
           }
           // Note: We do NOT reset the streak here, as the imbalance likely persists.
         } else {
@@ -1346,7 +1348,7 @@ export default class TeamBalancer extends BasePlugin {
       
       if (this.discordChannel) {
         const embed = DiscordHelpers.buildFatalErrorEmbed(error, 'Scramble Execution', this);
-        await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
       }
 
       this.cleanupScrambleTracking();
@@ -1391,7 +1393,7 @@ export default class TeamBalancer extends BasePlugin {
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble cancellation message: ${err.message}`);
       }
-      await this.mirrorRconToDiscord(msg, 'info');
+      this.mirrorRconToDiscord(msg, 'info');
     }
 
     return true;
@@ -1444,7 +1446,7 @@ export default class TeamBalancer extends BasePlugin {
         description: `📢 **Server Broadcast**\n${message}`,
         timestamp: new Date().toISOString()
       };
-      await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+      DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[Discord] Mirror failed: ${err.message}`);
     }
