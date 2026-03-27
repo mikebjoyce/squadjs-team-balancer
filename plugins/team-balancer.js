@@ -1254,9 +1254,15 @@ export default class TeamBalancer extends BasePlugin {
       let eloMap = null;
       if (this.options.useEloForBalance && this.eloTracker) {
         try {
-          const eosIDs = transformedPlayers.map(p => p.eosID);
-          eloMap = await this.eloTracker.getRatingsByEosIDs(eosIDs);
-          Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ELO ratings fetched for ${eloMap.size} players.`);
+          const snapshot = this.eloTracker.lastRoundSnapshot;
+          if (snapshot && snapshot.size > 0) {
+            eloMap = snapshot;
+            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Using ELO round snapshot (${eloMap.size} players).`);
+          } else {
+            const eosIDs = transformedPlayers.map(p => p.eosID);
+            eloMap = await this.eloTracker.getRatingsByEosIDs(eosIDs);
+            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ELO snapshot empty, fell back to DB read (${eloMap.size} players).`);
+          }
         } catch (err) {
           Logger.verbose('TeamBalancer', 1, `[TeamBalancer] ELO fetch failed, scrambling without ratings: ${err.message}`);
           eloMap = null;

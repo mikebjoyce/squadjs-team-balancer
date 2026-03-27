@@ -16,22 +16,16 @@
  * scramblePercentage and current team population deltas.
  *
  * 3. EXHAUSTIVE OPTIMIZATION (200 ATTEMPTS):
- * - Phase 1 (Pure Swaps): 0-50% of attempts focus on whole-squad moves.
- * - Phase 2 (Surgical Unlocked): 50-80% of attempts allow shattering 
- * ONE random unlocked squad to solve precision balance issues.
- * - Phase 3 (Surgical Locked): 80-97% of attempts allow shattering 
- * ONE random locked squad if balance remains unresolved.
- * - Phase 4 (Nuclear Option): Final 5 attempts decompose all squads 
- * to ensure 100% numerical parity in extreme scenarios.
+ *    - Phase 1 (Pure Swaps): 0-50% of attempts focus on whole-squad moves.
+ *    - Phase 2 (Surgical Unlocked): 50-100% of attempts allow shattering
+ *    ONE random unlocked squad to solve precision balance issues.
+ *    Locked squads are never split under any circumstances.
  *
  * 4. SCORING & PENALTIES:
- * - balanceScore: Exponential penalty for team differentials > 2.
- * - anchorPenalty (500 pts): Prevents moving >2 large squads per team 
- * to maintain team "core" identity.
- * - lockedPenalty (500 pts): Heavy weight to keep locked squads together.
- * - cohesionPenalty (10 pts): Moderate weight to keep unlocked squads together.
- * - winStreakTax (150 pts): Incentivizes moving assets off the winning team.
- *
+ *    - balanceScore: Exponential penalty for team differentials > 2.
+ *    - eloBalancePenalty (0-480 pts): Global mean TrueSkill diff, capped below locked squad protection.
+ *    - veteranPenalty: Penalizes imbalanced regular player counts between teams.
+ * 
  * 5. CAP ENFORCEMENT: A final corrective pass ensures no team exceeds 
  * server limits, trimming overages in the order: 
  * Unassigned -> Unlocked Players -> Locked Players.
@@ -73,12 +67,15 @@ export const Scrambler = {
     }));
 
     const playerEloMap = new Map();
+    const playerRoundsMap = new Map();
     if (eloMap) {
       for (const [eosID, rating] of eloMap.entries()) {
         playerEloMap.set(eosID, rating.mu);
+        playerRoundsMap.set(eosID, rating.roundsPlayed ?? 0);
       }
     }
     const defaultMu = 25.0; // fallback for unrated players
+    const REGULAR_MIN_ROUNDS = 10;
 
     const workingSquads = squads.map((s) => ({
       ...s,
@@ -169,22 +166,6 @@ export const Scrambler = {
       return selected;
     };
 
-    const analyzeComposition = (squads) => {
-      let largeInfantryCount = 0;
-      let utilityCount = 0;
-      let hasLockedInfantry = false;
-      for (const s of squads) {
-        const size = s.players.length;
-        if (size >= 7) {
-          largeInfantryCount++;
-          if (s.locked) hasLockedInfantry = true;
-        } else if (size >= 2 && size <= 6) {
-          utilityCount++;
-        }
-      }
-      return { largeInfantryCount, utilityCount, hasLockedInfantry };
-    };
-
     const scoreSwap = (
       selectedT1Squads,
       selectedT2Squads,
@@ -205,7 +186,7 @@ export const Scrambler = {
       const churnScore = Math.abs(actualPlayersMoved - targetPlayersToMoveOverall);
       let churnUnderPenalty = 0;
       if (actualPlayersMoved < targetPlayersToMoveOverall) {
-        churnUnderPenalty = (targetPlayersToMoveOverall - actualPlayersMoved) * 15;
+        churnUnderPenalty = (targetPlayersToMoveOverall - actualPlayersMoved) * 8;
       }
       
       const diff = Math.abs(hypotheticalNewT1 - hypotheticalNewT2);
@@ -221,94 +202,45 @@ export const Scrambler = {
         sizeDeviationPenalty += 50; // Moderate penalty for significant underpopulation
       }
 
-      const calcLockedPenalty = (squads) => {
-        const brokenSquads = new Set();
-        for (const s of squads) {
-          if (s.wasLocked) brokenSquads.add(s.sourceSquadId || s.id);
-        }
-        return brokenSquads.size * 500;
-      };
-      const lockedPenalty = calcLockedPenalty(selectedT1Squads) + calcLockedPenalty(selectedT2Squads);
-      
-      const calcCohesionPenalty = (squads) => {
-        let penalty = 0;
-        for (const s of squads) {
-          if (s.id.startsWith('Split-') && !s.wasLocked) {
-            penalty += 10;
-          }
-        }
-        return penalty;
-      };
-      const cohesionPenalty = calcCohesionPenalty(selectedT1Squads) + calcCohesionPenalty(selectedT2Squads);
-
-      const countLarge = (squads) => squads.filter(s => s.players.length >= 7).length;
-      const movedLargeSquadsT1 = countLarge(selectedT1Squads);
-      const movedLargeSquadsT2 = countLarge(selectedT2Squads);
-      let anchorPenalty = 0;
-      if (movedLargeSquadsT1 > 2) anchorPenalty += 500;
-      if (movedLargeSquadsT2 > 2) anchorPenalty += 500;
-
-      const t1Stats = analyzeComposition(selectedT1Squads);
-      const t2Stats = analyzeComposition(selectedT2Squads);
-
-      let infantryOverload = 0;
-      if (t1Stats.largeInfantryCount > 2) infantryOverload += 180;
-      if (t2Stats.largeInfantryCount > 2) infantryOverload += 180;
-
-      let utilityReward = 0;
-      utilityReward -= (Math.min(t1Stats.utilityCount, 3) * 60);
-      utilityReward -= (Math.min(t2Stats.utilityCount, 3) * 60);
-
-      let winStreakTax = 0;
-      if (String(winStreakTeam) === '1' && !selectedT1Squads.some(s => s.locked)) winStreakTax += 150;
-      if (String(winStreakTeam) === '2' && !selectedT2Squads.some(s => s.locked)) winStreakTax += 150;
-
-      // --- ELO / SKILL BALANCE PENALTY (Weighted Backbone Strategy) ---
+      // --- ELO BALANCE PENALTY ---
       let eloBalancePenalty = 0;
       if (playerEloMap.size > 0) {
-        // Identify which eosIDs are being moved
         const movingToT2 = new Set(selectedT1Squads.flatMap(s => s.players));
         const movingToT1 = new Set(selectedT2Squads.flatMap(s => s.players));
 
         const getElo = (id) => playerEloMap.get(id) ?? defaultMu;
 
-        // Construct hypothetical ELO arrays for both teams after the proposed swap
-        // Sorting DESCENDING is critical for the Backbone/Ace slices
-        const t1AfterElos = workingPlayers
-          .filter(p => p.teamID === '1')
-          .filter(p => !movingToT2.has(p.eosID))
+        const t1Elos = workingPlayers
+          .filter(p => p.teamID === '1' && !movingToT2.has(p.eosID))
           .map(p => getElo(p.eosID))
-          .concat([...movingToT1].map(getElo))
-          .sort((a, b) => b - a);
+          .concat([...movingToT1].map(getElo));
 
-        const t2AfterElos = workingPlayers
-          .filter(p => p.teamID === '2')
-          .filter(p => !movingToT1.has(p.eosID))
+        const t2Elos = workingPlayers
+          .filter(p => p.teamID === '2' && !movingToT1.has(p.eosID))
           .map(p => getElo(p.eosID))
-          .concat([...movingToT2].map(getElo))
-          .sort((a, b) => b - a);
+          .concat([...movingToT2].map(getElo));
 
-        const getSliceAvg = (arr, count) => {
-          const slice = arr.slice(0, count);
-          return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : defaultMu;
-        };
+        const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : defaultMu;
+        const globalDiff = Math.abs(avg(t1Elos) - avg(t2Elos));
+        eloBalancePenalty = Math.min(globalDiff * 25, 480);
+      }
 
-        // 1. Global Mean (The baseline)
-        const globalDiff = Math.abs(getSliceAvg(t1AfterElos, 50) - getSliceAvg(t2AfterElos, 50));
-
-        // 2. The Backbone (Top 15 - Represents the SLs and force multipliers)
-        const backboneDiff = Math.abs(getSliceAvg(t1AfterElos, 15) - getSliceAvg(t2AfterElos, 15));
-
-        // 3. The Aces (Top 5 - High impact carry players)
-        const aceDiff = Math.abs(getSliceAvg(t1AfterElos, 5) - getSliceAvg(t2AfterElos, 5));
-
-        // 4. Weighted Penalty Calculation
-        // Priority: Backbone (55%) > Global (25%) > Aces (20%)
-        const calculatedPenalty = (globalDiff * 25) + (backboneDiff * 55) + (aceDiff * 20);
-
-        // 5. The Hard Cap (Safety Valve)
-        // Capped at 450 so ELO can never override your 500-point Locked Squad protection.
-        eloBalancePenalty = Math.min(calculatedPenalty, 450);
+      // --- VETERAN PARITY PENALTY ---
+      const countRegs = (teamID, movingOut, movingIn) => {
+        const staying = workingPlayers
+          .filter(p => p.teamID === teamID && !movingOut.has(p.eosID))
+          .filter(p => (playerRoundsMap.get(p.eosID) ?? 0) >= REGULAR_MIN_ROUNDS).length;
+        const arriving = [...movingIn]
+          .filter(id => (playerRoundsMap.get(id) ?? 0) >= REGULAR_MIN_ROUNDS).length;
+        return staying + arriving;
+      };
+      let veteranPenalty = 0;
+      if (playerRoundsMap.size > 0) {
+        const movingToT2 = new Set(selectedT1Squads.flatMap(s => s.players));
+        const movingToT1 = new Set(selectedT2Squads.flatMap(s => s.players));
+        const reg1 = countRegs('1', movingToT2, movingToT1);
+        const reg2 = countRegs('2', movingToT1, movingToT2);
+        veteranPenalty = Math.abs(reg1 - reg2) * 15;
       }
 
       let combinedScore =
@@ -318,28 +250,14 @@ export const Scrambler = {
         penaltyT1Overcap +
         penaltyT2Overcap + 
         sizeDeviationPenalty +
-        lockedPenalty +
-        cohesionPenalty +
-        anchorPenalty +
-        infantryOverload +
-        utilityReward +
-        winStreakTax +
-        eloBalancePenalty;
+        eloBalancePenalty + 
+        veteranPenalty;
       
-      if (
-        targetPlayersToMoveOverall > 10 &&
-        actualPlayersMoved < targetPlayersToMoveOverall * 0.5
-      ) {
-        combinedScore += 300; // Significant penalty for not meeting at least half the churn target
-      }
-
       return combinedScore;
     };
 
-    const MAX_ATTEMPTS = 200; // Increased attempts to find a good solution
-    const SURGICAL_START = Math.floor(MAX_ATTEMPTS * 0.5);
-    const LOCKED_START = Math.floor(MAX_ATTEMPTS * 0.8);
-    const NUCLEAR_START = MAX_ATTEMPTS - 5;
+    const MAX_ATTEMPTS = 160;
+    const SURGICAL_START = Math.floor(MAX_ATTEMPTS * 0.5);    
     let bestScore = Infinity;
     let bestT1SwapCandidates = null;
     let bestT2SwapCandidates = null;
@@ -371,10 +289,9 @@ export const Scrambler = {
       let localT1 = [...t1Candidates];
       let localT2 = [...t2Candidates];
 
-      // Surgical Squad Splitting
-      if (i >= SURGICAL_START && i < NUCLEAR_START && bestScore > 10) {
-        const allowLocked = i >= LOCKED_START;
-        const getEligible = (list) => list.filter(s => (allowLocked || !s.locked) && !s.id.startsWith('Unassigned') && !s.id.startsWith('Split'));
+      // Surgical Squad Splitting (unlocked squads only)
+      if (i >= SURGICAL_START && bestScore > 10) {
+        const getEligible = (list) => list.filter(s => !s.locked && !s.id.startsWith('Unassigned') && !s.id.startsWith('Split'));
         const t1Eligible = getEligible(localT1);
         const t2Eligible = getEligible(localT2);
         const allEligible = [...t1Eligible, ...t2Eligible];
@@ -384,13 +301,6 @@ export const Scrambler = {
           if (victim.teamID === '1') localT1 = decomposeList(localT1, victim.id);
           else localT2 = decomposeList(localT2, victim.id);
         }
-      }
-
-      // Nuclear Option
-      if (i >= NUCLEAR_START) {
-        if (i === NUCLEAR_START) Logger.verbose('TeamBalancer', 2, 'Engaging Nuclear Option: Decomposing all squads for final attempts.');
-        localT1 = decomposeList(localT1, null, true);
-        localT2 = decomposeList(localT2, null, true);
       }
 
       const currentUsedSquadIds = new Set(); // Reset for each attempt
@@ -426,13 +336,10 @@ export const Scrambler = {
         targetPlayersToMove
       );
 
-      const t1Stats = analyzeComposition(selT1);
-      const t2Stats = analyzeComposition(selT2);
-
       Logger.verbose(
         'TeamBalancer',
         4,
-        `Attempt ${i + 1}: Score = ${currentScore.toFixed(2)}, Move T1->T2 = ${selT1.reduce((n, s) => n + s.players.length, 0)}, Move T2->T1 = ${selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T1 = ${initialCounts.team1Count - selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T2 = ${initialCounts.team2Count - selT2.reduce((n, s) => n + s.players.length, 0) + selT1.reduce((n, s) => n + s.players.length, 0)} | Comp: T1[L:${t1Stats.largeInfantryCount}/U:${t1Stats.utilityCount}] T2[L:${t2Stats.largeInfantryCount}/U:${t2Stats.utilityCount}] | Churn: ${selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}/${targetPlayersToMove}`
+        `Attempt ${i + 1}: Score = ${currentScore.toFixed(2)}, Move T1->T2 = ${selT1.reduce((n, s) => n + s.players.length, 0)}, Move T2->T1 = ${selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T1 = ${initialCounts.team1Count - selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T2 = ${initialCounts.team2Count - selT2.reduce((n, s) => n + s.players.length, 0) + selT1.reduce((n, s) => n + s.players.length, 0)} | Churn: ${selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}/${targetPlayersToMove}`
       );
       Logger.verbose('TeamBalancer', 4, `Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
       Logger.verbose('TeamBalancer', 4, `Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
