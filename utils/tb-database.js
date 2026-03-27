@@ -218,7 +218,7 @@ export default class TBDatabase {
       const iterations = 5;
       const promises = [];
       for (let i = 0; i < iterations; i++) {
-        promises.push(this.incrementStreak(1));
+        promises.push(this.incrementStreak(1, null, 0));
       }
       
       const results = await Promise.all(promises);
@@ -229,13 +229,25 @@ export default class TBDatabase {
       const finalCount = finalRecord ? finalRecord.winStreakCount : -1;
 
       // 5. Restore
-      if (originalState) await this.saveState(originalState.winStreakTeam, originalState.winStreakCount);
+      if (originalState) {
+        await this.saveState(
+          originalState.winStreakTeam,
+          originalState.winStreakCount,
+          originalState.consecutiveWinsTeam,
+          originalState.consecutiveWinsCount
+        );
+      }
 
       return finalCount === successCount
         ? { success: true, message: `PASS (${successCount}/${iterations} txs committed)` }
         : { success: false, message: `FAIL (Committed: ${finalCount}, Expected: ${successCount})` };
     } catch (err) {
-      if (originalState) await this.saveState(originalState.winStreakTeam, originalState.winStreakCount);
+      if (originalState) await this.saveState(
+        originalState.winStreakTeam,
+        originalState.winStreakCount,
+        originalState.consecutiveWinsTeam,
+        originalState.consecutiveWinsCount
+      );
       return { success: false, message: `Error: ${err.message}` };
     }
   }

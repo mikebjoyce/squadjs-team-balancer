@@ -387,9 +387,10 @@ const CommandHandlers = {
             const response = await this.respond(player, diagMsg);
 
             if (this.discordChannel) {
-              const embed = DiscordHelpers.buildDiagEmbed(this, results);
-              embed.description = `Executed by **${adminName}**\n${embed.description}`;
-              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+              const embeds = DiscordHelpers.buildDiagEmbeds(this, results);
+              // Add context to the first embed description
+              embeds[0].description = `Executed by **${adminName}** (In-Game)\n${embeds[0].description}`;
+              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds });
             }
             return response;
           }

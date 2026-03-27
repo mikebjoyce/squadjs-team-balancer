@@ -582,10 +582,10 @@ export default class TeamBalancer extends BasePlugin {
           message: dbTest.message
         });
 
-        const embed = DiscordHelpers.buildDiagEmbed(this, results);
-        embed.description = `Executed by ${message.author}\n${embed.description}`;
-
-        DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });
+        const embeds = DiscordHelpers.buildDiagEmbeds(this, results);
+        for (const embed of embeds) {
+          await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });
+        }
         break;
       case 'on':
       case 'off':
@@ -847,7 +847,6 @@ export default class TeamBalancer extends BasePlugin {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast consecutive wins scramble message: ${e.message}`);
         }
         this.mirrorRconToDiscord(message, 'warning');
-        this.mirrorRconToDiscord(message, 'warning');
         this.initiateScramble(false, false);
         return;
       }
@@ -1045,7 +1044,6 @@ export default class TeamBalancer extends BasePlugin {
         } catch (broadcastErr) {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast dominant win message: ${broadcastErr.message}`);
         }
-          this.mirrorRconToDiscord(message, 'info');
         this.mirrorRconToDiscord(message, 'info');
       }
 

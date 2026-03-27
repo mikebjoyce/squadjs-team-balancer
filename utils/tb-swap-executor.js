@@ -219,8 +219,6 @@ export default class SwapExecutor {
         duration
       );
       DiscordHelpers.sendDiscordMessage(this.teamBalancer.discordChannel, { embeds: [embed] });
-      DiscordHelpers.sendDiscordMessage(this.teamBalancer.discordChannel, { embeds: [embed] }); 
-      this.teamBalancer.fireAndForget(DiscordHelpers.sendDiscordMessage(this.teamBalancer.discordChannel, { embeds: [embed] }), 'Discord');
     }
 
     this.pendingPlayerMoves.clear();
