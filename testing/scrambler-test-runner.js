@@ -391,8 +391,8 @@ async function runBulkTests(totalRuns = 100) {
     let largeSquadsMoved = 0;
     tfSquads.forEach(s => {
       if (s.players.length >= 7) {
-        const movedPlayers = squad.players.filter(pid => swapPlan.some(m => m.eosID === pid));
-        if (movedPlayers.length === s.players.length) largeSquadsMoved++;
+    const movedPlayers = s.players.filter(pid => swapPlan.some(m => m.eosID === pid));
+    if (movedPlayers.length === s.players.length) largeSquadsMoved++;
       }
     });
     results.totalLargeSquadsMoved += largeSquadsMoved;
