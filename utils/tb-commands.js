@@ -127,11 +127,14 @@ const CommandHandlers = {
           ? `${this.getTeamName(this.winStreakTeam)} has ${this.winStreakCount} dominant win(s)`
           : `No current win streak`;
 
+      const eloStatus = this.options?.useEloForBalance ? (this.eloTracker ? 'Active' : 'Unavailable') : 'Disabled';
+
       // Formatted response for !teambalancer
       const infoMsg = [
         `=== TeamBalancer ===`,
         `Version: ${this.constructor.version}`,
         `Status: ${statusText}`,
+        `Elo Integration: ${eloStatus}`,
         `Dominance Streak: ${winStreakText}`,
         `Last Scramble: ${lastScrambleText}`,
         `Max Streak Threshold: ${this.options.maxWinStreak} dominant win(s)`
@@ -285,11 +288,14 @@ const CommandHandlers = {
             // Layer
             const currentLayer = this.server.currentLayer?.name || 'Unknown';
 
+            const eloStatus = this.options?.useEloForBalance ? (this.eloTracker ? 'Active' : 'Unavailable') : 'Disabled';
+
             // Formatted response for !teambalancer status
             const statusMsg = [
               `--- TeamBalancer Status ---`,
               `Version: ${this.constructor.version}`,
               `Plugin Status: ${effectiveStatus}`,
+              `Elo Integration: ${eloStatus}`,
               `Win Streak: ${winStreakText}`,
               `Last Scramble: ${lastScrambleText}`,
               `Players: ${players.length} (T1: ${t1Count} | T2: ${t2Count})`,

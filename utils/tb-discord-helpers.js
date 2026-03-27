@@ -48,12 +48,15 @@ export const DiscordHelpers = {
     const t1Count = players.filter((p) => p.teamID === 1).length;
     const t2Count = players.filter((p) => p.teamID === 2).length;
 
+    const eloStatus = tb.options?.useEloForBalance ? (tb.eloTracker ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
+
     const embed = {
       color: 0x3498db,
       title: '📊 TeamBalancer Status',
       fields: [
         { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
         { name: 'Plugin Status', value: effectiveStatus, inline: true },
+        { name: 'Elo Integration', value: eloStatus, inline: true },
         { name: 'Dominant Streak', value: winStreakText, inline: true },
         { name: 'Consecutive Streak', value: consecutiveText, inline: true },
         { name: 'Last Scramble', value: lastScrambleText, inline: false },
@@ -98,8 +101,11 @@ export const DiscordHelpers = {
       embed.fields.push({ name: '🔍 Self-Test Results', value: lines.join('\n'), inline: false });
     }
 
+    const eloStatus = tb.options?.useEloForBalance ? (tb.eloTracker ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
+
     embed.fields.push(
       { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
+      { name: 'Elo Integration', value: eloStatus, inline: true },
       { name: 'Win Streak', value: tb.winStreakTeam ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)` : 'None', inline: true },
       { name: 'Max Threshold', value: `${tb.options?.maxWinStreak || 2} wins`, inline: true },
       { name: 'Consecutive', value: tb.consecutiveWinsTeam ? `${tb.getTeamName(tb.consecutiveWinsTeam)}: ${tb.consecutiveWinsCount}` : 'None', inline: true },

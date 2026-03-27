@@ -124,7 +124,7 @@ const muRange = regulars.length > 0 ? {
 } : { min: 'NaN', max: 'NaN' };
 console.log(`Mu range: ${muRange.min} – ${muRange.max}\n`);
 
-function buildSession(count, regRatio = 0.3) {
+function buildSession(count, regRatio = 0.3, unassignedCount = null, squadProfile = 'normal') {
   const session = [];
   const regCount = Math.floor(count * regRatio);
   const provCount = count - regCount;
@@ -135,46 +135,88 @@ function buildSession(count, regRatio = 0.3) {
   session.push(...shuffledRegs.slice(0, regCount));
   session.push(...shuffledProv.slice(0, provCount));
 
-  // Assign to realistic squads (size 2-9)
-  let squadCounter = 1;
-  let teamCounter = 1;
+  let squadCounterT1 = 1;
+  let squadCounterT2 = 1;
   let i = 0;
   const structured = [];
 
   while (i < session.length) {
-    const size = Math.floor(Math.random() * 8) + 2;
+    let size;
+    if (squadProfile === 'high') {
+      size = Math.floor(Math.random() * 3) + 2; // Sizes 2-4 -> Average ~3 -> ~16 squads/team
+    } else if (squadProfile === 'low') {
+      size = Math.floor(Math.random() * 3) + 7; // Sizes 7-9 -> Average ~8 -> ~6 squads/team
+    } else if (squadProfile === 'indivisible') {
+      size = 9; // Exactly 9 players
+    } else {
+      size = Math.floor(Math.random() * 7) + 2; // Sizes 2-8 -> Average ~5 -> ~10-12 squads/team
+    }
+    
     const squadPlayers = session.slice(i, i + size);
     const isLocked = Math.random() < 0.3;
-    const sId = squadCounter++;
 
     // NEW: Assign team based on whether we are in the first or second half of the player list
     const currentTeam = (i < session.length / 2) ? 1 : 2;
+    const sId = (currentTeam === 1 ? squadCounterT1++ : squadCounterT2++);
 
     squadPlayers.forEach(p => {
       structured.push({
         eosID: p.eosID,
         name: p.name,
         teamID: currentTeam, 
+        originalTeam: currentTeam, // track this so assignTeams doesn't merge squads
         squadID: sId,
         squadLocked: isLocked
       });
     });
 
     i += size;
-    if (squadCounter > 10) {
-        teamCounter = 2;
-        squadCounter = 1;
-    }
   }
+
+  const targetUnassigned = unassignedCount !== null ? unassignedCount : Math.floor(Math.random() * 5); // 0 to 4
+  const unassignedIndices = new Set();
+  while (unassignedIndices.size < targetUnassigned && unassignedIndices.size < structured.length) {
+    unassignedIndices.add(Math.floor(Math.random() * structured.length));
+  }
+  
+  unassignedIndices.forEach(idx => {
+    structured[idx].squadID = null;
+    structured[idx].squadLocked = false;
+  });
+
   return structured;
+}
+
+function assignCustomTeams(t1Array, t2Array) {
+    const t1 = t1Array.map(p => ({...p, teamID: 1}));
+    const t2 = t2Array.map(p => ({...p, teamID: 2}));
+    
+    // Re-index squad IDs for T1 so shifted players don't collide
+    let nextSquadId = 1;
+    const squadMapT1 = new Map();
+    t1.forEach(p => {
+       if (p.squadID === null) return;
+       const origKey = `${p.originalTeam}-${p.squadID}`;
+       if (!squadMapT1.has(origKey)) squadMapT1.set(origKey, nextSquadId++);
+       p.squadID = squadMapT1.get(origKey);
+    });
+    
+    // Re-index squad IDs for T2
+    let nextSquadId2 = 1;
+    const squadMapT2 = new Map();
+    t2.forEach(p => {
+       if (p.squadID === null) return;
+       const origKey = `${p.originalTeam}-${p.squadID}`;
+       if (!squadMapT2.has(origKey)) squadMapT2.set(origKey, nextSquadId2++);
+       p.squadID = squadMapT2.get(origKey);
+    });
+    
+    return { t1Players: t1, t2Players: t2 };
 }
 
 function assignTeams(players, ratio) {
     const t1Limit = Math.floor(players.length * ratio);
-    return {
-        t1Players: players.slice(0, t1Limit).map(p => ({...p, teamID: 1})),
-        t2Players: players.slice(t1Limit).map(p => ({...p, teamID: 2}))
-    };
+    return assignCustomTeams(players.slice(0, t1Limit), players.slice(t1Limit));
 }
 
 // ─── Scenario Runner ─────────────────────────────────────────────
@@ -207,45 +249,72 @@ async function runScenario(name, { t1Players, t2Players, note = '' }) {
   const after = getStats(tfPlayers, eloMap);
   const lockedIntact = checkLockedSquads(t1Players, t2Players, tfPlayers);
 
-  console.log(`\n── ${name} ${note ? `(${note})` : ''}`);
+  console.log(`\n-- ${name} ${note ? `(${note})` : ''}`);
   console.log(`   Players: T1=${before.t1Count} T2=${before.t2Count} | Locked squads: ${[...t1Players, ...t2Players].filter(p => p.squadLocked).length} | Moves: ${swapPlan.length} | Time: ${duration}ms`);
   
-  const muStatus = after.muDiff <= before.muDiff ? '✅' : '⚠️ ';
-  const vetStatus = after.vetDiff <= before.vetDiff ? '✅' : (after.vetDiff <= 0.05 ? '──' : '⚠️ ');
-  const numStatus = after.numDiff <= 2 ? '✅' : '❌';
+  const muStatus = after.muDiff <= before.muDiff ? '[PASS]' : '[WARN]';
+  const vetStatus = after.vetDiff <= before.vetDiff ? '[PASS]' : (after.vetDiff <= 0.05 ? '--' : '[WARN]');
+  const numStatus = after.numDiff <= 2 ? '[PASS]' : '[FAIL]';
 
-  console.log(`   ELO diff:  ${before.muDiff.toFixed(3)} → ${after.muDiff.toFixed(3)}  ${muStatus}`);
-  console.log(`   Vet diff:  ${before.vetDiff.toFixed(3)} → ${after.vetDiff.toFixed(3)}  ${vetStatus}`);
-  console.log(`   Num diff:  ${before.numDiff} → ${after.numDiff}  ${numStatus}`);
-  console.log(`   Locked:    ${lockedIntact ? '✅ intact' : '❌ BROKEN'}`);
+  console.log(`   ELO diff:  ${before.muDiff.toFixed(3)} -> ${after.muDiff.toFixed(3)}  ${muStatus}`);
+  console.log(`   Vet diff:  ${before.vetDiff.toFixed(3)} -> ${after.vetDiff.toFixed(3)}  ${vetStatus}`);
+  console.log(`   Num diff:  ${before.numDiff} -> ${after.numDiff}  ${numStatus}`);
+  console.log(`   Locked:    ${lockedIntact ? '[PASS] intact' : '[FAIL] BROKEN'}`);
 
-  if (after.muDiff > before.muDiff || after.numDiff > 2) {
-    console.log(`   \x1b[33m[DEBUG: Regressive Case Analysis]\x1b[0m`);
-    const movedSquads = new Map();
+    console.log(`   \x1b[36m[MOVEMENT BREAKDOWN]\x1b[0m`);
+    const movedGroups = new Map();
+    
+    // Build a map of original squad sizes to detect surgical splits
+    const originalSquadSizes = new Map();
+    [...t1Players, ...t2Players].forEach(p => {
+        const sId = p.squadID ? `T${p.teamID}-S${p.squadID}` : `T${p.teamID}-Unassigned`;
+        originalSquadSizes.set(sId, (originalSquadSizes.get(sId) || 0) + 1);
+    });
+
     swapPlan.forEach(m => {
-      // String conversion prevents TypeErrors if IDs are mixed types
       const p = [...t1Players, ...t2Players].find(tp => String(tp.eosID) === String(m.eosID));
-      
-      // Safety check: if the player isn't found, skip to the next move
       if (!p) return;
 
       const sId = p.squadID ? `T${p.teamID}-S${p.squadID}` : `T${p.teamID}-Unassigned`;
-      if (!movedSquads.has(sId)) {
-        movedSquads.set(sId, { mu: 0, count: 0, to: m.targetTeamID, isLocked: p.squadLocked });
+      if (!movedGroups.has(sId)) {
+        movedGroups.set(sId, { 
+            mu: 0, 
+            count: 0, 
+            from: p.teamID,
+            to: m.targetTeamID, 
+            isLocked: p.squadLocked,
+            isUnassigned: !p.squadID
+        });
       }
-      const sData = movedSquads.get(sId);
+      const sData = movedGroups.get(sId);
       sData.mu += (eloMap.get(m.eosID)?.mu || 25);
       sData.count++;
     });
 
-    console.log(`     Major Movements:`);
-    movedSquads.forEach((data, id) => {
-      if (data.count > 1 || data.mu > 30) {
-        console.log(`      • ${data.isLocked ? '[LOCKED]' : '[OPEN]'} ${id}: ${data.count} players | Total Mu: ${data.mu.toFixed(1)} | To T${data.to}`);
-      }
+    let t1ToT2Count = 0;
+    let t2ToT1Count = 0;
+
+    movedGroups.forEach((data, id) => {
+      const totalInSquad = originalSquadSizes.get(id);
+      const isSplit = !data.isUnassigned && data.count < totalInSquad;
+      
+      const statusType = data.isUnassigned ? '[UNASSIGNED]' : (data.isLocked ? '[LOCKED]' : '[OPEN]');
+      const splitMarker = isSplit ? '\x1b[35m[SURGICAL SPLIT]\x1b[0m ' : '';
+      const avgMu = (data.mu / data.count).toFixed(1);
+      
+      console.log(`      * ${statusType} ${splitMarker}${id}: Moved ${data.count}/${totalInSquad} players | Avg Mu: ${avgMu} | Total Mu: ${data.mu.toFixed(1)} | T${data.from} -> T${data.to}`);
+      
+      if (data.from == 1) t1ToT2Count += data.count;
+      else t2ToT1Count += data.count;
     });
-    console.log(`     Mass Balance: T1 Sum Mu: ${(after.mu1 * after.t1Count).toFixed(1)} | T2 Sum Mu: ${(after.mu2 * after.t2Count).toFixed(1)}`);
-  }
+    
+    if (movedGroups.size === 0) {
+      console.log(`      * No players moved.`);
+    }
+
+    console.log(`   \x1b[36m[MASS BALANCE]\x1b[0m`);
+    console.log(`     T1 Net Change: ${t2ToT1Count - t1ToT2Count > 0 ? '+' : ''}${t2ToT1Count - t1ToT2Count} players | Avg Mu: ${before.mu1.toFixed(3)} -> ${after.mu1.toFixed(3)}`);
+    console.log(`     T2 Net Change: ${t1ToT2Count - t2ToT1Count > 0 ? '+' : ''}${t1ToT2Count - t2ToT1Count} players | Avg Mu: ${before.mu2.toFixed(3)} -> ${after.mu2.toFixed(3)}`);
 
   return { before, after, lockedIntact, time: duration, moves: swapPlan.length };
 }
@@ -257,7 +326,7 @@ async function runBulk(name, generator, runs = 200) {
     totalVetBefore: 0, totalVetAfter: 0
   };
 
-  process.stdout.write(`🔁 Bulk: ${name} (${runs} runs) `);
+  process.stdout.write(`[BULK] ${name} (${runs} runs) `);
 
   for (let i = 0; i < runs; i++) {
     const { t1Players, t2Players } = generator();
@@ -298,12 +367,12 @@ async function runBulk(name, generator, runs = 200) {
     results.totalVetBefore += before.vetDiff;
     results.totalVetAfter += after.vetDiff;
 
-    if (i % (runs/10) === 0) process.stdout.write('■');
+    if (i % (runs/10) === 0) process.stdout.write('#');
   }
 
   console.log(`\n   Balanced (diff<=2):   ${results.balanced}/${runs} (${(results.balanced/runs*100).toFixed(1)}%)`);
-  console.log(`   ELO improved:         ${results.eloImproved}/${runs} (${(results.eloImproved/runs*100).toFixed(1)}%) | Avg ${ (results.totalMuBefore/runs).toFixed(3) } → ${ (results.totalMuAfter/runs).toFixed(3) }`);
-  console.log(`   Vet improved:         ${results.vetImproved}/${runs} (${(results.vetImproved/runs*100).toFixed(1)}%) | Avg ${ (results.totalVetBefore/runs).toFixed(3) } → ${ (results.totalVetAfter/runs).toFixed(3) }`);
+  console.log(`   ELO improved:         ${results.eloImproved}/${runs} (${(results.eloImproved/runs*100).toFixed(1)}%) | Avg ${ (results.totalMuBefore/runs).toFixed(3) } -> ${ (results.totalMuAfter/runs).toFixed(3) }`);
+  console.log(`   Vet improved:         ${results.vetImproved}/${runs} (${(results.vetImproved/runs*100).toFixed(1)}%) | Avg ${ (results.totalVetBefore/runs).toFixed(3) } -> ${ (results.totalVetAfter/runs).toFixed(3) }`);
   console.log(`   Locked broken:        ${results.lockedBroken}/${runs}`);
   console.log(`   Avg time: ${(results.totalTime/runs).toFixed(1)}ms | Avg moves: ${(results.totalMoves/runs).toFixed(1)}\n`);
 }
@@ -311,12 +380,12 @@ async function runBulk(name, generator, runs = 200) {
 // ─── Main Execution ─────────────────────────────────────────────
 
 (async function main() {
-  console.log('════════════════════════════════════════════════════════');
+  console.log('========================================================');
   console.log('  SCRAMBLER REAL DATA TEST SUITE');
-  console.log('════════════════════════════════════════════════════════');
+  console.log('========================================================');
 
-  console.log('\n▶ SCENARIO TESTS (single runs, verbose output)');
-  console.log('────────────────────────────────────────────────');
+  console.log('\n> SCENARIO TESTS (single runs, verbose output)');
+  console.log('------------------------------------------------');
 
   const randRatio = () => avgRatios.length > 0 ? avgRatios[Math.floor(Math.random() * avgRatios.length)] : 0.5;
 
@@ -328,26 +397,26 @@ async function runBulk(name, generator, runs = 200) {
 
   {
     const session = buildSession(100);
-    const { t1Players, t2Players } = assignTeams(session, 0.62);
-    await runScenario('Imbalanced Session 62/38', { t1Players, t2Players });
+    const { t1Players, t2Players } = assignTeams(session, 0.52);
+    await runScenario('Imbalanced Session (52/48)', { t1Players, t2Players });
   }
 
   {
-    const session = buildSession(100);
+    const session = buildSession(100, 0.5, 0); // 50 regs, 50 others
     const regs = session.filter(p => (allPlayers.find(ap => ap.eosID === p.eosID)?.roundsPlayed || 0) >= 50);
     const others = session.filter(p => !regs.includes(p));
-    const t1Players = [...regs, ...others.slice(0, 20)].map(p => ({...p, teamID: 1}));
-    const t2Players = others.slice(20).map(p => ({...p, teamID: 2}));
-    await runScenario('Veteran Stack', { t1Players, t2Players, note: `T1 regs=${regs.length} T2 regs=0` });
+    const { t1Players, t2Players } = assignCustomTeams(
+        [...regs.slice(0, 30), ...others.slice(0, 20)],
+        [...regs.slice(30), ...others.slice(20)]
+    );
+    await runScenario('Veteran Stack (T1 regs=30 T2 regs=0, sizes 50/50)', { t1Players, t2Players });
   }
 
   {
-    const session = buildSession(100);
+    const session = buildSession(100, 0.3, 0);
     const sorted = [...session].sort((a,b) => (allPlayers.find(p=>p.eosID===b.eosID)?.mu||25) - (allPlayers.find(p=>p.eosID===a.eosID)?.mu||25));
-    const t1Players = sorted.slice(0, 50).map(p => ({...p, teamID: 1}));
-    const t2Players = sorted.slice(50).map(p => ({...p, teamID: 2}));
-    const b = getStats([...t1Players, ...t2Players], new Map(allPlayers.map(p=>[p.eosID, p])));
-    await runScenario('ELO Stack', { t1Players, t2Players, note: `T1 avg=${b.mu1.toFixed(1)} T2 avg=${b.mu2.toFixed(1)}` });
+    const { t1Players, t2Players } = assignCustomTeams(sorted.slice(0, 50), sorted.slice(50));
+    await runScenario('ELO Stack (T1 highest 50, T2 lowest 50)', { t1Players, t2Players });
   }
 
   {
@@ -356,8 +425,48 @@ async function runBulk(name, generator, runs = 200) {
     await runScenario('Max Capacity (102 players)', { t1Players, t2Players });
   }
 
-  console.log('\n▶ BULK TESTS (200 runs each)');
-  console.log('────────────────────────────────────────────────');
+  {
+    const session = buildSession(40, 0.3, 2);
+    const { t1Players, t2Players } = assignTeams(session, 0.60);
+    await runScenario('Low Pop Seeding (40 players)', { t1Players, t2Players });
+  }
+
+  {
+    const session = buildSession(100, 0.3, null, 'low');
+    const { t1Players, t2Players } = assignTeams(session, 0.51);
+    await runScenario('Low Squad Count (~6 per team, sizes 7-9)', { t1Players, t2Players });
+  }
+
+  {
+    const session = buildSession(100, 0.3, null, 'high');
+    const { t1Players, t2Players } = assignTeams(session, 0.51);
+    await runScenario('High Squad Count (~16 per team, sizes 2-4)', { t1Players, t2Players });
+  }
+  
+  {
+    const session = buildSession(100, 0.3, 0, 'indivisible');
+    session.forEach(p => { p.squadLocked = true; }); // Force all locked
+    const { t1Players, t2Players } = assignTeams(session, 0.54); // 54 vs 46 Imbalance
+    await runScenario('Indivisible Lobby (All 9-man Locked Squads, 54/46)', { t1Players, t2Players });
+  }
+
+  {
+    const session = buildSession(100, 0.3, 100); // 100 unassigned players
+    const { t1Players, t2Players } = assignTeams(session, 0.52);
+    await runScenario('Lone Wolf Avalanche (100 Unassigned, 52/48)', { t1Players, t2Players });
+  }
+
+  {
+    const session = buildSession(100, 0.5, 0);
+    const sorted = [...session].sort((a,b) => (allPlayers.find(p=>p.eosID===b.eosID)?.mu||25) - (allPlayers.find(p=>p.eosID===a.eosID)?.mu||25));
+    const { t1Players, t2Players } = assignCustomTeams(sorted.slice(0, 50), sorted.slice(50));
+    await runScenario('Variance Test (Run 1) [50v50 Elo Skew]', { t1Players, t2Players });
+    await runScenario('Variance Test (Run 2) [50v50 Elo Skew]', { t1Players, t2Players });
+    await runScenario('Variance Test (Run 3) [50v50 Elo Skew]', { t1Players, t2Players });
+  }
+
+  console.log('\n> BULK TESTS (200 runs each)');
+  console.log('------------------------------------------------');
 
   await runBulk('Random realistic sessions', () => {
     const count = Math.floor(Math.random() * 42) + 60;
@@ -376,7 +485,7 @@ async function runBulk(name, generator, runs = 200) {
     };
   });
 
-  console.log('════════════════════════════════════════════════════════');
+  console.log('========================================================');
   console.log('  ALL TESTS COMPLETE');
-  console.log('════════════════════════════════════════════════════════');
+  console.log('========================================================');
 })();

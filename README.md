@@ -1,4 +1,4 @@
-# Team Balancer Plugin v2.1.1
+# Team Balancer Plugin v2.1.2
 
 **SquadJS Plugin for Fair Match Enforcement**
 
@@ -50,12 +50,14 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 
 *   **Target Calc**: Computes ideal player swap targets (default 50% churn) adjusted by current team population deltas.
 
-*   **Tiered Optimization (200 Iterations)**:
+*   **Tiered Optimization (500 Iterations)**:
 
     *   **Phase 1 (Pure Swaps)**: Focuses exclusively on whole-squad moves to maximize friend-group cohesion.
     *   **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments.
     *   **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues.
     *   **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to guarantee 100% numerical balance.
+
+*   **Elo Integration (Optional)**: Can utilize SquadJS EloTracker data to balance teams by mean TrueSkill and veteran player counts alongside pure numerical balance.
 
 *   **Identity Preservation**: Employs an "Anchor" rule to ensure core team identity by limiting the movement of large infantry blocks.
 
@@ -111,8 +113,9 @@ Add to your `config.json`:
   "postScrambleDetails": true,
   "requireScrambleConfirmation": true,
   "scrambleConfirmationTimeout": 60,
+  "useEloForBalance": false,
   "devMode": false
-},
+}
 ```
 
 **File Placement**: Move the project files into your SquadJS directory's squad-server folder
@@ -187,6 +190,9 @@ mirrorRconBroadcasts           - Mirror RCON broadcasts to Discord.
 postScrambleDetails            - Post detailed swap plans to Discord.
 requireScrambleConfirmation    - Require !scramble confirm before executing a scramble.
 scrambleConfirmationTimeout    - Time in seconds to wait for scramble confirmation.
+
+Advanced:
+useEloForBalance               - Use EloTracker ratings to influence team balance during scrambles. Requires EloTracker plugin.
 
 Debug & Dev:
 devMode                        - Enable dev mode. Allows anyone (regardless of admin priviledges) to run chat commands in-game.

@@ -27,6 +27,7 @@
  * database                       - The Sequelize connector for persistent data storage.
  * enableWinStreakTracking        - Enable/disable automatic win streak tracking.
  * maxWinStreak                   - Number of dominant wins to trigger a scramble.
+ * maxConsecutiveWinsWithoutThreshold - Trigger scramble after X consecutive wins, ignoring ticket thresholds. Set to 0 to disable.
  * enableSingleRoundScramble      - Enable scramble if a single round ticket margin is huge.
  * singleRoundScrambleThreshold   - Ticket margin to trigger single-round scramble.
  * minTicketsToCountAsDominantWin - Min ticket diff for a dominant win (Standard).
@@ -51,6 +52,7 @@
  * postScrambleDetails            - Post detailed swap plans to Discord.
  * requireScrambleConfirmation    - Require '!scramble confirm' before executing a scramble.
  * scrambleConfirmationTimeout    - Time in seconds to wait for scramble confirmation.
+ * useEloForBalance               - Use EloTracker ratings to influence team balance during scrambles. Requires EloTracker plugin to be active.
  *
  * Dev:
  * devMode                        - Enable dev mode. Allows anyone (regardless of admin priviledges) to run chat commands in-game.
@@ -118,7 +120,7 @@ import { TBDiagnostics } from '../utils/tb-diagnostics.js';
 
 export default class TeamBalancer extends BasePlugin {
   static get version() {
-    return '2.1.1';
+    return '2.1.2';
   }
 
   static get description() {
