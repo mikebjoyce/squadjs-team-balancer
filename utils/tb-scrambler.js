@@ -183,14 +183,11 @@ export const Scrambler = {
       const hypotheticalNewT1 = initialT1Count - playersMovedFromT1 + playersMovedFromT2;
       const hypotheticalNewT2 = initialT2Count - playersMovedFromT2 + playersMovedFromT1;
       
-      const churnScore = Math.abs(actualPlayersMoved - targetPlayersToMoveOverall);
-      let churnUnderPenalty = 0;
-      if (actualPlayersMoved < targetPlayersToMoveOverall) {
-        churnUnderPenalty = (targetPlayersToMoveOverall - actualPlayersMoved) * 8;
-      }
-      
       const diff = Math.abs(hypotheticalNewT1 - hypotheticalNewT2);
-      const balanceScore = diff <= 2 ? diff * 80 : (diff * diff) * 60;
+      // 0-1 diff = 0 penalty
+      // 2 diff   = 40 penalty (Small enough that ELO/Vet improvements easily override it)
+      // 3+ diff  = Exponential (3=400, 4=900, etc.)
+      const balanceScore = diff <= 1 ? 0 : Math.pow(diff + 1, 2) * 100;
       
       const penaltyT1Overcap = Math.max(0, hypotheticalNewT1 - maxTeamSize) * 10000; // Increased penalty
       const penaltyT2Overcap = Math.max(0, hypotheticalNewT2 - maxTeamSize) * 10000; // Increased penalty
@@ -246,8 +243,6 @@ export const Scrambler = {
       }
 
       let combinedScore =
-        churnScore * 2 + // Reduced weight (tie-breaker only)
-        churnUnderPenalty + // Heavy penalty for missing churn target
         balanceScore + // Massive weight for numerical parity
         penaltyT1Overcap +
         penaltyT2Overcap + 
@@ -258,7 +253,7 @@ export const Scrambler = {
       return combinedScore;
     };
 
-    const MAX_ATTEMPTS = 160;
+    const MAX_ATTEMPTS = 500;
     const SURGICAL_START = Math.floor(MAX_ATTEMPTS * 0.5);    
     let bestScore = Infinity;
     let bestT1SwapCandidates = null;
@@ -311,11 +306,16 @@ export const Scrambler = {
       shuffle(localT2);
       
       const teamDiff = initialCounts.team1Count - initialCounts.team2Count;
-      let targetMoveFromT1 = Math.round((targetPlayersToMove / 2) + (teamDiff / 4));
-      let targetMoveFromT2 = Math.round((targetPlayersToMove / 2) - (teamDiff / 4));
       
-      targetMoveFromT1 = Math.max(0, targetMoveFromT1 + Math.floor(Math.random() * 5) - 2); // +/- 2 players
-      targetMoveFromT2 = Math.max(0, targetMoveFromT2 + Math.floor(Math.random() * 5) - 2); // +/- 2 players
+      // Randomize the base swap size from 0 up to targetPlayersToMove/2
+      const maxBaseSwap = Math.floor(targetPlayersToMove / 2);
+      const baseSwapSize = Math.floor(Math.random() * (maxBaseSwap + 1));
+      
+      let targetMoveFromT1 = Math.round(baseSwapSize + (teamDiff / 4));
+      let targetMoveFromT2 = Math.round(baseSwapSize - (teamDiff / 4));
+      
+      targetMoveFromT1 = Math.max(0, targetMoveFromT1 + Math.floor(Math.random() * 3) - 1); // +/- 1 player
+      targetMoveFromT2 = Math.max(0, targetMoveFromT2 + Math.floor(Math.random() * 3) - 1); // +/- 1 player
       
       targetMoveFromT1 = Math.min(
         targetMoveFromT1,
@@ -422,7 +422,7 @@ export const Scrambler = {
 
       
       const playersWithSquadStatus = playersInSquads.map((p) => {
-        const squad = currentWorkingSquads.find((s) => s.id === p.squadID);
+        const squad = currentWorkingSquads.find((s) => s.players.includes(p.eosID));
         return {
           ...p,
           isLocked: squad ? squad.locked : false // Default to not locked if squad not found (shouldn't happen)
@@ -454,7 +454,7 @@ export const Scrambler = {
           finalPlayerMovesMap
         );
         for (const player of playersToConsider) {
-          
+          if (player.isLocked) continue;
           if (getCurrentTeamCounts().team1Count > getCurrentTeamCounts().team2Count + 1) {
             finalPlayerMovesMap.set(player.eosID, { eosID: player.eosID, targetTeamID: '2' });
             updatePlayerTeam(player.eosID, '2');
@@ -480,7 +480,7 @@ export const Scrambler = {
           finalPlayerMovesMap
         );
         for (const player of playersToConsider) {
-          
+          if (player.isLocked) continue;
           if (getCurrentTeamCounts().team2Count > getCurrentTeamCounts().team1Count + 1) {
             finalPlayerMovesMap.set(player.eosID, { eosID: player.eosID, targetTeamID: '1' });
             updatePlayerTeam(player.eosID, '1');

@@ -1,286 +1,382 @@
 /**
- * Historical Match Replay Test
- *
- * Replays real matches from merged.jsonl through the scrambler.
- * Uses muBefore from match log as ELO source of truth.
- * Uses roundsPlayed from the ELO DB backup for veterancy.
- * Synthesises squads from team groupings (no squad data in log).
- *
- * Usage:
- *   node historical-scramble-test.js <path/to/merged.jsonl> <path/to/elo-db.json>
- *
- * Filters: non-invasion, non-draw, >= 80 players
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║           SCRAMBLER REAL DATA TEST SUITE                      ║
+ * ╚═══════════════════════════════════════════════════════════════╝
  */
 
 import { readFileSync } from 'fs';
-import { createRequire } from 'module';
-import Scrambler from '../utils/tb-scrambler.js';
+import { Scrambler } from '../utils/tb-scrambler.js';
 
-const require = createRequire(import.meta.url);
+// ─── Args ────────────────────────────────────────────────────────
+const ELO_DB    = process.argv[2];
+const MATCH_LOG = process.argv[3] ?? null;
 
-// --- Args ---
-const MATCH_LOG = process.argv[2];
-const ELO_DB    = process.argv[3];
-
-if (!MATCH_LOG || !ELO_DB) {
-  console.error('Usage: node historical-scramble-test.js <merged.jsonl> <elo-db.json>');
+if (!ELO_DB) {
+  console.error('Usage: node historical-scramble-test.js <elodb.json> [merged.jsonl]');
   process.exit(1);
 }
 
-// --- Load data ---
-const matches = readFileSync(MATCH_LOG, 'utf8')
-  .split('\n').filter(l => l.trim())
-  .map(l => { try { return JSON.parse(l); } catch { return null; } })
-  .filter(Boolean);
+// ─── Load ELO DB ─────────────────────────────────────────────────
+const eloContent = readFileSync(ELO_DB, 'utf8').trim();
+let dbRaw;
+try {
+  dbRaw = JSON.parse(eloContent);
+} catch (err) {
+  dbRaw = eloContent.split('\n').filter(l => l.trim()).map(l => JSON.parse(l));
+}
+const allPlayers = (dbRaw.players ?? dbRaw);
+console.log(`DB loaded: ${allPlayers.length} players`);
 
-const dbRaw   = JSON.parse(readFileSync(ELO_DB, 'utf8'));
-const db      = new Map((dbRaw.players ?? dbRaw).map(p => [p.eosID, p]));
-
-// --- Config ---
-const REGULAR_MIN     = 10;
-const SCRAMBLE_PCT    = 0.5;
-
-// --- Filter eligible matches ---
-const eligible = matches.filter(m =>
-  !m.gameMode?.toLowerCase().includes('invasion') &&
-  m.outcome !== 'draw' &&
-  m.players?.length >= 80
-);
-
-console.log(`Matches loaded: ${matches.length}`);
-console.log(`Eligible (non-invasion, non-draw, >=80 players): ${eligible.length}\n`);
-
-// --- Synthesise squads from a flat player list ---
-// Groups players into squads of realistic Squad sizes.
-// ~70% of players are squadded, ~30% solo (unassigned).
-// Some squads are randomly locked.
-function synthesiseSquads(players) {
-  const shuffled = [...players].sort(() => Math.random() - 0.5);
-  const squadded = shuffled.slice(0, Math.floor(shuffled.length * 0.7));
-  const solo     = shuffled.slice(squadded.length);
-
-  const squads = [];
-  let squadIdx = 1;
-  let i = 0;
-
-  while (i < squadded.length) {
-    // Squad sizes: roughly 4-9 players, weighted toward 6-8
-    const size = Math.min(
-      squadded.length - i,
-      Math.floor(Math.random() * 6) + 4
-    );
-    const members = squadded.slice(i, i + size);
-    const locked  = Math.random() < 0.3; // 30% chance locked
-
-    squads.push({
-      squadID: squadIdx++,
-      teamID:  members[0].teamID,
-      players: members.map(p => p.eosID),
-      locked
-    });
-    i += size;
-  }
-
-  // Solo players get null squadID
-  const allPlayers = [
-    ...squadded.map(p => ({ ...p, squadID: squads.find(s => s.players.includes(p.eosID))?.squadID ?? null })),
-    ...solo.map(p => ({ ...p, squadID: null }))
-  ];
-
-  return { squads, players: allPlayers };
+// ─── Load Match Log for Ratios ───────────────────────────────────
+let matchLog = [];
+if (MATCH_LOG) {
+  const content = readFileSync(MATCH_LOG, 'utf8');
+  matchLog = content.split('\n')
+    .filter(line => line.trim())
+    .map(line => JSON.parse(line));
 }
 
-// --- Transform into scrambler format (mirrors plugin logic) ---
-function transformForScrambler(players, squads) {
-  const squadPlayerMap = new Map();
-  for (const p of players) {
-    if (p.squadID) {
-      const key = `T${p.teamID}-S${p.squadID}`;
-      if (!squadPlayerMap.has(key)) squadPlayerMap.set(key, []);
-      squadPlayerMap.get(key).push(p.eosID);
+const avgRatios = matchLog.map(m => {
+  const t1Count = m.players.filter(p => p.teamID == 1).length;
+  return t1Count / m.players.length;
+}).filter(r => !isNaN(r));
+
+console.log(`Match log loaded: ${avgRatios.length} eligible matches for ratio sampling`);
+
+// ─── Helpers ─────────────────────────────────────────────────────
+
+function getStats(players, eloMap) {
+  const t1 = players.filter(p => p.teamID == '1' || p.teamID == 1);
+  const t2 = players.filter(p => p.teamID == '2' || p.teamID == 2);
+
+  const getAvgMu = (list) => {
+    if (list.length === 0) return 25.0;
+    const sum = list.reduce((acc, p) => acc + (eloMap.get(p.eosID)?.mu || 25), 0);
+    return sum / list.length;
+  };
+
+  const getVetRatio = (list) => {
+    if (list.length === 0) return 0;
+    const vets = list.filter(p => (eloMap.get(p.eosID)?.roundsPlayed || 0) >= 50);
+    return vets.length / list.length;
+  };
+
+  const mu1 = getAvgMu(t1);
+  const mu2 = getAvgMu(t2);
+  const v1  = getVetRatio(t1);
+  const v2  = getVetRatio(t2);
+
+  return {
+    t1Count: t1.length,
+    t2Count: t2.length,
+    numDiff: Math.abs(t1.length - t2.length),
+    mu1,
+    mu2,
+    muDiff: Math.abs(mu1 - mu2),
+    vet1: v1,
+    vet2: v2,
+    vetDiff: Math.abs(v1 - v2)
+  };
+}
+
+function groupBySquad(players) {
+  const squads = {};
+  players.forEach(p => {
+    const sId = p.squadID || 'unassigned';
+    if (!squads[sId]) {
+      squads[sId] = { 
+        squadID: p.squadID, 
+        id: p.squadID ? `T${p.teamID}-S${p.squadID}` : `Unassigned-${p.eosID}`, // Required by Scrambler
+        players: [],
+        locked: false // Default
+      };
+    }
+    squads[sId].players.push(p.eosID);
+    // If any player in the squad is locked, the whole squad is locked
+    if (p.squadLocked) squads[sId].locked = true; 
+  });
+  return Object.values(squads);
+}
+
+function checkLockedSquads(beforeT1, beforeT2, finalPlayers) {
+  const originalPlayers = [...beforeT1, ...beforeT2];
+  const lockedSquads = new Set(originalPlayers.filter(p => p.squadLocked).map(p => `${p.teamID}-${p.squadID}`));
+  
+  for (const sKey of lockedSquads) {
+    const [origTeam, sId] = sKey.split('-');
+    const members = originalPlayers.filter(p => p.teamID == origTeam && p.squadID == sId);
+    const finalTeams = new Set(members.map(m => finalPlayers.find(fp => fp.eosID === m.eosID)?.teamID));
+    if (finalTeams.size > 1) return false;
+  }
+  return true;
+}
+
+// ─── Session Builders ────────────────────────────────────────────
+
+const regulars    = allPlayers.filter(p => p.roundsPlayed >= 50);
+const provisional = allPlayers.filter(p => p.roundsPlayed < 50 && p.roundsPlayed > 0);
+const visitors    = allPlayers.filter(p => p.roundsPlayed === 0);
+
+console.log(`\nPlayer pools — Regulars: ${regulars.length} | Provisional: ${7337} | Visitors: ${visitors.length}`);
+const muRange = regulars.length > 0 ? {
+  min: Math.min(...regulars.map(p => p.mu)).toFixed(1),
+  max: Math.max(...regulars.map(p => p.mu)).toFixed(1)
+} : { min: 'NaN', max: 'NaN' };
+console.log(`Mu range: ${muRange.min} – ${muRange.max}\n`);
+
+function buildSession(count, regRatio = 0.3) {
+  const session = [];
+  const regCount = Math.floor(count * regRatio);
+  const provCount = count - regCount;
+
+  const shuffledRegs = [...regulars].sort(() => 0.5 - Math.random());
+  const shuffledProv = [...provisional].sort(() => 0.5 - Math.random());
+
+  session.push(...shuffledRegs.slice(0, regCount));
+  session.push(...shuffledProv.slice(0, provCount));
+
+  // Assign to realistic squads (size 2-9)
+  let squadCounter = 1;
+  let teamCounter = 1;
+  let i = 0;
+  const structured = [];
+
+  while (i < session.length) {
+    const size = Math.floor(Math.random() * 8) + 2;
+    const squadPlayers = session.slice(i, i + size);
+    const isLocked = Math.random() < 0.3;
+    const sId = squadCounter++;
+
+    // NEW: Assign team based on whether we are in the first or second half of the player list
+    const currentTeam = (i < session.length / 2) ? 1 : 2;
+
+    squadPlayers.forEach(p => {
+      structured.push({
+        eosID: p.eosID,
+        name: p.name,
+        teamID: currentTeam, 
+        squadID: sId,
+        squadLocked: isLocked
+      });
+    });
+
+    i += size;
+    if (squadCounter > 10) {
+        teamCounter = 2;
+        squadCounter = 1;
     }
   }
-
-  const tfSquads = squads.map(s => ({
-    id:     `T${s.teamID}-S${s.squadID}`,
-    teamID: String(s.teamID),
-    players: squadPlayerMap.get(`T${s.teamID}-S${s.squadID}`) ?? [],
-    locked: s.locked
-  })).filter(s => s.players.length > 0);
-
-  const tfPlayers = players.map(p => ({
-    eosID:   p.eosID,
-    teamID:  String(p.teamID),
-    squadID: p.squadID ? `T${p.teamID}-S${p.squadID}` : null
-  }));
-
-  return { squads: tfSquads, players: tfPlayers };
+  return structured;
 }
 
-// --- Stats helpers ---
-const avg = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
-
-function getTeamStats(players, eloMap, roundsMap) {
-  const t1 = players.filter(p => String(p.teamID) === '1');
-  const t2 = players.filter(p => String(p.teamID) === '2');
-  const muAvg = team => avg(team.map(p => eloMap.get(p.eosID)?.mu ?? 25));
-  const regs  = team => team.filter(p => (roundsMap.get(p.eosID) ?? 0) >= REGULAR_MIN).length;
-  const vetRatio = team => team.length > 0 ? regs(team) / team.length : 0;
-  return {
-    t1MuAvg:   muAvg(t1),
-    t2MuAvg:   muAvg(t2),
-    muDiff:    Math.abs(muAvg(t1) - muAvg(t2)),
-    t1VetRatio: vetRatio(t1),
-    t2VetRatio: vetRatio(t2),
-    vetDiff:   Math.abs(vetRatio(t1) - vetRatio(t2)),
-    t1Count:   t1.length,
-    t2Count:   t2.length,
-  };
+function assignTeams(players, ratio) {
+    const t1Limit = Math.floor(players.length * ratio);
+    return {
+        t1Players: players.slice(0, t1Limit).map(p => ({...p, teamID: 1})),
+        t2Players: players.slice(t1Limit).map(p => ({...p, teamID: 2}))
+    };
 }
 
-// --- Main test loop ---
-async function run() {
-  const results = {
-    total: 0,
-    muImproved: 0,
-    muWorsened: 0,
-    vetImproved: 0,
-    vetWorsened: 0,
-    balancedFinal: 0, // numeric diff <= 2
-    lockedBroken: 0,
-    totalMuBefore: 0,
-    totalMuAfter: 0,
-    totalVetBefore: 0,
-    totalVetAfter: 0,
-    totalDuration: 0,
-    totalChurn: 0,
-  };
+// ─── Scenario Runner ─────────────────────────────────────────────
 
-  const SAMPLE = Math.min(eligible.length, 50); // run 50 matches
-  const selected = eligible.slice(0, SAMPLE);
+async function runScenario(name, { t1Players, t2Players, note = '' }) {
+  const eloMap = new Map(allPlayers.map(p => [p.eosID, p]));
+  const before = getStats([...t1Players, ...t2Players], eloMap);
+  
+  const team1Snapshot = { team: '1', squads: groupBySquad(t1Players) };
+  const team2Snapshot = { team: '2', squads: groupBySquad(t2Players) };
 
-  console.log(`Running ${SAMPLE} historical matches through scrambler...\n`);
+  const startTime = Date.now();
+  const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+  players: [...t1Players, ...t2Players],
+  squads: [
+    ...groupBySquad(t1Players).map(s => ({ ...s, teamID: '1' })),
+    ...groupBySquad(t2Players).map(s => ({ ...s, teamID: '2' }))
+  ],
+  scramblePercentage: 1,
+  winStreakTeam: 1,
+  eloMap
+});
+  const duration = Date.now() - startTime;
 
-  for (const match of selected) {
-    const matchPlayers = match.players;
+  const tfPlayers = [...t1Players, ...t2Players].map(p => {
+    const move = swapPlan.find(m => m.eosID === p.eosID);
+    return move ? { ...p, teamID: move.targetTeamID } : p;
+  });
 
-    // Build eloMap from muBefore in match log
-    const eloMap = new Map(matchPlayers.map(p => [
-      p.eosID,
-      {
-        mu:           p.muBefore,
-        sigma:        p.sigmaBefore,
-        roundsPlayed: db.get(p.eosID)?.roundsPlayed ?? 0
+  const after = getStats(tfPlayers, eloMap);
+  const lockedIntact = checkLockedSquads(t1Players, t2Players, tfPlayers);
+
+  console.log(`\n── ${name} ${note ? `(${note})` : ''}`);
+  console.log(`   Players: T1=${before.t1Count} T2=${before.t2Count} | Locked squads: ${[...t1Players, ...t2Players].filter(p => p.squadLocked).length} | Moves: ${swapPlan.length} | Time: ${duration}ms`);
+  
+  const muStatus = after.muDiff <= before.muDiff ? '✅' : '⚠️ ';
+  const vetStatus = after.vetDiff <= before.vetDiff ? '✅' : (after.vetDiff <= 0.05 ? '──' : '⚠️ ');
+  const numStatus = after.numDiff <= 2 ? '✅' : '❌';
+
+  console.log(`   ELO diff:  ${before.muDiff.toFixed(3)} → ${after.muDiff.toFixed(3)}  ${muStatus}`);
+  console.log(`   Vet diff:  ${before.vetDiff.toFixed(3)} → ${after.vetDiff.toFixed(3)}  ${vetStatus}`);
+  console.log(`   Num diff:  ${before.numDiff} → ${after.numDiff}  ${numStatus}`);
+  console.log(`   Locked:    ${lockedIntact ? '✅ intact' : '❌ BROKEN'}`);
+
+  if (after.muDiff > before.muDiff || after.numDiff > 2) {
+    console.log(`   \x1b[33m[DEBUG: Regressive Case Analysis]\x1b[0m`);
+    const movedSquads = new Map();
+    swapPlan.forEach(m => {
+      // String conversion prevents TypeErrors if IDs are mixed types
+      const p = [...t1Players, ...t2Players].find(tp => String(tp.eosID) === String(m.eosID));
+      
+      // Safety check: if the player isn't found, skip to the next move
+      if (!p) return;
+
+      const sId = p.squadID ? `T${p.teamID}-S${p.squadID}` : `T${p.teamID}-Unassigned`;
+      if (!movedSquads.has(sId)) {
+        movedSquads.set(sId, { mu: 0, count: 0, to: m.targetTeamID, isLocked: p.squadLocked });
       }
-    ]));
-
-    // Build roundsMap for veteran penalty
-    const roundsMap = new Map(matchPlayers.map(p => [
-      p.eosID,
-      db.get(p.eosID)?.roundsPlayed ?? 0
-    ]));
-
-    // Synthesise squads (per team)
-    const t1Players = matchPlayers.filter(p => p.teamID === 1);
-    const t2Players = matchPlayers.filter(p => p.teamID === 2);
-
-    const { squads: t1Squads, players: t1WithSquads } = synthesiseSquads(t1Players);
-    const { squads: t2Squads, players: t2WithSquads } = synthesiseSquads(t2Players);
-
-    const allPlayers = [...t1WithSquads, ...t2WithSquads];
-    const allSquads  = [...t1Squads, ...t2Squads];
-
-    const { squads: tfSquads, players: tfPlayers } = transformForScrambler(allPlayers, allSquads);
-
-    // Pre-scramble stats
-    const before = getTeamStats(tfPlayers, eloMap, roundsMap);
-
-    // Run scrambler
-    const winStreak = match.outcome === 'team1win' ? 1 : 2;
-    const startTime = Date.now();
-
-    const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
-      squads:             tfSquads,
-      players:            tfPlayers,
-      winStreakTeam:      winStreak,
-      scramblePercentage: SCRAMBLE_PCT,
-      eloMap
+      const sData = movedSquads.get(sId);
+      sData.mu += (eloMap.get(m.eosID)?.mu || 25);
+      sData.count++;
     });
 
+    console.log(`     Major Movements:`);
+    movedSquads.forEach((data, id) => {
+      if (data.count > 1 || data.mu > 30) {
+        console.log(`      • ${data.isLocked ? '[LOCKED]' : '[OPEN]'} ${id}: ${data.count} players | Total Mu: ${data.mu.toFixed(1)} | To T${data.to}`);
+      }
+    });
+    console.log(`     Mass Balance: T1 Sum Mu: ${(after.mu1 * after.t1Count).toFixed(1)} | T2 Sum Mu: ${(after.mu2 * after.t2Count).toFixed(1)}`);
+  }
+
+  return { before, after, lockedIntact, time: duration, moves: swapPlan.length };
+}
+
+async function runBulk(name, generator, runs = 200) {
+  const results = {
+    total: 0, balanced: 0, eloImproved: 0, vetImproved: 0, lockedBroken: 0,
+    totalTime: 0, totalMoves: 0, totalMuBefore: 0, totalMuAfter: 0,
+    totalVetBefore: 0, totalVetAfter: 0
+  };
+
+  process.stdout.write(`🔁 Bulk: ${name} (${runs} runs) `);
+
+  for (let i = 0; i < runs; i++) {
+    const { t1Players, t2Players } = generator();
+    const eloMap = new Map(allPlayers.map(p => [p.eosID, p]));
+    
+    const startTime = Date.now();
+    const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+  players: [...t1Players, ...t2Players],
+  squads: [
+    ...groupBySquad(t1Players).map(s => ({ ...s, teamID: '1' })),
+    ...groupBySquad(t2Players).map(s => ({ ...s, teamID: '2' }))
+  ],
+  scramblePercentage: 1,
+  winStreakTeam: 1,
+  eloMap
+});
     const duration = Date.now() - startTime;
 
-    // Apply swap plan to get final player list
-    const finalPlayers = tfPlayers.map(p => {
+    const finalPlayers = [...t1Players, ...t2Players].map(p => {
       const move = swapPlan.find(m => m.eosID === p.eosID);
       return move ? { ...p, teamID: move.targetTeamID } : p;
     });
 
-    // Post-scramble stats
-    const after = getTeamStats(finalPlayers, eloMap, roundsMap);
+    const before = getStats([...t1Players, ...t2Players], eloMap);
+    const after = getStats(finalPlayers, eloMap);
+    const lockedIntact = checkLockedSquads(t1Players, t2Players, finalPlayers);
 
-    // Check locked squads
-    let brokenLocked = false;
-    for (const squad of tfSquads) {
-      if (!squad.locked) continue;
-      const moved = squad.players.filter(pid => swapPlan.some(m => m.eosID === pid));
-      if (moved.length > 0 && moved.length < squad.players.length) {
-        brokenLocked = true;
-        break;
-      }
-    }
-
-    // Aggregate
     results.total++;
-    results.totalDuration += duration;
-    results.totalChurn    += swapPlan.length;
-    results.totalMuBefore  += before.muDiff;
-    results.totalMuAfter   += after.muDiff;
-    results.totalVetBefore += before.vetDiff;
-    results.totalVetAfter  += after.vetDiff;
-
-    if (after.muDiff  < before.muDiff)  results.muImproved++;
-    if (after.muDiff  > before.muDiff)  results.muWorsened++;
+    if (after.numDiff <= 2) results.balanced++;
+    if (after.muDiff < before.muDiff) results.eloImproved++;
     if (after.vetDiff < before.vetDiff) results.vetImproved++;
-    if (after.vetDiff > before.vetDiff) results.vetWorsened++;
-    if (Math.abs(after.t1Count - after.t2Count) <= 2) results.balancedFinal++;
-    if (brokenLocked) results.lockedBroken++;
+    if (!lockedIntact) results.lockedBroken++;
+    
+    results.totalTime += duration;
+    results.totalMoves += swapPlan.length;
+    results.totalMuBefore += before.muDiff;
+    results.totalMuAfter += after.muDiff;
+    results.totalVetBefore += before.vetDiff;
+    results.totalVetAfter += after.vetDiff;
 
-    process.stdout.write('■');
+    if (i % (runs/10) === 0) process.stdout.write('■');
   }
 
-  process.stdout.write('\n\n');
-
-  const n = results.total;
-  const avgMuBefore  = results.totalMuBefore  / n;
-  const avgMuAfter   = results.totalMuAfter   / n;
-  const avgVetBefore = results.totalVetBefore / n;
-  const avgVetAfter  = results.totalVetAfter  / n;
-
-  console.log('════════════════════════════════════════');
-  console.log('  HISTORICAL SCRAMBLE TEST RESULTS');
-  console.log('════════════════════════════════════════');
-  console.log(`Matches run:          ${n}`);
-  console.log(`Avg execution time:   ${(results.totalDuration / n).toFixed(1)}ms`);
-  console.log(`Avg players moved:    ${(results.totalChurn / n).toFixed(1)}`);
-  console.log();
-  console.log('--- NUMERIC BALANCE ---');
-  console.log(`✅ Final diff <= 2:   ${results.balancedFinal} / ${n} (${(100 * results.balancedFinal / n).toFixed(1)}%)`);
-  console.log();
-  console.log('--- ELO BALANCE (global mean mu diff) ---');
-  console.log(`Avg before: ${avgMuBefore.toFixed(3)}`);
-  console.log(`Avg after:  ${avgMuAfter.toFixed(3)}`);
-  console.log(`Improved:   ${results.muImproved} / ${n} (${(100 * results.muImproved / n).toFixed(1)}%)`);
-  console.log(`Worsened:   ${results.muWorsened} / ${n} (${(100 * results.muWorsened / n).toFixed(1)}%)`);
-  console.log();
-  console.log('--- VETERAN PARITY (ratio diff) ---');
-  console.log(`Avg before: ${avgVetBefore.toFixed(3)}`);
-  console.log(`Avg after:  ${avgVetAfter.toFixed(3)}`);
-  console.log(`Improved:   ${results.vetImproved} / ${n} (${(100 * results.vetImproved / n).toFixed(1)}%)`);
-  console.log(`Worsened:   ${results.vetWorsened} / ${n} (${(100 * results.vetWorsened / n).toFixed(1)}%)`);
-  console.log();
-  console.log('--- INTEGRITY ---');
-  console.log(`🔓 Locked squads broken: ${results.lockedBroken} / ${n}`);
-  console.log('════════════════════════════════════════');
+  console.log(`\n   Balanced (diff<=2):   ${results.balanced}/${runs} (${(results.balanced/runs*100).toFixed(1)}%)`);
+  console.log(`   ELO improved:         ${results.eloImproved}/${runs} (${(results.eloImproved/runs*100).toFixed(1)}%) | Avg ${ (results.totalMuBefore/runs).toFixed(3) } → ${ (results.totalMuAfter/runs).toFixed(3) }`);
+  console.log(`   Vet improved:         ${results.vetImproved}/${runs} (${(results.vetImproved/runs*100).toFixed(1)}%) | Avg ${ (results.totalVetBefore/runs).toFixed(3) } → ${ (results.totalVetAfter/runs).toFixed(3) }`);
+  console.log(`   Locked broken:        ${results.lockedBroken}/${runs}`);
+  console.log(`   Avg time: ${(results.totalTime/runs).toFixed(1)}ms | Avg moves: ${(results.totalMoves/runs).toFixed(1)}\n`);
 }
 
-run().catch(console.error);
+// ─── Main Execution ─────────────────────────────────────────────
+
+(async function main() {
+  console.log('════════════════════════════════════════════════════════');
+  console.log('  SCRAMBLER REAL DATA TEST SUITE');
+  console.log('════════════════════════════════════════════════════════');
+
+  console.log('\n▶ SCENARIO TESTS (single runs, verbose output)');
+  console.log('────────────────────────────────────────────────');
+
+  const randRatio = () => avgRatios.length > 0 ? avgRatios[Math.floor(Math.random() * avgRatios.length)] : 0.5;
+
+  {
+    const session = buildSession(100);
+    const { t1Players, t2Players } = assignTeams(session, 0.51);
+    await runScenario('Balanced Session', { t1Players, t2Players, note: 'ratio 0.51' });
+  }
+
+  {
+    const session = buildSession(100);
+    const { t1Players, t2Players } = assignTeams(session, 0.62);
+    await runScenario('Imbalanced Session 62/38', { t1Players, t2Players });
+  }
+
+  {
+    const session = buildSession(100);
+    const regs = session.filter(p => (allPlayers.find(ap => ap.eosID === p.eosID)?.roundsPlayed || 0) >= 50);
+    const others = session.filter(p => !regs.includes(p));
+    const t1Players = [...regs, ...others.slice(0, 20)].map(p => ({...p, teamID: 1}));
+    const t2Players = others.slice(20).map(p => ({...p, teamID: 2}));
+    await runScenario('Veteran Stack', { t1Players, t2Players, note: `T1 regs=${regs.length} T2 regs=0` });
+  }
+
+  {
+    const session = buildSession(100);
+    const sorted = [...session].sort((a,b) => (allPlayers.find(p=>p.eosID===b.eosID)?.mu||25) - (allPlayers.find(p=>p.eosID===a.eosID)?.mu||25));
+    const t1Players = sorted.slice(0, 50).map(p => ({...p, teamID: 1}));
+    const t2Players = sorted.slice(50).map(p => ({...p, teamID: 2}));
+    const b = getStats([...t1Players, ...t2Players], new Map(allPlayers.map(p=>[p.eosID, p])));
+    await runScenario('ELO Stack', { t1Players, t2Players, note: `T1 avg=${b.mu1.toFixed(1)} T2 avg=${b.mu2.toFixed(1)}` });
+  }
+
+  {
+    const session = buildSession(102);
+    const { t1Players, t2Players } = assignTeams(session, 0.52);
+    await runScenario('Max Capacity (102 players)', { t1Players, t2Players });
+  }
+
+  console.log('\n▶ BULK TESTS (200 runs each)');
+  console.log('────────────────────────────────────────────────');
+
+  await runBulk('Random realistic sessions', () => {
+    const count = Math.floor(Math.random() * 42) + 60;
+    return assignTeams(buildSession(count), randRatio());
+  });
+
+  await runBulk('Veteran-skewed sessions', () => {
+    const count = Math.floor(Math.random() * 42) + 60;
+    const session = buildSession(count, 0.5);
+    const regs = session.filter(p => (allPlayers.find(ap => ap.eosID === p.eosID)?.roundsPlayed || 0) >= 50);
+    const others = session.filter(p => !regs.includes(p));
+    // Manual team assignment to create the skew
+    return {
+      t1Players: [...regs, ...others.slice(0, 10)].map(p => ({...p, teamID: 1})),
+      t2Players: others.slice(10).map(p => ({...p, teamID: 2}))
+    };
+  });
+
+  console.log('════════════════════════════════════════════════════════');
+  console.log('  ALL TESTS COMPLETE');
+  console.log('════════════════════════════════════════════════════════');
+})();
