@@ -222,7 +222,7 @@ export const Scrambler = {
 
         const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : defaultMu;
         const globalDiff = Math.abs(avg(t1Elos) - avg(t2Elos));
-        eloBalancePenalty = Math.min(globalDiff * 25, 480);
+        eloBalancePenalty = Math.min(globalDiff * 50, 480);
       }
 
       // --- VETERAN PARITY PENALTY ---
@@ -240,7 +240,9 @@ export const Scrambler = {
         const movingToT1 = new Set(selectedT2Squads.flatMap(s => s.players));
         const reg1 = countRegs('1', movingToT2, movingToT1);
         const reg2 = countRegs('2', movingToT1, movingToT2);
-        veteranPenalty = Math.abs(reg1 - reg2) * 15;
+        const vet1 = hypotheticalNewT1 > 0 ? reg1 / hypotheticalNewT1 : 0;
+        const vet2 = hypotheticalNewT2 > 0 ? reg2 / hypotheticalNewT2 : 0;
+        veteranPenalty = Math.abs(vet1 - vet2) * 300;
       }
 
       let combinedScore =
