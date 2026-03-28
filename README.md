@@ -101,7 +101,7 @@ Add to your `config.json`:
   "invasionDefenceTeamThreshold": 650,
   "scrambleAnnouncementDelay": 12,
   "scramblePercentage": 0.5,
-  "changeTeamRetryInterval": 200,
+  "changeTeamRetryInterval": 150,
   "maxScrambleCompletionTime": 15000,
   "showWinStreakMessages": true,
   "warnOnSwap": true,
@@ -195,7 +195,7 @@ Advanced:
 useEloForBalance               - Use EloTracker ratings to influence team balance during scrambles. Requires EloTracker plugin.
 
 Debug & Dev:
-devMode                        - Enable dev mode. Allows anyone (regardless of admin priviledges) to run chat commands in-game.
+devMode                        - Enable dev mode. Allows anyone (regardless of admin privileges) to run chat commands in-game.
 ```
 
 ## Game Mode Support

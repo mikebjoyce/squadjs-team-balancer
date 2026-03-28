@@ -16,25 +16,45 @@ import Logger from '../../core/logger.js';
 const { DataTypes } = Sequelize;
 
 export default class TBDatabase {
+  static STALE_CUTOFF_MS = 2.5 * 60 * 60 * 1000;
+
   constructor(server, options, connectors) {
     this.sequelize = connectors && connectors.sqlite;
     this.TeamBalancerStateModel = null;
   }
 
   async _executeWithRetry(logicFn, attempts = 5) {
-    for (let i = 1; i <= attempts; i++) {
-      try {
-        return await logicFn();
-      } catch (err) {
-        const isLocked = err.message && (err.message.includes('SQLITE_BUSY') || err.message.includes('database is locked'));
-        if (isLocked && i < attempts) {
-          const jitter = Math.random() * 500;
-          await new Promise(resolve => setTimeout(resolve, 200 + jitter));
-        } else {
-          throw err;
+    const runAttempt = async () => {
+      for (let i = 1; i <= attempts; i++) {
+        try {
+          return await logicFn();
+        } catch (err) {
+          const isLocked = err.message && (
+            err.message.includes('SQLITE_BUSY') || 
+            err.message.includes('database is locked') ||
+            err.name === 'SequelizeTimeoutError'
+          );
+          if (isLocked && i < attempts) {
+            const jitter = Math.random() * 500;
+            await new Promise(resolve => setTimeout(resolve, 200 + jitter));
+          } else {
+            throw err;
+          }
         }
       }
+    };
+
+    if (this.sequelize && typeof this.sequelize.getDialect === 'function' && this.sequelize.getDialect() === 'sqlite') {
+      if (!this.sequelize._squadjs_mutex) {
+        this.sequelize._squadjs_mutex = Promise.resolve();
+      }
+      
+      const resultPromise = this.sequelize._squadjs_mutex.then(() => runAttempt());
+      this.sequelize._squadjs_mutex = resultPromise.catch(() => {});
+      return resultPromise;
     }
+
+    return runAttempt();
   }
 
   async initDB() {
@@ -77,8 +97,7 @@ export default class TBDatabase {
           transaction: t
         });
 
-        const staleCutoff = 2.5 * 60 * 60 * 1000;
-        const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > staleCutoff;
+        const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > TBDatabase.STALE_CUTOFF_MS;
 
         if (!isStale) {
           Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);

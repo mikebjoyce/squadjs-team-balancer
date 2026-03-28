@@ -128,7 +128,8 @@ const CommandHandlers = {
           ? `${this.getTeamName(this.winStreakTeam)} has ${this.winStreakCount} dominant win(s)`
           : `No current win streak`;
 
-      const eloStatus = this.options?.useEloForBalance ? (this.eloTracker ? 'Active' : 'Unavailable') : 'Disabled';
+      const eloTrackerPlugin = this.server.plugins?.find(p => p.constructor.name === 'EloTracker');
+      const eloStatus = this.options?.useEloForBalance ? (eloTrackerPlugin ? 'Active' : 'Unavailable') : 'Disabled';
 
       // Formatted response for !teambalancer
       const infoMsg = [
@@ -289,7 +290,8 @@ const CommandHandlers = {
             // Layer
             const currentLayer = this.server.currentLayer?.name || 'Unknown';
 
-            const eloStatus = this.options?.useEloForBalance ? (this.eloTracker ? 'Active' : 'Unavailable') : 'Disabled';
+            const eloTrackerPlugin = this.server.plugins?.find(p => p.constructor.name === 'EloTracker');
+            const eloStatus = this.options?.useEloForBalance ? (eloTrackerPlugin ? 'Active' : 'Unavailable') : 'Disabled';
 
             // Formatted response for !teambalancer status
             const statusMsg = [

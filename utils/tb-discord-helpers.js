@@ -48,7 +48,8 @@ export const DiscordHelpers = {
     const t1Count = players.filter((p) => p.teamID === 1).length;
     const t2Count = players.filter((p) => p.teamID === 2).length;
 
-    const eloStatus = tb.options?.useEloForBalance ? (tb.eloTracker ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
+    const eloTrackerPlugin = tb.server.plugins?.find(p => p.constructor.name === 'EloTracker');
+    const eloStatus = tb.options?.useEloForBalance ? (eloTrackerPlugin ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
 
     const embed = {
       color: 0x3498db,
@@ -82,7 +83,8 @@ export const DiscordHelpers = {
       ? `${tb.swapExecutor.pendingPlayerMoves.size} pending moves`
       : 'None';
 
-    const eloStatus = tb.options?.useEloForBalance ? (tb.eloTracker ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
+    const eloTrackerPlugin = tb.server.plugins?.find(p => p.constructor.name === 'EloTracker');
+    const eloStatus = tb.options?.useEloForBalance ? (eloTrackerPlugin ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
 
     // Determine color based on diagnostics if present
     let color = 0x3498db;

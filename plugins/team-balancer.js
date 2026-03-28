@@ -55,7 +55,7 @@
  * useEloForBalance               - Use EloTracker ratings to influence team balance during scrambles. Requires EloTracker plugin to be active.
  *
  * Dev:
- * devMode                        - Enable dev mode. Allows anyone (regardless of admin priviledges) to run chat commands in-game.
+ * devMode                        - Enable dev mode. Allows anyone (regardless of admin privileges) to run chat commands in-game.
  *
  * ─── CONFIGURATION EXAMPLE ──────────────────────────────────────
  
@@ -80,6 +80,7 @@
   "database": "sqlite",
   "enableWinStreakTracking": true,
   "maxWinStreak": 2,
+  "maxConsecutiveWinsWithoutThreshold": 0,
   "enableSingleRoundScramble": false,
   "singleRoundScrambleThreshold": 250,
   "minTicketsToCountAsDominantWin": 150,
@@ -87,7 +88,7 @@
   "invasionDefenceTeamThreshold": 650,
   "scrambleAnnouncementDelay": 12,
   "scramblePercentage": 0.5,
-  "changeTeamRetryInterval": 200,
+  "changeTeamRetryInterval": 50,
   "maxScrambleCompletionTime": 15000,
   "showWinStreakMessages": true,
   "warnOnSwap": true,
@@ -121,9 +122,7 @@ import fs from 'fs';
 import path from 'path';
 
 export default class TeamBalancer extends BasePlugin {
-  static get version() {
-    return '2.1.2';
-  }
+  static version = '2.1.3';
 
   static get description() {
     return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';
@@ -198,7 +197,7 @@ export default class TeamBalancer extends BasePlugin {
         type: 'number'
       },
       changeTeamRetryInterval: {
-        default: 200,
+        default: 150,
         type: 'number'
       },      
       maxScrambleCompletionTime: {
@@ -275,9 +274,9 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 1, `scrambleAnnouncementDelay (${this.options.scrambleAnnouncementDelay}s) too low. Enforcing minimum 10 seconds.`);
       this.options.scrambleAnnouncementDelay = 10;
     }
-    if (this.options.changeTeamRetryInterval < 200) {
-      Logger.verbose('TeamBalancer', 1, `changeTeamRetryInterval (${this.options.changeTeamRetryInterval}ms) too low. Enforcing minimum 200ms.`);
-      this.options.changeTeamRetryInterval = 200;
+    if (this.options.changeTeamRetryInterval < 50) {
+      Logger.verbose('TeamBalancer', 1, `changeTeamRetryInterval (${this.options.changeTeamRetryInterval}ms) too low. Enforcing minimum 50ms.`);
+      this.options.changeTeamRetryInterval = 50;
     }
     if (this.options.maxScrambleCompletionTime < 5000) {
       Logger.verbose('TeamBalancer', 1, `maxScrambleCompletionTime (${this.options.maxScrambleCompletionTime}ms) too low. Enforcing minimum 5000ms.`);

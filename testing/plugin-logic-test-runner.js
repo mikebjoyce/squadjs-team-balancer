@@ -93,7 +93,7 @@ const defaultTestOptions = {
   debugLogs: false,
   devMode: true, // To simplify command handling if needed
   useGenericTeamNamesInBroadcasts: true, // For predictable broadcast messages
-  changeTeamRetryInterval: 200,
+  changeTeamRetryInterval: 150,
   maxScrambleCompletionTime: 5000,
   warnOnSwap: false,
   discordClient: null,

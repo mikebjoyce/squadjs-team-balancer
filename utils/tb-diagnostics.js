@@ -40,7 +40,7 @@ export class TBDiagnostics {
 
       // 2. Write a dummy value
       const testValue = 999;
-      await this.tb.db.saveState(initialState.winStreakTeam, testValue);
+      await this.tb.db.saveState(initialState.winStreakTeam, testValue, initialState.consecutiveWinsTeam, initialState.consecutiveWinsCount);
 
       // 3. Read back and verify
       const updatedState = await this.tb.db.TeamBalancerStateModel.findByPk(1);
@@ -49,7 +49,7 @@ export class TBDiagnostics {
       }
 
       // 4. Restore original value
-      await this.tb.db.saveState(initialState.winStreakTeam, originalCount);
+      await this.tb.db.saveState(initialState.winStreakTeam, originalCount, initialState.consecutiveWinsTeam, initialState.consecutiveWinsCount);
       const restoredState = await this.tb.db.TeamBalancerStateModel.findByPk(1);
       if (restoredState.winStreakCount !== originalCount) {
         throw new Error('Could not restore original database state.');
