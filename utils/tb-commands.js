@@ -82,6 +82,7 @@ const CommandHandlers = {
       scrambleCompleteMessage: 'Balance has been restored.',
       scrambleFailedMessage: 'Scramble failed! No valid solution found.',
       playerScrambledWarning: "You've been scrambled.", 
+      seedScrambleAnnouncement: 'Seed match complete! Scrambling teams in {delay}s...',
 
       system: {
         trackingEnabled: 'Team Balancer has been enabled.',

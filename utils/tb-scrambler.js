@@ -239,9 +239,18 @@ export const Scrambler = {
 
         const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : defaultMu;
         const globalDiff = Math.abs(avg(t1Elos) - avg(t2Elos));
-        const eloBalancePenalty = Math.min(globalDiff * 50, 480);
+        
+        let eloBalancePenalty = 0;
+        if (globalDiff <= 0.2) {
+          eloBalancePenalty = globalDiff * 10;
+        } else if (globalDiff <= 0.5) {
+          eloBalancePenalty = 2.0 + ((globalDiff - 0.2) * 25);
+        } else {
+          eloBalancePenalty = 9.5 + ((globalDiff - 0.5) * 50);
+        }
+        eloBalancePenalty = Math.min(eloBalancePenalty, 480);
+        
         combinedScore += eloBalancePenalty;
-
         // --- VETERAN PARITY SCORING ---
         const countRegs = (teamID, movingOut, movingIn) => {
           const staying = workingPlayers

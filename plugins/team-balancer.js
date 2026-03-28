@@ -117,6 +117,8 @@ import CommandHandlers from '../utils/tb-commands.js';
 import TBDatabase from '../utils/tb-database.js';
 import Logger from '../../core/logger.js';
 import { TBDiagnostics } from '../utils/tb-diagnostics.js';
+import fs from 'fs';
+import path from 'path';
 
 export default class TeamBalancer extends BasePlugin {
   static get version() {
@@ -142,6 +144,21 @@ export default class TeamBalancer extends BasePlugin {
       enableWinStreakTracking: {
         default: true,
         type: 'boolean'
+      },
+      ignoredGameModes: {
+        default: ['Seed', 'Jensen'],
+        type: 'array',
+        description: 'Game modes or map names to ignore for win streak tracking.'
+      },
+      enableSeedAutoScramble: {
+        default: true,
+        type: 'boolean',
+        description: 'Automatically scramble teams when a Seed match ends and population threshold is met.'
+      },
+      seedAutoScramblePlayerThreshold: {
+        default: 80,
+        type: 'number',
+        description: 'Player count threshold required at the end of a Seed match to trigger an auto-scramble.'
       },
       maxWinStreak: {
         default: 2,
@@ -244,6 +261,11 @@ export default class TeamBalancer extends BasePlugin {
       devMode: {
         default: false,
         type: 'boolean'
+      },
+      reportLogPath: {
+        default: 'team-balancer-reports.jsonl',
+        type: 'string',
+        description: 'Path to a JSONL file where round reports will be logged.'
       }
     };
   }
@@ -311,8 +333,24 @@ export default class TeamBalancer extends BasePlugin {
     
     this._gameInfoPollingInterval = null;
     this.gameModeCached = null;
+    this.layerNameCached = null;
     this.cachedAbbreviations = {};
     this.eloTracker = null;
+  }
+
+  isIgnoredMatch() {
+    const gameMode = this.gameModeCached?.toLowerCase() || '';
+    const layerName = this.layerNameCached?.toLowerCase() || '';
+    return this.options.ignoredGameModes.some(m => {
+      const mode = m.toLowerCase();
+      return gameMode.includes(mode) || layerName.includes(mode);
+    });
+  }
+
+  isSeedMatch() {
+    const gameMode = this.gameModeCached?.toLowerCase() || '';
+    const layerName = this.layerNameCached?.toLowerCase() || '';
+    return gameMode.includes('seed') || layerName.includes('seed');
   }
   async mount() {
     if (this._isMounted) {
@@ -432,7 +470,8 @@ export default class TeamBalancer extends BasePlugin {
         const layer = await this.server.currentLayer;
         if (layer && layer.gamemode) {
           this.gameModeCached = layer.gamemode;
-          Logger.verbose('TeamBalancer', 4, `Game mode resolved and cached: ${this.gameModeCached}`);
+          this.layerNameCached = layer.name;
+          Logger.verbose('TeamBalancer', 4, `Game mode/layer resolved and cached: ${this.gameModeCached} / ${this.layerNameCached}`);
           if (this.gameInfoPollInterval) {
             clearInterval(this.gameInfoPollInterval);
             this.gameInfoPollInterval = null;
@@ -591,6 +630,12 @@ export default class TeamBalancer extends BasePlugin {
       case 'off':
         await this.discordCommandToggle(message, subcommand);
         break;
+      case 'export':
+        await this.discordCommandExport(message);
+        break;
+      case 'clear':
+        await this.discordCommandClear(message);
+        break;
       case 'help':
         const helpEmbed = {
           color: 0x3498db,
@@ -600,7 +645,9 @@ export default class TeamBalancer extends BasePlugin {
             { name: 'Plugin Commands', value: '`!teambalancer status` - Show current state & win streak\n' +
               '`!teambalancer diag` - Run diagnostics & dry run\n' +
               '`!teambalancer on` - Enable win streak tracking\n' +
-              '`!teambalancer off` - Disable win streak tracking' },
+              '`!teambalancer off` - Disable win streak tracking\n' +
+              '`!teambalancer export` - Export the round reports JSONL file\n' +
+              '`!teambalancer clear` - Clear the round reports log file' },
             { name: 'Scramble Commands', value: '`!scramble` - Trigger scramble (with countdown)\n' +
               '`!scramble now` - Trigger immediate scramble\n' +
               '`!scramble dry` - Run simulation (dry run)\n' +
@@ -610,7 +657,30 @@ export default class TeamBalancer extends BasePlugin {
         DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [helpEmbed] });
         break;
       default:
-        await message.reply('Invalid command. Use: `status`, `diag`, `on`, `off`, `help` or `!scramble <now|dry|cancel>`.');
+        await message.reply('Invalid command. Use: `status`, `diag`, `on`, `off`, `export`, `clear`, `help` or `!scramble <now|dry|cancel>`.');
+    }
+  }
+
+  async discordCommandExport(message) {
+    try {
+      const logPath = path.resolve(process.cwd(), this.options.reportLogPath || 'team-balancer-reports.jsonl');
+      await fs.promises.access(logPath);
+      await message.reply({
+        content: '📄 Here is the TeamBalancer round reports export:',
+        files: [{ attachment: logPath, name: 'team-balancer-reports.jsonl' }]
+      });
+    } catch (err) {
+      await message.reply('❌ The round reports log file does not exist yet or cannot be accessed.');
+    }
+  }
+
+  async discordCommandClear(message) {
+    try {
+      const logPath = path.resolve(process.cwd(), this.options.reportLogPath || 'team-balancer-reports.jsonl');
+      await fs.promises.writeFile(logPath, '');
+      await message.reply('✅ The round reports log file has been cleared.');
+    } catch (err) {
+      await message.reply(`❌ Failed to clear the round reports log file: ${err.message}`);
     }
   }
 
@@ -771,6 +841,17 @@ export default class TeamBalancer extends BasePlugin {
    */
   async onRoundEnded(data) {
     if (!this.ready) return;
+
+    let roundReport = {
+      timestamp: new Date().toISOString(),
+      gameMode: this.gameModeCached || 'Unknown',
+      layerName: this.layerNameCached || 'Unknown',
+      playerCount: this.server.players ? this.server.players.length : 0,
+      winner: data && data.winner ? `Team ${data.winner.team}` : 'Draw',
+      scrambled: false,
+      scrambleCondition: 'None'
+    };
+
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
 
@@ -805,9 +886,62 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
+      const winnerName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${winnerID}` : this.getTeamName(winnerID)) || `Team ${winnerID}`;
+      const loserName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${3 - winnerID}` : this.getTeamName(3 - winnerID)) || `Team ${3 - winnerID}`;
+
+      roundReport.winnerTickets = winnerTickets;
+      roundReport.loserTickets = loserTickets;
+      roundReport.ticketMargin = margin;
+      roundReport.winnerName = winnerName;
+      roundReport.loserName = loserName;
+
       Logger.verbose('TeamBalancer', 4, `Parsed winnerID=${winnerID}, winnerTickets=${winnerTickets}, loserTickets=${loserTickets}, margin=${margin}`);
 
       const gameMode = this.gameModeCached?.toLowerCase() || '';
+
+      if (this.isIgnoredMatch()) {
+        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Ignored match ended (${this.gameModeCached} / ${this.layerNameCached}). Resetting streak metrics.`);
+        
+        let shouldScramble = false;
+        if (this.isSeedMatch() && this.options.enableSeedAutoScramble) {
+          const playerCount = this.server.players.length;
+          if (playerCount >= this.options.seedAutoScramblePlayerThreshold) {
+            shouldScramble = true;
+            roundReport.scrambled = true;
+            roundReport.scrambleCondition = 'Seed Auto Scramble';
+            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Seed match ended with ${playerCount} players. Triggering auto-scramble.`);
+            const msg = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.seedScrambleAnnouncement, { delay: this.options.scrambleAnnouncementDelay })}`;
+            try {
+              await this.server.rcon.broadcast(msg);
+            } catch (err) {
+              Logger.verbose('TeamBalancer', 1, `Failed to broadcast seed scramble announcement: ${err.message}`);
+            }
+            this.mirrorRconToDiscord(msg, 'warning');
+            this.initiateScramble(false, false);
+          }
+        }
+
+        if (!shouldScramble) {
+          // If we aren't scrambling, broadcast the standard win message
+          let broadcastWinnerName = winnerName;
+          let broadcastLoserName = loserName;
+          if (!this.options.useGenericTeamNamesInBroadcasts) {
+            if (!/^The\s+/i.test(winnerName) && !winnerName.startsWith('Team ')) broadcastWinnerName = 'The ' + winnerName;
+            if (!/^The\s+/i.test(loserName) && !loserName.startsWith('Team ')) broadcastLoserName = 'The ' + loserName;
+          }
+          const msg = `${this.RconMessages.prefix} ${broadcastWinnerName} defeated ${broadcastLoserName} | (${margin} tickets)`;
+          try {
+            await this.server.rcon.broadcast(msg);
+          } catch (err) {
+            Logger.verbose('TeamBalancer', 1, `Failed to broadcast standard seed win message: ${err.message}`);
+          }
+          this.mirrorRconToDiscord(msg, 'info');
+        }
+
+        await this.resetStreak('Ignored match ended');
+        return;
+      }
+
       // --- Consecutive Wins Tracking (Independent of Dominance) ---
       // Define allowed modes for consecutive tracking
       const isConsecutiveTracked = 
@@ -834,6 +968,8 @@ export default class TeamBalancer extends BasePlugin {
       if (this._scramblePending || this._scrambleInProgress) return;
 
       if (isConsecutiveTracked && this.options.maxConsecutiveWinsWithoutThreshold > 0 && this.consecutiveWinsCount >= this.options.maxConsecutiveWinsWithoutThreshold) {
+        roundReport.scrambled = true;
+        roundReport.scrambleCondition = 'Consecutive Wins';
         Logger.verbose('TeamBalancer', 2, `[ConsecutiveWins] Triggered! Count: ${this.consecutiveWinsCount} >= Threshold: ${this.options.maxConsecutiveWinsWithoutThreshold}`);
         const message = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.consecutiveWinsScramble, {
           team: this.getTeamName(winnerID),
@@ -854,6 +990,8 @@ export default class TeamBalancer extends BasePlugin {
       const isInvasion = this.gameModeCached?.toLowerCase().includes('invasion') ?? false;
 
       if (this.options.enableSingleRoundScramble && !isInvasion && margin >= this.options.singleRoundScrambleThreshold) {
+        roundReport.scrambled = true;
+        roundReport.scrambleCondition = 'Single Round Margin';
         Logger.verbose('TeamBalancer', 2, `[SingleRoundScramble] Triggered! Margin: ${margin} >= Threshold: ${this.options.singleRoundScrambleThreshold}`);
         const message = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.singleRoundScramble, {
           margin,
@@ -902,15 +1040,6 @@ export default class TeamBalancer extends BasePlugin {
         isStomp = margin >= stompThreshold;
       }
       Logger.verbose('TeamBalancer', 4, `Dominance state: isDominant=${isDominant}, isStomp=${isStomp}`);
-
-      const winnerName =
-        (this.options.useGenericTeamNamesInBroadcasts
-          ? `Team ${winnerID}`
-          : this.getTeamName(winnerID)) || `Team ${winnerID}`;
-      const loserName =
-        (this.options.useGenericTeamNamesInBroadcasts
-          ? `Team ${3 - winnerID}`
-          : this.getTeamName(3 - winnerID)) || `Team ${3 - winnerID}`;
 
       Logger.verbose('TeamBalancer', 4, `Team names for broadcast: winnerName=${winnerName}, loserName=${loserName}`);
 
@@ -1053,6 +1182,8 @@ export default class TeamBalancer extends BasePlugin {
       if (this._scramblePending || this._scrambleInProgress) return;
 
       if (this.winStreakCount >= this.options.maxWinStreak) {
+        roundReport.scrambled = true;
+        roundReport.scrambleCondition = 'Win Streak Threshold';
         Logger.verbose('TeamBalancer', 4, `Scramble condition met. Preparing to broadcast announcement.`);
         const message = this.formatMessage(this.RconMessages.scrambleAnnouncement, {
           team: teamNames.winnerName,
@@ -1085,6 +1216,20 @@ export default class TeamBalancer extends BasePlugin {
       this._scrambleInProgress = false;
       this._scramblePending = false;
       this.cleanupScrambleTracking();
+    } finally {
+      roundReport.winStreak = this.winStreakCount;
+      roundReport.consecutiveWins = this.consecutiveWinsCount;
+
+      // Log to console
+      Logger.verbose('TeamBalancer', 1, `[Round Report] Match: ${roundReport.layerName} | Mode: ${roundReport.gameMode} | Players: ${roundReport.playerCount} | Winner: ${roundReport.winnerName || roundReport.winner} | Tickets: ${roundReport.winnerTickets} to ${roundReport.loserTickets} (Margin: ${roundReport.ticketMargin}) | Scrambled: ${roundReport.scrambled} | Condition: ${roundReport.scrambleCondition} | Win Streak: ${roundReport.winStreak}`);
+
+      // Log to JSONL
+      try {
+        const logPath = path.resolve(process.cwd(), this.options.reportLogPath || 'team-balancer-reports.jsonl');
+        await fs.promises.appendFile(logPath, JSON.stringify(roundReport) + '\n');
+      } catch (logErr) {
+        Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Failed to write round report to JSONL: ${logErr.message}`);
+      }
     }
   }
 
