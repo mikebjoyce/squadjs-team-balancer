@@ -335,7 +335,6 @@ export default class TeamBalancer extends BasePlugin {
     this.gameModeCached = null;
     this.layerNameCached = null;
     this.cachedAbbreviations = {};
-    this.eloTracker = null;
   }
 
   isIgnoredMatch() {
@@ -417,16 +416,9 @@ export default class TeamBalancer extends BasePlugin {
     this._isMounted = true;
     this.ready = true;
 
-    if(this.options.useEloForBalance)
-    {
-      this.eloTracker = this.server.plugins?.find(p => p.constructor.name === 'EloTracker') ?? null;
-      if (this.eloTracker)
-        Logger.verbose('TeamBalancer', 2, '[TeamBalancer] EloTracker integration active.');
-      else
-        Logger.verbose('TeamBalancer', 2, '[TeamBalancer] EloTracker not found. Scrambling without ELO data.');
-    }
-    else
-    {
+    if (this.options.useEloForBalance) {
+      Logger.verbose('TeamBalancer', 2, '[TeamBalancer] EloTracker integration enabled. ELO data will be fetched on scramble.');
+    } else {
       Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Use EloTracker disabled. Scrambling without ELO data.');
     }
     
@@ -1220,8 +1212,59 @@ export default class TeamBalancer extends BasePlugin {
       roundReport.winStreak = this.winStreakCount;
       roundReport.consecutiveWins = this.consecutiveWinsCount;
 
+      let eloLogString = '';
+      try {
+        const eloTrackerPlugin = this.server.plugins?.find(p => p.constructor.name === 'EloTracker');
+        if (eloTrackerPlugin) {
+          let eloMap = eloTrackerPlugin.lastRoundSnapshot;
+          if (!eloMap || eloMap.size === 0) {
+            if (eloTrackerPlugin.eloCache && eloTrackerPlugin.eloCache.size > 0) {
+              eloMap = eloTrackerPlugin.eloCache;
+            } else if (typeof eloTrackerPlugin.getRatingsByEosIDs === 'function') {
+              const eosIDs = this.server.players.map(p => p.eosID);
+              eloMap = await eloTrackerPlugin.getRatingsByEosIDs(eosIDs);
+            }
+          }
+
+          if (eloMap) {
+            let t1Mu = 0, t2Mu = 0, t1Regs = 0, t2Regs = 0;
+            let t1Count = 0, t2Count = 0;
+            const threshold = eloTrackerPlugin.thresholds?.regularMinGames || 10;
+            const defaultMu = eloTrackerPlugin.options?.defaultMu || 25.0;
+
+            for (const p of this.server.players) {
+              const rating = eloMap.get(p.eosID);
+              const mu = rating ? rating.mu : defaultMu;
+              const roundsPlayed = rating ? (rating.roundsPlayed || 0) : 0;
+              const isReg = roundsPlayed >= threshold;
+
+              if (String(p.teamID) === '1') {
+                t1Mu += mu;
+                t1Count++;
+                if (isReg) t1Regs++;
+              } else if (String(p.teamID) === '2') {
+                t2Mu += mu;
+                t2Count++;
+                if (isReg) t2Regs++;
+              }
+            }
+
+            roundReport.team1AvgMu = t1Count > 0 ? (t1Mu / t1Count) : defaultMu;
+            roundReport.team2AvgMu = t2Count > 0 ? (t2Mu / t2Count) : defaultMu;
+            roundReport.team1Regs = t1Regs;
+            roundReport.team2Regs = t2Regs;
+            roundReport.muDelta = Math.abs(roundReport.team1AvgMu - roundReport.team2AvgMu);
+            roundReport.regDelta = Math.abs(t1Regs - t2Regs);
+            
+            eloLogString = ` | ELO Δ: ${roundReport.muDelta.toFixed(2)}μ | Reg Δ: ${roundReport.regDelta}`;
+          }
+        }
+      } catch (err) {
+        Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Failed to append ELO data to round report: ${err.message}`);
+      }
+
       // Log to console
-      Logger.verbose('TeamBalancer', 1, `[Round Report] Match: ${roundReport.layerName} | Mode: ${roundReport.gameMode} | Players: ${roundReport.playerCount} | Winner: ${roundReport.winnerName || roundReport.winner} | Tickets: ${roundReport.winnerTickets} to ${roundReport.loserTickets} (Margin: ${roundReport.ticketMargin}) | Scrambled: ${roundReport.scrambled} | Condition: ${roundReport.scrambleCondition} | Win Streak: ${roundReport.winStreak}`);
+      Logger.verbose('TeamBalancer', 1, `[Round Report] Match: ${roundReport.layerName} | Mode: ${roundReport.gameMode} | Players: ${roundReport.playerCount} | Winner: ${roundReport.winnerName || roundReport.winner} | Tickets: ${roundReport.winnerTickets} to ${roundReport.loserTickets} (Margin: ${roundReport.ticketMargin}) | Scrambled: ${roundReport.scrambled} | Condition: ${roundReport.scrambleCondition} | Win Streak: ${roundReport.winStreak}${eloLogString}`);
 
       // Log to JSONL
       try {
@@ -1397,20 +1440,25 @@ export default class TeamBalancer extends BasePlugin {
       );
 
       let eloMap = null;
-      if (this.options.useEloForBalance && this.eloTracker) {
-        try {
-          const snapshot = this.eloTracker.lastRoundSnapshot;
-          if (snapshot && snapshot.size > 0) {
-            eloMap = snapshot;
-            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Using ELO round snapshot (${eloMap.size} players).`);
-          } else {
-            const eosIDs = transformedPlayers.map(p => p.eosID);
-            eloMap = await this.eloTracker.getRatingsByEosIDs(eosIDs);
-            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ELO snapshot empty, fell back to DB read (${eloMap.size} players).`);
+      if (this.options.useEloForBalance) {
+        const eloTrackerPlugin = this.server.plugins?.find(p => p.constructor.name === 'EloTracker');
+        if (eloTrackerPlugin) {
+          try {
+            const snapshot = eloTrackerPlugin.lastRoundSnapshot;
+            if (snapshot && snapshot.size > 0) {
+              eloMap = snapshot;
+              Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Using ELO round snapshot (${eloMap.size} players).`);
+            } else {
+              const eosIDs = transformedPlayers.map(p => p.eosID);
+              eloMap = await eloTrackerPlugin.getRatingsByEosIDs(eosIDs);
+              Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ELO snapshot empty, fell back to DB read (${eloMap.size} players).`);
+            }
+          } catch (err) {
+            Logger.verbose('TeamBalancer', 1, `[TeamBalancer] ELO fetch failed, scrambling without ratings: ${err.message}`);
+            eloMap = null;
           }
-        } catch (err) {
-          Logger.verbose('TeamBalancer', 1, `[TeamBalancer] ELO fetch failed, scrambling without ratings: ${err.message}`);
-          eloMap = null;
+        } else {
+          Logger.verbose('TeamBalancer', 2, '[TeamBalancer] EloTracker plugin not found! Scrambling without ELO data.');
         }
       }
 
