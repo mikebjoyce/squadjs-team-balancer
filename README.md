@@ -335,4 +335,4 @@ GitHub:  https://github.com/mikebjoyce
 
 ---
 
-*Built for SquadJS — Enhance match balance. Reduce churn. Keep players engaged.*
+*Built for SquadJS*
