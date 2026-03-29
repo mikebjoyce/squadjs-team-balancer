@@ -1,4 +1,4 @@
-import Scrambler from '../utils/tb-scrambler.js';
+import { Scrambler } from '../utils/tb-scrambler.js';
 import { generateMockPlayers, generateMockSquads, transformForScrambler, generateScenario_AllLocked, generateScenario_DavidGoliath } from './mock-data-generator.js';
 
 // Helper to analyze team composition (Large vs Small vs Solo)
@@ -67,7 +67,7 @@ async function runTest(testName, config) {
   
   // Simulate applying moves to check final balance
   const finalPlayers = tfPlayers.map(p => {
-    const move = swapPlan.find(m => m.steamID === p.steamID);
+    const move = swapPlan.find(m => m.eosID === p.eosID);
     return move ? { ...p, teamID: move.targetTeamID } : p;
   });
 
@@ -89,7 +89,7 @@ async function runTest(testName, config) {
   checks.push({ name: 'Teams Balanced (Diff <= 2)', pass: diff <= 2 });
   checks.push({ name: 'No Team > 50 (approx)', pass: t1End <= 51 && t2End <= 51 }); // 51 tolerance for odd numbers
   
-  const duplicateMoves = new Set(swapPlan.map(m => m.steamID)).size !== swapPlan.length;
+  const duplicateMoves = new Set(swapPlan.map(m => m.eosID)).size !== swapPlan.length;
   checks.push({ name: 'No Duplicate Moves', pass: !duplicateMoves });
 
   checks.forEach(c => console.log(`   ${c.pass ? '✅' : '❌'} ${c.name}`));
@@ -120,7 +120,7 @@ async function runCustomTest(testName, dataGeneratorFn) {
   // 3. Analyze Results
   const moves = swapPlan.length;
   const finalPlayers = tfPlayers.map(p => {
-    const move = swapPlan.find(m => m.steamID === p.steamID);
+    const move = swapPlan.find(m => m.eosID === p.eosID);
     return move ? { ...p, teamID: move.targetTeamID } : p;
   });
 
@@ -140,7 +140,7 @@ async function runCustomTest(testName, dataGeneratorFn) {
   // 4. Verify Broken Squads
   const brokenSquads = [];
   tfSquads.forEach(squad => {
-    const movedPlayers = squad.players.filter(pid => swapPlan.some(m => m.steamID === pid));
+    const movedPlayers = squad.players.filter(pid => swapPlan.some(m => m.eosID === pid));
     const allMoved = movedPlayers.length === squad.players.length;
     const noneMoved = movedPlayers.length === 0;
     
@@ -152,6 +152,64 @@ async function runCustomTest(testName, dataGeneratorFn) {
   if (brokenSquads.length > 0) {
     console.log(`   ⚠️  Broken Squads:`);
     brokenSquads.forEach(b => console.log(`      - ${b.id} (Locked: ${b.locked}): ${b.moved}/${b.size} moved`));
+  }
+}
+
+async function runEloTest() {
+  console.log(`\n--------------------------------------------------`);
+  console.log(`🧪 TEST: ELO Balancing - Detect and fix a 15-man Pro Stack`);
+
+  // Scenario: Team 1 has 15 Pros (35 ELO) and 35 Newbies (15 ELO).
+  // Team 2 is 50 perfectly Average players (25 ELO).
+  // Total Average is 25.0 for both teams. A simple mean-only algo would do NOTHING.
+  const players = [];
+  const eloMap = new Map();
+
+  // Team 1: 15 Pros
+  for (let i = 0; i < 15; i++) {
+    const id = `pro_${i}`;
+    players.push({ eosID: id, teamID: 1, squadID: 101, name: `Pro_${i}` });
+    eloMap.set(id, { mu: 35.0 });
+  }
+  // Team 1: 35 Newbies
+  for (let i = 0; i < 35; i++) {
+    const id = `noob_${i}`;
+    players.push({ eosID: id, teamID: 1, squadID: null, name: `Noob_${i}` });
+    eloMap.set(id, { mu: 15.0 });
+  }
+  // Team 2: 50 Average
+  for (let i = 0; i < 50; i++) {
+    const id = `avg_${i}`;
+    players.push({ eosID: id, teamID: 2, squadID: null, name: `Avg_${i}` });
+    eloMap.set(id, { mu: 25.0 });
+  }
+
+  const squads = [
+    { id: 101, teamID: 1, players: players.filter(p => p.squadID === 101).map(p => p.eosID), locked: false }
+  ];
+
+  const { squads: tfSquads, players: tfPlayers } = transformForScrambler(players, squads);
+
+  const t1Start = tfPlayers.filter(p => p.teamID === '1').length;
+  const t2Start = tfPlayers.filter(p => p.teamID === '2').length;
+  console.log(`   Initial State: Team 1: ${t1Start} | Team 2: ${t2Start} | Total: ${tfPlayers.length}`);
+
+  const plan = await Scrambler.scrambleTeamsPreservingSquads({
+    squads: tfSquads,
+    players: tfPlayers,
+    winStreakTeam: 1,
+    scramblePercentage: 0.2, // Move up to 20 players
+    eloMap: eloMap
+  });
+
+  const movedPros = plan.filter(m => m.eosID.startsWith('pro') && m.targetTeamID === '2').length;
+  console.log(`\n   Results:`);
+  console.log(`   - Pros moved from Team 1 to Team 2: ${movedPros}/15`);
+
+  if (movedPros >= 5) {
+    console.log("   ✅ SUCCESS: The Backbone/Ace logic detected the elite stack and moved them!");
+  } else {
+    console.log("   ❌ FAILURE: The algorithm failed to prioritize moving the high-ELO players.");
   }
 }
 
@@ -186,6 +244,9 @@ async function runAllTests() {
   // ✓ "Cap-Pressure Surgical"
   await runTest('Max Capacity Surgical Trim', { playerCount: 102, team1Ratio: 0.5, unassignedRatio: 0 });
 
+  // ✓ ELO Balancing Test
+  await runEloTest();
+
   // Additional Tests
   // ✓ Low Pop
   await runTest('Low Pop (40 Players)', { playerCount: 40, team1Ratio: 0.5 });
@@ -216,12 +277,18 @@ async function runBulkTests(totalRuns = 100) {
     infantryOverloadRuns: 0, // Runs where a team has > 2 large squads
     totalUtilitySquads: 0,
     totalLargeSquadsMoved: 0,
+    eloRuns: 0,
+    eloBalanceImproved: 0,
+    totalInitialBackboneEloDiff: 0,
+    totalFinalBackboneEloDiff: 0,
     totalTime: 0,
     totalChurn: 0,
     failures: []
   };
 
   for (let i = 0; i < totalRuns; i++) {
+    const isEloRun = Math.random() < 0.5; // 50% of bulk tests will include ELO
+
     const playerCount = Math.floor(Math.random() * (102 - 60 + 1)) + 60; // 60-102 players
     const team1Ratio = Math.random() * (0.7 - 0.3) + 0.3; // 30/70 to 70/30 imbalance
     const unassignedRatio = Math.random() * 0.25; // 0-25% unassigned
@@ -234,20 +301,59 @@ async function runBulkTests(totalRuns = 100) {
     const t1Start = tfPlayers.filter((p) => p.teamID === '1').length;
     const t2Start = tfPlayers.filter((p) => p.teamID === '2').length;
 
+    // ELO Test Data Generation (if applicable)
+    let eloMap = null;
+    let initialBackboneDiff = 0;
+
+    const getBackboneEloAvg = (players, eloMap, teamID) => {
+      const defaultMu = 25.0;
+      const getElo = (id) => eloMap.get(id)?.mu ?? defaultMu;
+      const teamPlayers = players.filter(p => p.teamID === teamID);
+      if (teamPlayers.length === 0) return defaultMu;
+      const teamElos = teamPlayers.map(p => getElo(p.eosID)).sort((a, b) => b - a);
+      const slice = teamElos.slice(0, 15); // Top 15 players
+      return slice.length > 0 ? slice.reduce((a, b) => a + b, 0) / slice.length : defaultMu;
+    };
+
+    if (isEloRun) {
+      results.eloRuns++;
+      eloMap = new Map();
+      const dominantTeam = t1Start > t2Start ? '1' : '2';
+
+      tfPlayers.forEach(p => {
+        let mu;
+        const rand = Math.random();
+        const isDominantTeamPlayer = p.teamID === dominantTeam;
+
+        if (isDominantTeamPlayer) { // Skew ELO towards the larger team
+          if (rand < 0.25) mu = 35.0;      // 25% chance of being a pro
+          else if (rand < 0.6) mu = 30.0; // 35% chance of being a vet
+          else mu = 25.0;                 // 40% average
+        } else {
+          if (rand < 0.05) mu = 35.0;      // 5% pro
+          else if (rand < 0.2) mu = 30.0; // 15% vet
+          else if (rand < 0.6) mu = 25.0; // 40% average
+          else mu = 18.0;                 // 40% newbie
+        }
+        eloMap.set(p.eosID, { mu });
+      });
+
+      initialBackboneDiff = Math.abs(getBackboneEloAvg(tfPlayers, eloMap, '1') - getBackboneEloAvg(tfPlayers, eloMap, '2'));
+      results.totalInitialBackboneEloDiff += initialBackboneDiff;
+    }
+
     // Run Scrambler
     const startTime = Date.now();
     const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
       squads: tfSquads,
       players: tfPlayers,
-      winStreakTeam: 1,
-      scramblePercentage: 0.5,
-      debug: false
+      winStreakTeam: 1, scramblePercentage: 0.5, debug: false, eloMap: eloMap
     });
     const duration = Date.now() - startTime;
 
     // Analyze
     const finalPlayers = tfPlayers.map((p) => {
-      const move = swapPlan.find((m) => m.steamID === p.steamID);
+      const move = swapPlan.find((m) => m.eosID === p.eosID);
       return move ? { ...p, teamID: move.targetTeamID } : p;
     });
     const t1End = finalPlayers.filter((p) => p.teamID === '1').length;
@@ -259,11 +365,19 @@ async function runBulkTests(totalRuns = 100) {
     if (comp[1].large > 2 || comp[2].large > 2) results.infantryOverloadRuns++;
     results.totalUtilitySquads += (comp[1].small + comp[2].small);
 
+    if (isEloRun) {
+      const finalBackboneDiff = Math.abs(getBackboneEloAvg(finalPlayers, eloMap, '1') - getBackboneEloAvg(finalPlayers, eloMap, '2'));
+      results.totalFinalBackboneEloDiff += finalBackboneDiff;
+      if (finalBackboneDiff < initialBackboneDiff) {
+        results.eloBalanceImproved++;
+      }
+    }
+
     // Check for broken locked squads
     let hasBrokenLocked = false;
     tfSquads.forEach(squad => {
       if (!squad.locked) return;
-      const movedPlayers = squad.players.filter(pid => swapPlan.some(m => m.steamID === pid));
+      const movedPlayers = squad.players.filter(pid => swapPlan.some(m => m.eosID === pid));
       const allMoved = movedPlayers.length === squad.players.length;
       const noneMoved = movedPlayers.length === 0;
       if (!allMoved && !noneMoved) {
@@ -277,8 +391,8 @@ async function runBulkTests(totalRuns = 100) {
     let largeSquadsMoved = 0;
     tfSquads.forEach(s => {
       if (s.players.length >= 7) {
-        const movedPlayers = s.players.filter(pid => swapPlan.some(m => m.steamID === pid));
-        if (movedPlayers.length === s.players.length) largeSquadsMoved++;
+    const movedPlayers = s.players.filter(pid => swapPlan.some(m => m.eosID === pid));
+    if (movedPlayers.length === s.players.length) largeSquadsMoved++;
       }
     });
     results.totalLargeSquadsMoved += largeSquadsMoved;
@@ -314,6 +428,16 @@ async function runBulkTests(totalRuns = 100) {
   console.log(`👌 Acceptable Balance (Diff = 2): ${results.acceptableBalance} (${acceptablePercent}%)`);
   console.log(`❌ Failed Balance (Diff > 2):     ${results.failedBalance} (${failedPercent}%)`);
   console.log(`🔓 Runs with Locked Squad Breaks:   ${results.lockedSquadsBroken}`);
+  console.log(`--------------------------------`);
+  if (results.eloRuns > 0) {
+    const eloImprovePercent = ((results.eloBalanceImproved / results.eloRuns) * 100).toFixed(2);
+    const avgInitialEloDiff = (results.totalInitialBackboneEloDiff / results.eloRuns).toFixed(2);
+    const avgFinalEloDiff = (results.totalFinalBackboneEloDiff / results.eloRuns).toFixed(2);
+    console.log(`🧠 ELO Balancing (Backbone) Results (${results.eloRuns} runs):`);
+    console.log(`   - Avg Initial Diff: ${avgInitialEloDiff}`);
+    console.log(`   - Avg Final Diff:   ${avgFinalEloDiff}`);
+    console.log(`   - Improvement Rate: ${eloImprovePercent}%`);
+  }
   console.log(`⚠️ Runs with Infantry Overload (>2 Large): ${results.infantryOverloadRuns} (${((results.infantryOverloadRuns / results.total) * 100).toFixed(2)}%)`);
   console.log(`🛠️ Avg Utility Squads per Run: ${(results.totalUtilitySquads / results.total).toFixed(2)}`);
   console.log('⚓ Avg. Large Squads Moved: ' + (results.totalLargeSquadsMoved / results.total).toFixed(2));

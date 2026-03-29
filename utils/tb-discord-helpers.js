@@ -3,16 +3,43 @@
  * ║                  DISCORD MESSAGING UTILITY                    ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * Part of the TeamBalancer Plugin
+ * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * This class provides static helper methods for constructing and sending Discord embeds and messages
- * related to the TeamBalancer plugin. It handles the formatting of status reports, diagnostic results,
- * scramble plans, and win streak notifications. It interacts with the main TeamBalancer instance to
- * retrieve server state and configuration, ensuring consistent messaging across the plugin's operations.
+ * Static embed builders and send helper for all TeamBalancer Discord
+ * output. Handles status reports, diagnostic results, scramble plans,
+ * win streak notifications, and error reporting.
  *
- * COMPATIBILITY NOTE:
- * This module uses raw JavaScript objects for embeds to ensure compatibility
- * across different Discord.js versions without importing the library directly.
+ * ─── EXPORTS ─────────────────────────────────────────────────────
+ *
+ * DiscordHelpers (named)
+ *   Object. Key members:
+ *     sendDiscordMessage(channel, content)        — Resilient send with 429 retry.
+ *     buildStatusEmbed(tb)                        — Win streak and plugin state embed.
+ *     buildDiagnosticsEmbed(results, tb)          — Diagnostic test results embed.
+ *     createScrambleDetailsMessage(plan, isDry, tb) — Swap plan detail embed.
+ *     buildScrambleCompletedEmbed(...)            — Post-execution summary embed.
+ *     buildScrambleFailedEmbed(reason, time, tb)  — Failure notification embed.
+ *     buildFatalErrorEmbed(err, context, tb)      — Critical error embed with stack.
+ *     buildWinStreakEmbed(tb, message)            — Win streak broadcast embed.
+ *
+ * ─── DEPENDENCIES ────────────────────────────────────────────────
+ *
+ * Logger (../../core/logger.js)
+ *   Verbose logging for send failures and rate-limit events.
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Uses raw JS embed objects (not Discord.js MessageEmbed) to remain
+ *   compatible across Discord.js v12 and v13+ without importing the library.
+ * - sendDiscordMessage handles 429 rate limits with one automatic retry
+ *   using the retryAfter value from the error or response header.
+ * - All embed builders accept the TeamBalancer instance (tb) to read
+ *   live server state and options. No internal state is stored.
+ *
+ * Author:
+ * Discord: `real_slacker`
+ *
+ * ═══════════════════════════════════════════════════════════════
  */
 import Logger from '../../core/logger.js';
 
@@ -48,12 +75,16 @@ export const DiscordHelpers = {
     const t1Count = players.filter((p) => p.teamID === 1).length;
     const t2Count = players.filter((p) => p.teamID === 2).length;
 
+    const eloTrackerPlugin = tb.server.plugins?.find(p => p.constructor.name === 'EloTracker');
+    const eloStatus = tb.options?.useEloForBalance ? (eloTrackerPlugin ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
+
     const embed = {
       color: 0x3498db,
       title: '📊 TeamBalancer Status',
       fields: [
         { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
         { name: 'Plugin Status', value: effectiveStatus, inline: true },
+        { name: 'Elo Integration', value: eloStatus, inline: true },
         { name: 'Dominant Streak', value: winStreakText, inline: true },
         { name: 'Consecutive Streak', value: consecutiveText, inline: true },
         { name: 'Last Scramble', value: lastScrambleText, inline: false },
@@ -65,7 +96,7 @@ export const DiscordHelpers = {
     return embed;
   },
 
-  buildDiagEmbed(tb, diagnosticResults = null) {
+  buildDiagEmbeds(tb, diagnosticResults = null) {
     const players = tb.server.players;
     const squads = tb.server.squads;
     const t1Players = players.filter((p) => p.teamID === 1);
@@ -79,92 +110,124 @@ export const DiscordHelpers = {
       ? `${tb.swapExecutor.pendingPlayerMoves.size} pending moves`
       : 'None';
 
+    const eloTrackerPlugin = tb.server.plugins?.find(p => p.constructor.name === 'EloTracker');
+    const eloStatus = tb.options?.useEloForBalance ? (eloTrackerPlugin ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
+
     // Determine color based on diagnostics if present
     let color = 0x3498db;
     if (diagnosticResults) {
       color = diagnosticResults.every((r) => r.pass) ? 0x2ecc71 : 0xe74c3c;
     }
 
-    const embed = {
+    const embed1 = {
       color: color,
-      title: '🩺 TeamBalancer Diagnostics',
+      title: '🩺 TeamBalancer Diagnostics - Live State',
       description: `**Plugin Status:** ${!tb.ready ? 'INITIALIZING' : tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`,
-      fields: [],
+      fields: [
+        { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
+        { name: 'Elo Integration', value: eloStatus, inline: true },
+        { name: 'Game Mode', value: tb.gameModeCached || 'N/A', inline: true },
+        { name: 'Win Streak', value: tb.winStreakTeam ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)` : 'None', inline: true },
+        { name: 'Consecutive', value: tb.consecutiveWinsTeam ? `${tb.getTeamName(tb.consecutiveWinsTeam)}: ${tb.consecutiveWinsCount}` : 'None', inline: true },
+        { name: 'Team Names', value: `${tb.getTeamName(1)} | ${tb.getTeamName(2)}`, inline: true },
+        { name: 'Scramble Pending', value: tb._scramblePending ? 'Yes' : 'No', inline: true },
+        { name: 'Scramble Active', value: tb._scrambleInProgress ? 'Yes' : 'No', inline: true },
+        { name: 'Pending Moves', value: scrambleInfo, inline: true },
+        { name: '\u200B', value: '\u200B', inline: true },
+        { name: 'Total Players', value: `${players.length}`, inline: true },
+        { name: 'Team 1 | Team 2', value: `${t1Players.length} | ${t2Players.length}`, inline: true },
+        { name: 'Unassigned', value: `T1: ${t1UnassignedPlayers.length} | T2: ${t2UnassignedPlayers.length}`, inline: true },
+        { name: 'Total Squads', value: `${squads.length}`, inline: true },
+        { name: 'Squad Split', value: `T1: ${t1Squads.length} | T2: ${t2Squads.length}`, inline: true },
+      ],
+      timestamp: new Date().toISOString(),
+    };
+
+    const embed2 = {
+      color: color,
+      title: '⚙️ TeamBalancer Diagnostics - Configuration',
+      fields: [
+        { name: 'Max Win Threshold', value: `${tb.options?.maxWinStreak || 2} wins`, inline: true },
+        { name: 'Max Consec. Wins', value: `${tb.options?.maxConsecutiveWinsWithoutThreshold || 0}`, inline: true },
+        { name: 'Dominant Threshold', value: `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, inline: true },
+        { name: 'Single Round Scramble', value: tb.options?.enableSingleRoundScramble ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` : 'OFF', inline: true },
+        { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
+        { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
+        { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s`, inline: true },
+        { name: 'Max Scramble Time', value: `${tb.options?.maxScrambleCompletionTime}ms`, inline: true },
+        { name: 'Discord Options', value: `Mirror: ${tb.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${tb.options?.postScrambleDetails ? 'Yes' : 'No'}`, inline: true },
+      ],
       timestamp: new Date().toISOString()
     };
 
+    const embeds = [embed1, embed2];
+
     if (diagnosticResults) {
-      const lines = diagnosticResults.map(r => `**${r.name}:** [${r.message}]`);
-      embed.fields.push({ name: '🔍 Self-Test Results', value: lines.join('\n'), inline: false });
+      const resultsEmbeds = this.buildDiagnosticResultsEmbeds(diagnosticResults, color);
+      embeds.push(...resultsEmbeds);
     }
 
-    embed.fields.push(
-      { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
-      { name: 'Win Streak', value: tb.winStreakTeam ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)` : 'None', inline: true },
-      { name: 'Max Threshold', value: `${tb.options?.maxWinStreak || 2} wins`, inline: true },
-      { name: 'Consecutive', value: tb.consecutiveWinsTeam ? `${tb.getTeamName(tb.consecutiveWinsTeam)}: ${tb.consecutiveWinsCount}` : 'None', inline: true },
-      { name: 'Max Consec.', value: `${tb.options?.maxConsecutiveWinsWithoutThreshold || 0}`, inline: true },
-      { name: 'Scramble Pending', value: tb._scramblePending ? 'Yes' : 'No', inline: true },
-      { name: 'Scramble Active', value: tb._scrambleInProgress ? 'Yes' : 'No', inline: true },
-      { name: 'Pending Moves', value: scrambleInfo, inline: true },
-      { name: 'Game Mode', value: tb.gameModeCached || 'N/A', inline: true },
-      { name: 'Team Names', value: `${tb.getTeamName(1)} | ${tb.getTeamName(2)}`, inline: true },
-      { name: '\u200B', value: '\u200B', inline: true },
-      { name: 'Total Players', value: `${players.length}`, inline: true },
-      { name: 'Team 1 | Team 2', value: `${t1Players.length} | ${t2Players.length}`, inline: true },
-      { name: 'Unassigned', value: `T1: ${t1UnassignedPlayers.length} | T2: ${t2UnassignedPlayers.length}`, inline: true },
-      { name: 'Total Squads', value: `${squads.length}`, inline: true },
-      { name: 'Squad Split', value: `T1: ${t1Squads.length} | T2: ${t2Squads.length}`, inline: true },
-      { name: '\u200B', value: '\u200B', inline: true },
-      { name: 'Dominant Win Threshold (RAAS/AAS)', value: `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, inline: true },
-      { name: 'Single Round Scramble (RAAS/AAS)', value: tb.options?.enableSingleRoundScramble ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` : 'OFF', inline: true },
-      { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
-      { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
-      { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s`, inline: true },
-      { name: 'Max Scramble Time', value: `${tb.options?.maxScrambleCompletionTime}ms`, inline: true },
-      { name: 'Discord Options', value: `Mirror: ${tb.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${tb.options?.postScrambleDetails ? 'Yes' : 'No'}`, inline: true },
-    );
+    return embeds;
+  },
 
-    return embed;
+  buildDiagnosticResultsEmbeds(diagnosticResults, color) {
+    const embeds = [];
+    const formatMessage = (msg) => (msg.length > 1000 ? msg.substring(0, 997) + '...' : msg);
+    const maxFieldsPerEmbed = 25; // Discord limit
+    const totalPages = Math.ceil(diagnosticResults.length / maxFieldsPerEmbed);
+
+    let currentEmbed = null;
+
+    for (let i = 0; i < diagnosticResults.length; i++) {
+      if (i % maxFieldsPerEmbed === 0) {
+        const pageNum = Math.floor(i / maxFieldsPerEmbed) + 1;
+        const title = totalPages > 1 ? `🔍 Diagnostic Results (Part ${pageNum})` : `🔍 Diagnostic Results`;
+        currentEmbed = {
+          color: color,
+          title: title,
+          fields: [],
+          timestamp: new Date().toISOString(),
+        };
+        embeds.push(currentEmbed);
+      }
+      currentEmbed.fields.push({ name: `**${diagnosticResults[i].name}:**`, value: formatMessage(diagnosticResults[i].message), inline: false });
+    }
+
+    return embeds;
   },
 
   async createScrambleDetailsMessage(swapPlan, isSimulated, teamBalancer) {
-    const teamCounts = { '1': 0, '2': 0 };
-    const teamLists = { '1': [], '2': [] };
-    
     const players = teamBalancer.server.players;
     const squads = teamBalancer.server.squads;
     const currentT1 = players.filter(p => p.teamID == 1).length;
     const currentT2 = players.filter(p => p.teamID == 2).length;
-    
-    const affectedSquads = new Map();
-    const unassignedMoves = { '1': 0, '2': 0 };
+
+    const f1 = teamBalancer.getTeamName(1);
+    const f2 = teamBalancer.getTeamName(2);
+
+    const moveData = {
+      '1to2': { srcID: 1, tgtID: 2, srcFaction: f1, tgtFaction: f2, playersTotal: 0, squads: {} },
+      '2to1': { srcID: 2, tgtID: 1, srcFaction: f2, tgtFaction: f1, playersTotal: 0, squads: {} }
+    };
 
     for (const move of swapPlan) {
-      teamCounts[move.targetTeamID]++;
-      teamLists[move.targetTeamID].push(move.steamID);
-      
-      const player = players.find(p => p.steamID === move.steamID);
-      if (player) {
-        if (player.squadID) {
-          const uniqueKey = `${player.teamID}-${player.squadID}`;
-          if (!affectedSquads.has(uniqueKey)) {
-            const squad = squads.find(s => s.squadID === player.squadID && s.teamID == player.teamID);
-            affectedSquads.set(uniqueKey, {
-              name: squad ? squad.squadName : `Squad ${player.squadID}`,
-              targetTeam: move.targetTeamID,
-              count: 0
-            });
-          }
-          affectedSquads.get(uniqueKey).count++;
-        } else {
-          unassignedMoves[move.targetTeamID]++;
-        }
+      const player = players.find(p => p.eosID === move.eosID);
+      if (!player) continue;
+
+      const srcID = String(player.teamID);
+      const tgtID = String(move.targetTeamID);
+      const dirKey = `${srcID}to${tgtID}`;
+
+      if (moveData[dirKey]) {
+        moveData[dirKey].playersTotal++;
+        const sID = player.squadID || 'UNASSIGNED';
+        if (!moveData[dirKey].squads[sID]) moveData[dirKey].squads[sID] = [];
+        moveData[dirKey].squads[sID].push(move.eosID);
       }
     }
-    
-    const movesToT1 = teamCounts['1'];
-    const movesToT2 = teamCounts['2'];
+
+    const movesToT1 = moveData['2to1'].playersTotal;
+    const movesToT2 = moveData['1to2'].playersTotal;
     const projT1 = currentT1 + movesToT1 - movesToT2;
     const projT2 = currentT2 + movesToT2 - movesToT1;
 
@@ -173,51 +236,44 @@ export const DiscordHelpers = {
       title: isSimulated ? '🧪 Dry Run Scramble Plan' : '🔀 Scramble Execution Plan',
       description: `**Total players affected:** ${swapPlan.length}\n**Calculation Time:** ${swapPlan.calculationTime || 'N/A'}ms`,
       fields: [
-        { name: 'Balance Projection', value: `**Team 1:** ${currentT1} ➔ ${projT1}\n**Team 2:** ${currentT2} ➔ ${projT2}`, inline: false }
+        { 
+          name: 'Balance Projection', 
+          value: `Team 1 (${f1}): ${currentT1} ➔ ${projT1} | Team 2 (${f2}): ${currentT2} ➔ ${projT2}`, 
+          inline: false 
+        }
       ],
       timestamp: new Date().toISOString()
     };
 
-    // --- SQUADS SECTION ---
-    const squadsT1 = [];
-    const squadsT2 = [];
-    affectedSquads.forEach((info) => {
-      const text = `**${info.name}** (${info.count})`;
-      if (info.targetTeam === '1') squadsT1.push(text);
-      else squadsT2.push(text);
-    });
+    for (const dir of ['1to2', '2to1']) {
+      const data = moveData[dir];
+      if (data.playersTotal === 0) continue;
 
-    const formatSquadList = (list) => {
-      if (list.length === 0) return 'None';
-      // Limit to 20 squads per column to keep it readable
-      if (list.length > 20) return list.slice(0, 20).join('\n') + `\n...and ${list.length - 20} more`;
-      return list.join('\n');
-    };
+      let fieldValue = '';
+      let playersAdded = 0;
+      const squadEntries = Object.entries(data.squads);
 
-    if (squadsT1.length > 0 || squadsT2.length > 0) {
-      embed.fields.push(
-        { name: `🛡️ Squads ➡️ ${teamBalancer.getTeamName(1)}`, value: formatSquadList(squadsT1), inline: true },
-        { name: `🛡️ Squads ➡️ ${teamBalancer.getTeamName(2)}`, value: formatSquadList(squadsT2), inline: true }
-      );
-    }
+      for (const [sID, playerIDs] of squadEntries) {
+        const names = this.resolveEOSIDsToNames(playerIDs, teamBalancer);
+        const squadName = sID === 'UNASSIGNED' ? 'UNASSIGNED' : (squads.find(s => String(s.squadID) === String(sID) && String(s.teamID) === String(data.srcID))?.squadName || `Squad ${sID}`);
+        const line = `**${squadName}** — ${names.join(', ')}`;
+        const nextValue = fieldValue ? fieldValue + '\n' + line : line;
 
-    if (unassignedMoves['1'] > 0 || unassignedMoves['2'] > 0) {
-      const parts = [];
-      if (unassignedMoves['1'] > 0) parts.push(`**${unassignedMoves['1']}** ➡️ ${teamBalancer.getTeamName(1)}`);
-      if (unassignedMoves['2'] > 0) parts.push(`**${unassignedMoves['2']}** ➡️ ${teamBalancer.getTeamName(2)}`);
-      
-      embed.fields.push({ name: 'Unassigned (No Squad) Players', value: parts.join('\n'), inline: false });
-    }
+        if (nextValue.length > 1024) {
+          const remaining = data.playersTotal - playersAdded;
+          const suffix = `\n...and ${remaining} more players`;
+          fieldValue = (fieldValue + suffix).length > 1024 ? fieldValue.substring(0, 1024 - suffix.length) + suffix : fieldValue + suffix;
+          break;
+        }
+        fieldValue = nextValue;
+        playersAdded += playerIDs.length;
+      }
 
-    // --- PLAYERS SECTION ---
-    const namesT1 = await DiscordHelpers.resolveSteamIDsToNames(teamLists['1'], teamBalancer);
-    const namesT2 = await DiscordHelpers.resolveSteamIDsToNames(teamLists['2'], teamBalancer);
-
-    if (namesT1.length > 0 || namesT2.length > 0) {
-      embed.fields.push(
-        { name: `👤 Players ➡️ ${teamBalancer.getTeamName(1)} (${teamLists['1'].length})`, value: DiscordHelpers.formatPlayerList(namesT1), inline: false },
-        { name: `👤 Players ➡️ ${teamBalancer.getTeamName(2)} (${teamLists['2'].length})`, value: DiscordHelpers.formatPlayerList(namesT2), inline: false }
-      );
+      embed.fields.push({
+        name: `Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) [${data.playersTotal} players]`,
+        value: fieldValue || 'None',
+        inline: false
+      });
     }
 
     if (swapPlan.length === 0) {
@@ -228,16 +284,11 @@ export const DiscordHelpers = {
     return embed;
   },
 
-  async resolveSteamIDsToNames(steamIDs, teamBalancer) {
-    return steamIDs.map(steamID => {
-      const player = teamBalancer.server.players.find(p => p.steamID === steamID);
-      return player ? player.name : `Unknown (${steamID.slice(0, 8)}...)`;
+  resolveEOSIDsToNames(eosIDs, teamBalancer) {
+    return eosIDs.map(eosID => {
+      const player = teamBalancer.server.players.find(p => p.eosID === eosID);
+      return player ? player.name : `Unknown (${eosID.slice(0, 8)}...)`;
     });
-  },
-
-  formatPlayerList(names) {
-    if (names.length === 0) return 'None';
-    return `\`\`\`\n${names.join(', ')}\n\`\`\``;
   },
 
   buildWinStreakEmbed(teamName, teamID, streakCount, maxStreak, margin, isDominant) {

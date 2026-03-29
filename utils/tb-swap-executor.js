@@ -3,12 +3,43 @@
  * ║                   SWAP EXECUTION ENGINE                       ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * Part of the TeamBalancer Plugin
+ * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * This class is responsible for the execution of team scramble plans. It manages a queue of
- * player moves, handling RCON commands with retry logic, timeout protection, and error handling.
- * It supports both "dry runs" (simulation) and live execution, and provides real-time feedback
- * to Discord via the DiscordHelpers module upon completion.
+ * Executes team scramble swap plans via RCON. Manages a pending-move
+ * queue with retry logic, timeout protection, and post-execution
+ * verification. Supports both live and dry-run (simulation) modes.
+ *
+ * ─── EXPORTS ─────────────────────────────────────────────────────
+ *
+ * SwapExecutor (default)
+ *   Class. Key public methods:
+ *     queueMove(eosID, targetTeamID, isSimulated) — Add a player to the move queue.
+ *     waitForCompletion(timeoutMs, intervalMs)     — Await queue drain or timeout.
+ *     cleanup()                                    — Cancel timers and clear all state.
+ *
+ * ─── DEPENDENCIES ────────────────────────────────────────────────
+ *
+ * Logger (../../core/logger.js)
+ *   Verbose logging for move attempts, retries, and session summary.
+ * DiscordHelpers (./tb-discord-helpers.js)
+ *   Sends scramble-completed embed to Discord on session end.
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Queue is processed on a setInterval at changeTeamRetryInterval ms.
+ *   A separate setTimeout enforces the maxScrambleCompletionTime hard cap.
+ * - Move is considered complete when the player is observed on the
+ *   correct team, or when they disconnect (counted separately).
+ * - RCON identifier prefers steamID, falls back to player name with a
+ *   warning log. Max 5 RCON attempts per player before marking failed.
+ * - verifyMoves() calls server.updatePlayerList() before checking final
+ *   team positions. Falls back to session counters if the update fails.
+ * - cleanup() is safe to call at any time; idempotent.
+ *
+ * Author:
+ * Discord: `real_slacker`
+ *
+ * ═══════════════════════════════════════════════════════════════
  */
 
 import Logger from '../../core/logger.js';
@@ -29,21 +60,21 @@ export default class SwapExecutor {
     this.sessionMoves = new Map(); // Track all moves for verification
   }
 
-  async queueMove(steamID, targetTeamID, isSimulated = false) {
+  async queueMove(eosID, targetTeamID, isSimulated = false) {
     if (isSimulated) {
-      Logger.verbose('TeamBalancer', 4, `[SwapExecutor][Dry Run] Would queue ${steamID} -> ${targetTeamID}`);
+      Logger.verbose('TeamBalancer', 4, `[SwapExecutor][Dry Run] Would queue ${eosID} -> ${targetTeamID}`);
       return;
     }
 
-    this.pendingPlayerMoves.set(steamID, {
+    this.pendingPlayerMoves.set(eosID, {
       targetTeamID,
       attempts: 0,
       startTime: Date.now()
     });
 
-    this.sessionMoves.set(steamID, { targetTeamID });
+    this.sessionMoves.set(eosID, { targetTeamID });
 
-    Logger.verbose('TeamBalancer', 4, `[SwapExecutor] Queued move for ${steamID} -> ${targetTeamID}`);
+    Logger.verbose('TeamBalancer', 4, `[SwapExecutor] Queued move for ${eosID} -> ${targetTeamID}`);
 
     if (!this.scrambleRetryTimer) {
       this.startMonitoring();
@@ -67,7 +98,7 @@ export default class SwapExecutor {
         Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Error in retry loop: ${err?.message || err}`);
         this.completeSession();
       });
-    }, this.options.changeTeamRetryInterval || 200);
+    }, this.options.changeTeamRetryInterval || 50);
 
     this.overallTimeout = setTimeout(() => {
       this.completeSession();
@@ -83,26 +114,26 @@ export default class SwapExecutor {
       const playersToRemove = [];
       const currentPlayers = this.server.players;
 
-      for (const [steamID, moveData] of this.pendingPlayerMoves.entries()) {
+      for (const [eosID, moveData] of this.pendingPlayerMoves.entries()) {
         try {
           if (now - moveData.startTime > (this.options.maxScrambleCompletionTime || 15000)) {
-            Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Move timeout for ${steamID}`);
+            Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Move timeout for ${eosID}`);
             this.activeSession.failedMoves++;
-            playersToRemove.push(steamID);
+            playersToRemove.push(eosID);
             continue;
           }
 
-          const player = currentPlayers.find((p) => p.steamID === steamID);
+          const player = currentPlayers.find((p) => p.eosID === eosID);
           if (!player) {
             this.activeSession.completedMoves++;
-            playersToRemove.push(steamID);
+            playersToRemove.push(eosID);
             continue;
           }
 
           // Check if player is already on the target team to prevent RCON spam
           if (String(player.teamID) === String(moveData.targetTeamID)) {
             this.activeSession.completedMoves++;
-            playersToRemove.push(steamID);
+            playersToRemove.push(eosID);
             continue;
           }
 
@@ -111,29 +142,34 @@ export default class SwapExecutor {
 
           if (moveData.attempts <= maxRconAttempts) {
             try {
-              await this.server.rcon.switchTeam(steamID, moveData.targetTeamID);
+              const rconIdentifier = player?.steamID ?? player?.name;
+              if (!player?.steamID) {
+                Logger.verbose('TeamBalancer', 1, 
+                  `[SwapExecutor] No steamID for ${eosID}, falling back to name: ${player?.name}`);
+              }
+              await this.server.rcon.switchTeam(rconIdentifier, moveData.targetTeamID);
               this.activeSession.completedMoves++;
-              playersToRemove.push(steamID);
+              playersToRemove.push(eosID);
               if (this.options.warnOnSwap) {
                 try {
-                  await this.server.rcon.warn(steamID, this.RconMessages.playerScrambledWarning);
-                } catch (err) { Logger.verbose('TeamBalancer', 4, `[SwapExecutor] warn failed for ${steamID}: ${err}`); }
+                  await this.server.rcon.warn(rconIdentifier, this.RconMessages.playerScrambledWarning);
+                } catch (err) { Logger.verbose('TeamBalancer', 4, `[SwapExecutor] warn failed for ${eosID}: ${err}`); }
               }
             } catch (err) {
-              Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Move attempt ${moveData.attempts} failed for ${steamID}: ${err?.message || err}`);
+              Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Move attempt ${moveData.attempts} failed for ${eosID}: ${err?.message || err}`);
               if (moveData.attempts >= maxRconAttempts) {
                 this.activeSession.failedMoves++;
-                playersToRemove.push(steamID);
+                playersToRemove.push(eosID);
               }
             }
           } else {
             this.activeSession.failedMoves++;
-            playersToRemove.push(steamID);
+            playersToRemove.push(eosID);
           }
         } catch (err) {
-          Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Error processing ${steamID}: ${err?.message || err}`);
+          Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Error processing ${eosID}: ${err?.message || err}`);
           this.activeSession.failedMoves++;
-          playersToRemove.push(steamID);
+          playersToRemove.push(eosID);
         }
       }
 
@@ -161,8 +197,8 @@ export default class SwapExecutor {
 
     const verified = { moved: 0, failed: 0, disconnected: 0 };
 
-    for (const [steamID, moveData] of this.sessionMoves.entries()) {
-      const player = this.server.players.find(p => p.steamID === steamID);
+    for (const [eosID, moveData] of this.sessionMoves.entries()) {
+      const player = this.server.players.find(p => p.eosID === eosID);
 
       if (!player) {
         verified.disconnected++; // Player disconnected

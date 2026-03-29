@@ -3,12 +3,46 @@
  * ║                     PERSISTENCE LAYER                         ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * Part of the TeamBalancer Plugin
+ * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * This class manages the persistence layer for the TeamBalancer plugin using Sequelize (SQLite).
- * It handles saving and restoring critical state data such as win streaks, team IDs, and timestamps
- * across server restarts. It ensures data integrity by checking for stale state upon initialization
- * and provides methods for the main plugin instance to update persistent records.
+ * SQLite persistence layer for the TeamBalancer plugin. Stores and
+ * restores win streak state, last scramble timestamp, and manually
+ * disabled flag across server restarts via Sequelize ORM.
+ *
+ * ─── EXPORTS ─────────────────────────────────────────────────────
+ *
+ * TBDatabase (default)
+ *   Class. Key public methods:
+ *     initDB()                          — Sync model, seed state row, check staleness.
+ *     saveState(team, count, ...)       — Overwrite full streak state.
+ *     incrementStreak(winnerID, ...)    — Atomic increment of the dominant win streak.
+ *     saveScrambleTime(timestamp)       — Persist last scramble timestamp.
+ *     saveManuallyDisabledState(bool)   — Persist manual disable flag.
+ *     runConcurrencyTest()              — Parallel write stress test for DB verification.
+ *
+ * ─── DEPENDENCIES ────────────────────────────────────────────────
+ *
+ * sequelize (Sequelize)
+ *   ORM for SQLite. Injected via connectors.sqlite.
+ * Logger (../../core/logger.js)
+ *   Verbose error logging on all caught DB exceptions.
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - All operations go through _executeWithRetry() — retries up to 5×
+ *   on SQLITE_BUSY with 200ms + random jitter backoff.
+ * - A promise-chain mutex is attached to the Sequelize instance to
+ *   serialise concurrent writes and prevent lock contention.
+ * - State is considered stale if lastSyncTimestamp is older than
+ *   STALE_CUTOFF_MS (2.5 hours). Stale state resets streak on load
+ *   but preserves lastScrambleTime.
+ * - manuallyDisabled persists across restarts — the admin must
+ *   explicitly re-enable via !teambalancer on.
+ *
+ * Author:
+ * Discord: `real_slacker`
+ *
+ * ═══════════════════════════════════════════════════════════════
  */
 
 import Sequelize from 'sequelize';
@@ -16,25 +50,45 @@ import Logger from '../../core/logger.js';
 const { DataTypes } = Sequelize;
 
 export default class TBDatabase {
+  static STALE_CUTOFF_MS = 2.5 * 60 * 60 * 1000;
+
   constructor(server, options, connectors) {
     this.sequelize = connectors && connectors.sqlite;
     this.TeamBalancerStateModel = null;
   }
 
   async _executeWithRetry(logicFn, attempts = 5) {
-    for (let i = 1; i <= attempts; i++) {
-      try {
-        return await logicFn();
-      } catch (err) {
-        const isLocked = err.message && (err.message.includes('SQLITE_BUSY') || err.message.includes('database is locked'));
-        if (isLocked && i < attempts) {
-          const jitter = Math.random() * 500;
-          await new Promise(resolve => setTimeout(resolve, 200 + jitter));
-        } else {
-          throw err;
+    const runAttempt = async () => {
+      for (let i = 1; i <= attempts; i++) {
+        try {
+          return await logicFn();
+        } catch (err) {
+          const isLocked = err.message && (
+            err.message.includes('SQLITE_BUSY') || 
+            err.message.includes('database is locked') ||
+            err.name === 'SequelizeTimeoutError'
+          );
+          if (isLocked && i < attempts) {
+            const jitter = Math.random() * 500;
+            await new Promise(resolve => setTimeout(resolve, 200 + jitter));
+          } else {
+            throw err;
+          }
         }
       }
+    };
+
+    if (this.sequelize && typeof this.sequelize.getDialect === 'function' && this.sequelize.getDialect() === 'sqlite') {
+      if (!this.sequelize._squadjs_mutex) {
+        this.sequelize._squadjs_mutex = Promise.resolve();
+      }
+      
+      const resultPromise = this.sequelize._squadjs_mutex.then(() => runAttempt());
+      this.sequelize._squadjs_mutex = resultPromise.catch(() => {});
+      return resultPromise;
     }
+
+    return runAttempt();
   }
 
   async initDB() {
@@ -77,8 +131,7 @@ export default class TBDatabase {
           transaction: t
         });
 
-        const staleCutoff = 2.5 * 60 * 60 * 1000;
-        const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > staleCutoff;
+        const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > TBDatabase.STALE_CUTOFF_MS;
 
         if (!isStale) {
           Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);
@@ -218,7 +271,7 @@ export default class TBDatabase {
       const iterations = 5;
       const promises = [];
       for (let i = 0; i < iterations; i++) {
-        promises.push(this.incrementStreak(1));
+        promises.push(this.incrementStreak(1, null, 0));
       }
       
       const results = await Promise.all(promises);
@@ -229,13 +282,25 @@ export default class TBDatabase {
       const finalCount = finalRecord ? finalRecord.winStreakCount : -1;
 
       // 5. Restore
-      if (originalState) await this.saveState(originalState.winStreakTeam, originalState.winStreakCount);
+      if (originalState) {
+        await this.saveState(
+          originalState.winStreakTeam,
+          originalState.winStreakCount,
+          originalState.consecutiveWinsTeam,
+          originalState.consecutiveWinsCount
+        );
+      }
 
       return finalCount === successCount
         ? { success: true, message: `PASS (${successCount}/${iterations} txs committed)` }
         : { success: false, message: `FAIL (Committed: ${finalCount}, Expected: ${successCount})` };
     } catch (err) {
-      if (originalState) await this.saveState(originalState.winStreakTeam, originalState.winStreakCount);
+      if (originalState) await this.saveState(
+        originalState.winStreakTeam,
+        originalState.winStreakCount,
+        originalState.consecutiveWinsTeam,
+        originalState.consecutiveWinsCount
+      );
       return { success: false, message: `Error: ${err.message}` };
     }
   }

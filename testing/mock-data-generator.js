@@ -26,7 +26,7 @@ export function generateMockPlayers(count = 50, team1Ratio = 0.5, unassignedRati
     }
 
     players.push({
-      steamID: `mock_steam_${i}`,
+      eosID: `mock_eos_${i}`,
       name: `TestPlayer${i}`,
       teamID: teamID,
       squadID: squadID
@@ -59,7 +59,7 @@ export function generateMockSquads(players) {
           locked: Math.random() < lockChance
         });
       }
-      squadMap.get(key).players.push(p.steamID);
+      squadMap.get(key).players.push(p.eosID);
     }
   });
 
@@ -75,13 +75,13 @@ export function transformForScrambler(mockPlayers, mockSquads) {
   const transformedSquads = mockSquads.map((squad) => ({
     id: `T${squad.teamID}-S${squad.squadID}`,
     teamID: String(squad.teamID),
-    players: squad.players, // Already array of steamIDs
+    players: squad.players, // Already array of eosIDs
     locked: squad.locked
   }));
 
   // Transform Players
   const transformedPlayers = mockPlayers.map((player) => ({
-    steamID: player.steamID,
+    eosID: player.eosID,
     teamID: String(player.teamID),
     squadID: player.squadID ? `T${player.teamID}-S${player.squadID}` : null
   }));
@@ -114,19 +114,19 @@ export function generateScenario_DavidGoliath() {
   
   // Team 1: 1 Massive Squad of 9 (Unlocked)
   for (let i = 0; i < 9; i++) {
-    players.push({ steamID: `t1_giant_${i}`, name: `Giant_${i}`, teamID: 1, squadID: 1 });
+    players.push({ eosID: `t1_giant_${i}`, name: `Giant_${i}`, teamID: 1, squadID: 1 });
   }
   
   // Team 1: Fill with some small locked squads to create bulk (e.g., 21 more players = 30 total)
   for (let i = 0; i < 21; i++) {
     const squadID = 2 + Math.floor(i / 3); // Squads of 3
-    players.push({ steamID: `t1_filler_${i}`, name: `Filler_${i}`, teamID: 1, squadID: squadID });
+    players.push({ eosID: `t1_filler_${i}`, name: `Filler_${i}`, teamID: 1, squadID: squadID });
   }
 
   // Team 2: 10 players in small locked squads (Squads of 2)
   for (let i = 0; i < 10; i++) {
     const squadID = 100 + Math.floor(i / 2);
-    players.push({ steamID: `t2_small_${i}`, name: `Small_${i}`, teamID: 2, squadID: squadID });
+    players.push({ eosID: `t2_small_${i}`, name: `Small_${i}`, teamID: 2, squadID: squadID });
   }
 
   const squads = generateMockSquads(players);
