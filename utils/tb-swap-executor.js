@@ -3,12 +3,43 @@
  * ║                   SWAP EXECUTION ENGINE                       ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * Part of the TeamBalancer Plugin
+ * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * This class is responsible for the execution of team scramble plans. It manages a queue of
- * player moves, handling RCON commands with retry logic, timeout protection, and error handling.
- * It supports both "dry runs" (simulation) and live execution, and provides real-time feedback
- * to Discord via the DiscordHelpers module upon completion.
+ * Executes team scramble swap plans via RCON. Manages a pending-move
+ * queue with retry logic, timeout protection, and post-execution
+ * verification. Supports both live and dry-run (simulation) modes.
+ *
+ * ─── EXPORTS ─────────────────────────────────────────────────────
+ *
+ * SwapExecutor (default)
+ *   Class. Key public methods:
+ *     queueMove(eosID, targetTeamID, isSimulated) — Add a player to the move queue.
+ *     waitForCompletion(timeoutMs, intervalMs)     — Await queue drain or timeout.
+ *     cleanup()                                    — Cancel timers and clear all state.
+ *
+ * ─── DEPENDENCIES ────────────────────────────────────────────────
+ *
+ * Logger (../../core/logger.js)
+ *   Verbose logging for move attempts, retries, and session summary.
+ * DiscordHelpers (./tb-discord-helpers.js)
+ *   Sends scramble-completed embed to Discord on session end.
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Queue is processed on a setInterval at changeTeamRetryInterval ms.
+ *   A separate setTimeout enforces the maxScrambleCompletionTime hard cap.
+ * - Move is considered complete when the player is observed on the
+ *   correct team, or when they disconnect (counted separately).
+ * - RCON identifier prefers steamID, falls back to player name with a
+ *   warning log. Max 5 RCON attempts per player before marking failed.
+ * - verifyMoves() calls server.updatePlayerList() before checking final
+ *   team positions. Falls back to session counters if the update fails.
+ * - cleanup() is safe to call at any time; idempotent.
+ *
+ * Author:
+ * Discord: `real_slacker`
+ *
+ * ═══════════════════════════════════════════════════════════════
  */
 
 import Logger from '../../core/logger.js';

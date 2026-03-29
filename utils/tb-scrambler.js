@@ -1,44 +1,54 @@
 /**
  * ╔═══════════════════════════════════════════════════════════════╗
- * ║             SQUAD-PRESERVING TEAM SCRAMBLE ALGORITHM          ║
+ * ║          SQUAD-PRESERVING TEAM SCRAMBLE ALGORITHM             ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * This algorithm rebalances teams by swapping whole squads and unassigned 
- * players. It utilizes a Dynamic Tiered Escalation system to ensure numerical 
- * parity while protecting friend-group cohesion and team identity.
+ * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * THE PROCESS INVOLVES:
+ * Pure logic module implementing the squad-preserving team scramble
+ * algorithm. Accepts a snapshot of squads and players, computes the
+ * optimal swap plan via exhaustive tiered search, and returns a move
+ * list. Does not execute RCON commands — execution is SwapExecutor's job.
  *
- * 1. DATA PREPARATION: Normalizes snapshots. Unassigned players are 
- * treated as individual "pseudo-squads" for maximum movement flexibility.
+ * ─── EXPORTS ─────────────────────────────────────────────────────
  *
- * 2. TARGET CALCULATION: Establishes movement goals based on the 
- * scramblePercentage and current team population deltas.
+ * Scrambler (named)
+ *   Object with one public method:
+ *     scrambleTeamsPreservingSquads({ squads, players, winStreakTeam,
+ *       scramblePercentage, eloMap, debug })
+ *       Returns an Array of { eosID, targetTeamID } move objects,
+ *       with a calculationTime property attached to the array.
  *
- * 3. EXHAUSTIVE OPTIMIZATION (500 ATTEMPTS):
- *    - Phase 1 (Pure Swaps): 0-50% of attempts focus on whole-squad moves.
- *    - Phase 2 (Surgical Unlocked): 50-100% of attempts allow shattering
- *    ONE random unlocked squad to solve precision balance issues.
- *    Locked squads are never split under any circumstances.
+ * ─── DEPENDENCIES ────────────────────────────────────────────────
  *
- * 4. SCORING & PENALTIES:
- *    - balanceScore: Exponential penalty for team differentials > 2.
- *    - sizeDeviationPenalty: Moderate penalty for significant underpopulation.
- *    - eloBalancePenalty (0-480 pts): Global mean TrueSkill diff, capped below locked squad protection.
- *    - veteranPenalty: Penalizes imbalanced regular player counts between teams (max 300 pts).
- * 
- * 5. CAP ENFORCEMENT: A final corrective pass ensures no team exceeds 
- * server limits, trimming overages in the order: 
- * Unassigned -> Unlocked Players -> Locked Players.
+ * Logger (../../core/logger.js)
+ *   Verbose logging for phase transitions and scoring.
  *
- * VALIDATION:
- * This algorithm is stress-tested via 'utils/scrambler-test-runner.js'. 
- * Baseline performance: ~1.5ms per exhaustive search at 100% success.
- * 
- * RELATION TO OTHER FILES:
- * This module acts as a pure logic provider. It accepts snapshots, calculates 
- * the optimal moves, and returns a 'swap plan'. It does not execute RCON 
- * commands; execution is handled by the SwapExecutor.
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Unassigned players are treated as individual pseudo-squads to
+ *   maximise movement flexibility without breaking formed squads.
+ * - Four-phase escalation (500 iterations total):
+ *     Phase 1 — Pure squad swaps only. Maximises cohesion.
+ *     Phase 2 — Shatters one random UNLOCKED squad if balance is poor.
+ *     Phase 3 — Late fallback: may split one LOCKED squad.
+ *     Phase 4 — Nuclear: decomposes all squads for maximum balance (last 5 iterations).
+ * - Scoring penalties (lower = better):
+ *     balanceScore        — Exponential penalty for team diff > 2.
+ *     sizeDeviationPenalty — Penalty for significant underpopulation.
+ *     eloBalancePenalty   — Global mean mu diff (ELO mode only).
+ *     veteranPenalty      — Imbalanced regular player counts (ELO mode only).
+ *     anchorPenalty       — Moving >2 large squads from one team (Heuristic mode only).
+ * - eloMap is optional. When present, heuristic penalties are replaced by ELO parity scoring.
+ * - Cap enforcement runs as a final pass, trimming team overages in
+ *   priority order: Unassigned → Unlocked Squad Members. Locked players are never moved.
+ * - Baseline performance: ~5–20ms per exhaustive search, 99.9% balance
+ *   success rate (diff ≤ 2 players) under standard conditions.
+ *
+ * Author:
+ * Discord: `real_slacker`
+ *
+ * ═══════════════════════════════════════════════════════════════
  */
 
 import Logger from '../../core/logger.js';

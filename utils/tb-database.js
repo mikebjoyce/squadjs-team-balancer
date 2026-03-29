@@ -3,12 +3,46 @@
  * ║                     PERSISTENCE LAYER                         ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * Part of the TeamBalancer Plugin
+ * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * This class manages the persistence layer for the TeamBalancer plugin using Sequelize (SQLite).
- * It handles saving and restoring critical state data such as win streaks, team IDs, and timestamps
- * across server restarts. It ensures data integrity by checking for stale state upon initialization
- * and provides methods for the main plugin instance to update persistent records.
+ * SQLite persistence layer for the TeamBalancer plugin. Stores and
+ * restores win streak state, last scramble timestamp, and manually
+ * disabled flag across server restarts via Sequelize ORM.
+ *
+ * ─── EXPORTS ─────────────────────────────────────────────────────
+ *
+ * TBDatabase (default)
+ *   Class. Key public methods:
+ *     initDB()                          — Sync model, seed state row, check staleness.
+ *     saveState(team, count, ...)       — Overwrite full streak state.
+ *     incrementStreak(winnerID, ...)    — Atomic increment of the dominant win streak.
+ *     saveScrambleTime(timestamp)       — Persist last scramble timestamp.
+ *     saveManuallyDisabledState(bool)   — Persist manual disable flag.
+ *     runConcurrencyTest()              — Parallel write stress test for DB verification.
+ *
+ * ─── DEPENDENCIES ────────────────────────────────────────────────
+ *
+ * sequelize (Sequelize)
+ *   ORM for SQLite. Injected via connectors.sqlite.
+ * Logger (../../core/logger.js)
+ *   Verbose error logging on all caught DB exceptions.
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - All operations go through _executeWithRetry() — retries up to 5×
+ *   on SQLITE_BUSY with 200ms + random jitter backoff.
+ * - A promise-chain mutex is attached to the Sequelize instance to
+ *   serialise concurrent writes and prevent lock contention.
+ * - State is considered stale if lastSyncTimestamp is older than
+ *   STALE_CUTOFF_MS (2.5 hours). Stale state resets streak on load
+ *   but preserves lastScrambleTime.
+ * - manuallyDisabled persists across restarts — the admin must
+ *   explicitly re-enable via !teambalancer on.
+ *
+ * Author:
+ * Discord: `real_slacker`
+ *
+ * ═══════════════════════════════════════════════════════════════
  */
 
 import Sequelize from 'sequelize';

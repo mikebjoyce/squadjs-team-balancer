@@ -1,4 +1,4 @@
-import Scrambler from '../utils/tb-scrambler.js';
+import { Scrambler } from '../utils/tb-scrambler.js';
 import { generateMockPlayers, generateMockSquads, transformForScrambler, generateScenario_AllLocked, generateScenario_DavidGoliath } from './mock-data-generator.js';
 
 // Helper to analyze team composition (Large vs Small vs Solo)

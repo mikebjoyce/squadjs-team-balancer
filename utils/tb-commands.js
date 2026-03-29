@@ -3,12 +3,47 @@
  * ║                PLAYER COMMAND & RESPONSE LOGIC                ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * Part of the TeamBalancer Plugin
+ * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * This module registers command handlers for the TeamBalancer plugin, managing in-game chat interactions.
- * It processes commands like !teambalancer (status, on, off, diag) and !scramble (now, dry, cancel),
- * validating permissions and arguments. It utilizes DiscordHelpers to mirror command execution to Discord
- * and interacts with the core TeamBalancer instance to trigger logic such as enabling/disabling tracking.
+ * Registers in-game and Discord command handlers onto the TeamBalancer
+ * plugin instance. Handles !teambalancer and !scramble commands with
+ * permission enforcement, argument parsing, and response formatting.
+ *
+ * ─── EXPORTS ─────────────────────────────────────────────────────
+ *
+ * CommandHandlers (default)
+ *   Object with a single register(tb) method. Mutates the TeamBalancer
+ *   instance by attaching methods directly onto it:
+ *     respond(player, msg)              — rcon.warn wrapper with logging.
+ *     formatMessage(template, values)   — Simple {key} string interpolation.
+ *     onTeamBalancerCommand(info)       — Handles !teambalancer chat commands.
+ *     onScrambleCommand(info)           — Handles !scramble chat commands.
+ *     onDiscordMessage(message)         — Handles Discord !teambalancer and !scramble commands.
+ *
+ * ─── DEPENDENCIES ────────────────────────────────────────────────
+ *
+ * Logger (../../core/logger.js)
+ *   Verbose logging for command responses and permission failures.
+ * DiscordHelpers (./tb-discord-helpers.js)
+ *   Status and diagnostic embed builders for Discord responses.
+ * TBDiagnostics (./tb-diagnostics.js)
+ *   Diagnostic runner invoked by !teambalancer diag.
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Admin permission is checked via server.getAdminPermBySteamID() or
+ *   the discordAdminRoleID role check. devMode bypasses both.
+ * - !scramble confirm has a scrambleConfirmationTimeout window. Pending
+ *   state is stored on tb.scrambleConfirmation.
+ * - Discord commands mirror the in-game admin command set. Public
+ *   commands are available to all users in the configured channel.
+ * - formatMessage replaces {key} placeholders — not a full template
+ *   engine. Values not found in the params object are left as-is.
+ *
+ * Author:
+ * Discord: `real_slacker`
+ *
+ * ═══════════════════════════════════════════════════════════════
  */
 
 import Logger from '../../core/logger.js';
@@ -269,6 +304,13 @@ const CommandHandlers = {
               ? `${this.getTeamName(this.winStreakTeam)}: ${this.winStreakCount} / ${maxStreak} wins`
               : `None (Threshold: ${maxStreak} wins)`;
 
+            const maxConsec = this.options.maxConsecutiveWinsWithoutThreshold;
+            const consecText = maxConsec > 0
+              ? (this.consecutiveWinsTeam
+                  ? `${this.getTeamName(this.consecutiveWinsTeam)}: ${this.consecutiveWinsCount} / ${maxConsec} wins`
+                  : `None (Threshold: ${maxConsec} wins)`)
+              : 'Disabled';
+
             // Format the last scramble timestamp (Relative for in-game)
             let lastScrambleText = 'Never';
             if (this.lastScrambleTime) {
@@ -300,6 +342,7 @@ const CommandHandlers = {
               `Plugin Status: ${effectiveStatus}`,
               `Elo Integration: ${eloStatus}`,
               `Win Streak: ${winStreakText}`,
+              `Consecutive Wins: ${consecText}`,
               `Last Scramble: ${lastScrambleText}`,
               `Players: ${players.length} (T1: ${t1Count} | T2: ${t2Count})`,
               `Layer: ${currentLayer}`,
@@ -359,6 +402,12 @@ const CommandHandlers = {
                   : 'N/A'
               }`,
               `Max Win Streak Threshold: ${this.options.maxWinStreak} wins`,
+              `Consecutive Win Streak: ${
+                this.consecutiveWinsTeam
+                  ? `${this.getTeamName(this.consecutiveWinsTeam)} with ${this.consecutiveWinsCount} win(s)`
+                  : 'N/A'
+              }`,
+              `Max Consecutive Threshold: ${this.options.maxConsecutiveWinsWithoutThreshold || 'Disabled'}`,
               `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
               `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
               `Scramble System: ${scrambleInfo}`,
