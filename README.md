@@ -20,7 +20,7 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 * **Seed Auto-Scramble**: Automatically scrambles teams at the end of a Seed round when server population crosses a configurable threshold, ensuring balanced teams as the server fills up.
 
-* **ELO-Weighted Balancing**: Optional integration with EloTracker. When `useEloForBalance` is enabled, the scoring function switches to an ELO-weighted branch: mu difference penalty + veteran parity penalty + numerical balance. The standard heuristic penalties (churn, anchor, cohesion, infantry overload) are replaced entirely, not supplemented.
+* **ELO-Weighted Balancing**: Optional integration with EloTracker. When `useEloForBalance` is enabled, the scoring function switches to an ELO-weighted branch: mu difference penalty + regular parity penalty + numerical balance. The standard heuristic penalties (churn, anchor, cohesion, infantry overload) are replaced entirely, not supplemented.
 
 * **Discord Integration**: Administer the plugin via Discord, mirror RCON broadcasts, and view detailed swap plans.
 
@@ -44,7 +44,7 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 **[squadjs-elo-tracker](https://github.com/mikebjoyce/squadjs-elo-tracker)**
 
-Tracks per-player TrueSkill ratings (μ/σ) across rounds. When `useEloForBalance` is enabled, TeamBalancer pulls live mu ratings and veteran player counts from EloTracker at scramble time and factors them into the swap scoring — preventing skill stacks from reforming after a scramble.
+Tracks per-player TrueSkill ratings (μ/σ) across rounds. When `useEloForBalance` is enabled, its scoring function switches to an ELO-weighted branch. It pulls live mu ratings and regular player counts from EloTracker at scramble time, evaluating mu difference, regular parity, and numerical balance (replacing its standard heuristic penalties). This prevents skill stacks from reforming after a scramble.
 
 **Why this matters**: Numerical balance alone can still produce lopsided matches if high-skill players cluster on one side. ELO-aware balancing distributes skill more evenly alongside headcount.
 
@@ -78,7 +78,7 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
   * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues.
   * **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to achieve maximum numerical balance. Runs for the last 5 iterations.
 
-* **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (mu diff + veteran parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
+* **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (mu diff + regular parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
 
 * **Identity Preservation**: In heuristic (non-ELO) mode, a penalty discourages moving more than 2 large infantry squads from a single team per scramble.
 
