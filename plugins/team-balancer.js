@@ -373,6 +373,7 @@ export default class TeamBalancer extends BasePlugin {
     this.listeners.onRoundEnded = this.onRoundEnded.bind(this);
     this.listeners.onNewGame = this.onNewGame.bind(this);
     this.listeners.onLayerInfoUpdated = this.onLayerInfoUpdated.bind(this);
+    this.listeners.onServerInfoUpdated = this.onServerInfoUpdated.bind(this);
     this.listeners.onChatCommand = this.onChatCommand.bind(this);
     this.listeners.onScrambleCommand = this.onScrambleCommand.bind(this);
     this.listeners.onChatMessage = this.onChatMessage.bind(this);
@@ -440,6 +441,7 @@ export default class TeamBalancer extends BasePlugin {
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.removeListener('NEW_GAME', this.listeners.onNewGame);
     this.server.removeListener('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
+    this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
     this.server.removeListener('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.removeListener('CHAT_MESSAGE', this.listeners.onChatMessage);
@@ -448,6 +450,7 @@ export default class TeamBalancer extends BasePlugin {
       ROUND_ENDED: this.server.listenerCount('ROUND_ENDED'),
       NEW_GAME: this.server.listenerCount('NEW_GAME'),
       UPDATED_LAYER_INFORMATION: this.server.listenerCount('UPDATED_LAYER_INFORMATION'),
+      UPDATED_SERVER_INFORMATION: this.server.listenerCount('UPDATED_SERVER_INFORMATION'),
       'CHAT_COMMAND:teambalancer': this.server.listenerCount('CHAT_COMMAND:teambalancer'),
       'CHAT_COMMAND:scramble': this.server.listenerCount('CHAT_COMMAND:scramble'),
       CHAT_MESSAGE: this.server.listenerCount('CHAT_MESSAGE')
@@ -457,6 +460,7 @@ export default class TeamBalancer extends BasePlugin {
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.on('NEW_GAME', this.listeners.onNewGame);
     this.server.on('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
+    this.server.on('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.on('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
     this.server.on('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.on('CHAT_MESSAGE', this.listeners.onChatMessage);
@@ -494,6 +498,7 @@ export default class TeamBalancer extends BasePlugin {
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.removeListener('NEW_GAME', this.listeners.onNewGame);
     this.server.removeListener('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
+    this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
     this.server.removeListener('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.removeListener('CHAT_MESSAGE', this.listeners.onChatMessage);
@@ -516,6 +521,21 @@ export default class TeamBalancer extends BasePlugin {
   // ║          POLLING MECHANISMS           ║
   // ╚═══════════════════════════════════════╝
 
+  inferGameMode(layerName) {
+    if (!layerName) return 'Unknown';
+    const name = layerName.toLowerCase();
+    if (name.includes('seed')) return 'Seed';
+    if (name.includes('invasion')) return 'Invasion';
+    if (name.includes('raas')) return 'RAAS';
+    if (name.includes('aas')) return 'AAS';
+    if (name.includes('tc')) return 'TC';
+    if (name.includes('skirmish')) return 'Skirmish';
+    if (name.includes('insurgency')) return 'Insurgency';
+    if (name.includes('destruction')) return 'Destruction';
+    if (name.includes('jensen')) return 'Jensen';
+    return 'Unknown';
+  }
+
   async resolveLayerInfo(layerData, source = 'Unknown') {
     let layer = layerData;
     if (layer instanceof Promise) {
@@ -537,12 +557,13 @@ export default class TeamBalancer extends BasePlugin {
 
     if (typeof layer === 'string') {
       name = layer;
-      Logger.verbose('TeamBalancer', 2, `[${source}] Layer is a string ("${layer}"), gamemode unknown.`);
+      gamemode = this.inferGameMode(name);
+      Logger.verbose('TeamBalancer', 4, `[${source}] Layer is a string ("${layer}"), inferred gamemode: ${gamemode}.`);
     } else if (typeof layer === 'object') {
-      gamemode = layer.gamemode || 'Unknown';
       name = layer.name || layer.layer || 'Unknown';
+      gamemode = layer.gamemode || this.inferGameMode(name);
       if (gamemode === 'Unknown' || name === 'Unknown') {
-         Logger.verbose('TeamBalancer', 2, `[${source}] Layer object missing properties: ${JSON.stringify(layer)}`);
+         Logger.verbose('TeamBalancer', 4, `[${source}] Layer object missing properties: ${JSON.stringify(layer)}`);
       }
     }
 
@@ -563,6 +584,21 @@ export default class TeamBalancer extends BasePlugin {
       }
     } catch (err) {
       Logger.verbose('TeamBalancer', 4, `Error in onLayerInfoUpdated: ${err.message}`);
+    }
+  }
+
+  async onServerInfoUpdated(info) {
+    try {
+      if (info && info.currentLayer) {
+        const resolved = await this.resolveLayerInfo(info.currentLayer, 'onServerInfoUpdated');
+        if (resolved && this._gameInfoPollingInterval) {
+          clearInterval(this._gameInfoPollingInterval);
+          this._gameInfoPollingInterval = null;
+          Logger.verbose('TeamBalancer', 4, 'Game info polling stopped (server info updated).');
+        }
+      }
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 4, `Error in onServerInfoUpdated: ${err.message}`);
     }
   }
 
