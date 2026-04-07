@@ -196,7 +196,7 @@ export const DiscordHelpers = {
     return embeds;
   },
 
-  async createScrambleDetailsMessage(swapPlan, isSimulated, teamBalancer) {
+  async createScrambleDetailsMessage(swapPlan, isSimulated, teamBalancer, eloMap = null) {
     const players = teamBalancer.server.players;
     const squads = teamBalancer.server.squads;
     const currentT1 = players.filter(p => p.teamID == 1).length;
@@ -231,6 +231,51 @@ export const DiscordHelpers = {
     const projT1 = currentT1 + movesToT1 - movesToT2;
     const projT2 = currentT2 + movesToT2 - movesToT1;
 
+    let balanceProjectionValue = `**Population:** Team 1 (${f1}): ${currentT1} ➔ ${projT1} | Team 2 (${f2}): ${currentT2} ➔ ${projT2}`;
+
+    if (eloMap) {
+      let t1Mu = 0, t2Mu = 0, t1Regs = 0, t2Regs = 0;
+      let t1Count = 0, t2Count = 0;
+      
+      let projT1Mu = 0, projT2Mu = 0, projT1Regs = 0, projT2Regs = 0;
+      let projT1Count = 0, projT2Count = 0;
+
+      for (const p of players) {
+        const rating = eloMap.get(p.eosID);
+        const mu = rating ? rating.mu : 25.0;
+        const isReg = rating && (rating.roundsPlayed || 0) >= 10;
+
+        // Baseline logic
+        if (String(p.teamID) === '1') {
+          t1Mu += mu; t1Count++;
+          if (isReg) t1Regs++;
+        } else if (String(p.teamID) === '2') {
+          t2Mu += mu; t2Count++;
+          if (isReg) t2Regs++;
+        }
+
+        // Projected logic (simulate the move)
+        const plannedMove = swapPlan.find(m => m.eosID === p.eosID);
+        const projectedTeam = plannedMove ? String(plannedMove.targetTeamID) : String(p.teamID);
+        
+        if (projectedTeam === '1') {
+          projT1Mu += mu; projT1Count++;
+          if (isReg) projT1Regs++;
+        } else if (projectedTeam === '2') {
+          projT2Mu += mu; projT2Count++;
+          if (isReg) projT2Regs++;
+        }
+      }
+
+      const avgT1 = t1Count > 0 ? (t1Mu / t1Count).toFixed(1) : '25.0';
+      const avgT2 = t2Count > 0 ? (t2Mu / t2Count).toFixed(1) : '25.0';
+      const pAvgT1 = projT1Count > 0 ? (projT1Mu / projT1Count).toFixed(1) : '25.0';
+      const pAvgT2 = projT2Count > 0 ? (projT2Mu / projT2Count).toFixed(1) : '25.0';
+
+      balanceProjectionValue += `\n**Average ELO:** Team 1: ${avgT1}μ ➔ ${pAvgT1}μ | Team 2: ${avgT2}μ ➔ ${pAvgT2}μ`;
+      balanceProjectionValue += `\n**Regulars:** Team 1: ${t1Regs} ➔ ${projT1Regs} | Team 2: ${t2Regs} ➔ ${projT2Regs}`;
+    }
+
     const embed = {
       color: isSimulated ? 0x9b59b6 : 0x2ecc71,
       title: isSimulated ? '🧪 Dry Run Scramble Plan' : '🔀 Scramble Execution Plan',
@@ -238,7 +283,7 @@ export const DiscordHelpers = {
       fields: [
         { 
           name: 'Balance Projection', 
-          value: `Team 1 (${f1}): ${currentT1} ➔ ${projT1} | Team 2 (${f2}): ${currentT2} ➔ ${projT2}`, 
+          value: balanceProjectionValue, 
           inline: false 
         }
       ],
@@ -250,30 +295,65 @@ export const DiscordHelpers = {
       if (data.playersTotal === 0) continue;
 
       let fieldValue = '';
-      let playersAdded = 0;
+      let partCount = 1;
       const squadEntries = Object.entries(data.squads);
 
       for (const [sID, playerIDs] of squadEntries) {
-        const names = this.resolveEOSIDsToNames(playerIDs, teamBalancer);
+        const names = this.resolveEOSIDsToNames(playerIDs, teamBalancer, eloMap);
         const squadName = sID === 'UNASSIGNED' ? 'UNASSIGNED' : (squads.find(s => String(s.squadID) === String(sID) && String(s.teamID) === String(data.srcID))?.squadName || `Squad ${sID}`);
-        const line = `**${squadName}** — ${names.join(', ')}`;
-        const nextValue = fieldValue ? fieldValue + '\n' + line : line;
-
-        if (nextValue.length > 1024) {
-          const remaining = data.playersTotal - playersAdded;
-          const suffix = `\n...and ${remaining} more players`;
-          fieldValue = (fieldValue + suffix).length > 1024 ? fieldValue.substring(0, 1024 - suffix.length) + suffix : fieldValue + suffix;
-          break;
+        
+        let squadMuTotal = 0;
+        let squadRegs = 0;
+        if (eloMap) {
+          for (const eosID of playerIDs) {
+            const rating = eloMap.get(eosID);
+            if (rating) {
+              squadMuTotal += rating.mu;
+              if ((rating.roundsPlayed || 0) >= 10) squadRegs++;
+            } else {
+              squadMuTotal += 25.0; // Default Mu
+            }
+          }
         }
-        fieldValue = nextValue;
-        playersAdded += playerIDs.length;
+        const squadAvgMu = playerIDs.length > 0 ? (squadMuTotal / playerIDs.length).toFixed(1) : '25.0';
+
+        const header = eloMap 
+          ? `[${squadName} - ${squadAvgMu}μ | ${squadRegs} Regs]` 
+          : `[${squadName}]`;
+          
+        const line = `${header}\n${names.join(', ')}`;
+        
+        const codeBlockWrapLen = 13; // ```text\n ... \n```
+        if (fieldValue && fieldValue.length + line.length + 2 + codeBlockWrapLen > 1024) {
+          // Push current fieldValue as a field
+          const fieldName = partCount === 1 
+            ? `Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) [${data.playersTotal} players]`
+            : `Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) (Cont.)`;
+            
+          embed.fields.push({
+            name: fieldName,
+            value: `\`\`\`text\n${fieldValue}\n\`\`\``,
+            inline: false
+          });
+          
+          fieldValue = line;
+          partCount++;
+        } else {
+          fieldValue = fieldValue ? fieldValue + '\n\n' + line : line;
+        }
       }
 
-      embed.fields.push({
-        name: `Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) [${data.playersTotal} players]`,
-        value: fieldValue || 'None',
-        inline: false
-      });
+      if (fieldValue) {
+        const fieldName = partCount === 1 
+          ? `Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) [${data.playersTotal} players]`
+          : `Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) (Cont.)`;
+          
+        embed.fields.push({
+          name: fieldName,
+          value: `\`\`\`text\n${fieldValue}\n\`\`\``,
+          inline: false
+        });
+      }
     }
 
     if (swapPlan.length === 0) {
@@ -284,10 +364,21 @@ export const DiscordHelpers = {
     return embed;
   },
 
-  resolveEOSIDsToNames(eosIDs, teamBalancer) {
+  resolveEOSIDsToNames(eosIDs, teamBalancer, eloMap) {
     return eosIDs.map(eosID => {
       const player = teamBalancer.server.players.find(p => p.eosID === eosID);
-      return player ? player.name : `Unknown (${eosID.slice(0, 8)}...)`;
+      let nameStr = player ? player.name : `Unknown (${eosID.slice(0, 8)}...)`;
+      if (eloMap) {
+        const rating = eloMap.get(eosID);
+        if (rating) {
+            const isReg = (rating.roundsPlayed || 0) >= 10;
+            const regStar = isReg ? '★' : '';
+            nameStr = `${nameStr} [${rating.mu.toFixed(1)}${regStar}]`;
+        } else {
+            nameStr = `${nameStr} [25.0]`;
+        }
+      }
+      return nameStr;
     });
   },
 

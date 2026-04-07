@@ -3,12 +3,42 @@
  * ║                   SELF-DIAGNOSTICS SUITE                      ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
- * Part of the TeamBalancer Plugin
+ * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * Runs integrity checks on the database connection and performs
- * dry-run simulations of the Scrambler to verify plugin health. It interacts
- * with the main TeamBalancer instance to access the database and server state.
+ * Runs integrity checks against the live plugin instance. Verifies
+ * database read/write/restore cycles and performs a live dry-run
+ * scramble simulation against the current server population.
+ *
+ * ─── EXPORTS ─────────────────────────────────────────────────────
+ * 
+ * TBDiagnostics (named)
+ *   Class. Instantiate with a TeamBalancer instance.
+ *     runAll()         — Runs all tests; returns Array<{ name, pass, message }>.
+ *     testDatabase()   — DB read/write/restore cycle test.
+ *     testScrambler()  — Live scramble dry-run against current server state.
+ *
+ * ─── DEPENDENCIES ────────────────────────────────────────────────
+ *
+ * Logger (../../core/logger.js)
+ *   Verbose logging for test failures.
+ * Scrambler (./tb-scrambler.js)
+ *   Invoked directly for the dry-run scramble test.
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - testDatabase() writes a dummy value (999), verifies it, then
+ *   restores the original. Leaves the DB in its original state on
+ *   both pass and fail paths.
+ * - testScrambler() is skipped (not failed) if server population
+ *   is below 10 players. Result message reflects the skip reason.
+ * - Triggered by !teambalancer diag in-game or via Discord.
+ *
+ * Author:
+ * Discord: `real_slacker`
+ *
+ * ═══════════════════════════════════════════════════════════════
  */
+
 import Logger from '../../core/logger.js';
 import Scrambler from './tb-scrambler.js';
 

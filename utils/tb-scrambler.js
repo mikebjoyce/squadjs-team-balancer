@@ -59,7 +59,9 @@ export const Scrambler = {
     players,
     winStreakTeam,
     scramblePercentage = 0.5,
-    eloMap = null
+    eloMap = null,
+    minPlayersToMove = 0,
+    maxPlayersToMove = 0
   }) {
     const startTime = Date.now();
     const totalPlayers = players.length;
@@ -413,9 +415,17 @@ export const Scrambler = {
       
       const teamDiff = initialCounts.team1Count - initialCounts.team2Count;
       
-      // Randomize the base swap size from 0 up to targetPlayersToMove/2
-      const maxBaseSwap = Math.floor(targetPlayersToMove / 2);
-      const baseSwapSize = Math.floor(Math.random() * (maxBaseSwap + 1));
+      // Determine the swap range based on whether custom bounds were provided (ELO edge-case logic)
+      let currentMaxBaseSwap = Math.floor(targetPlayersToMove / 2);
+      let currentMinBaseSwap = 0;
+      
+      if (eloMap && minPlayersToMove > 0 && maxPlayersToMove >= minPlayersToMove) {
+        currentMinBaseSwap = Math.floor(minPlayersToMove / 2);
+        currentMaxBaseSwap = Math.floor(maxPlayersToMove / 2);
+      }
+
+      // Randomize the base swap size within the calculated bounds
+      const baseSwapSize = Math.floor(Math.random() * (currentMaxBaseSwap - currentMinBaseSwap + 1)) + currentMinBaseSwap;
       
       let targetMoveFromT1 = Math.round(baseSwapSize + (teamDiff / 4));
       let targetMoveFromT2 = Math.round(baseSwapSize - (teamDiff / 4));

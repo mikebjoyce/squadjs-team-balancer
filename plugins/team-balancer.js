@@ -1536,6 +1536,9 @@ export default class TeamBalancer extends BasePlugin {
       );
 
       let eloMap = null;
+      let minPlayersToMove = 0;
+      let maxPlayersToMove = 0;
+
       if (this.options.useEloForBalance) {
         const eloTrackerPlugin = this.server.plugins?.find(p => p.constructor.name === 'EloTracker');
         if (eloTrackerPlugin) {
@@ -1549,6 +1552,30 @@ export default class TeamBalancer extends BasePlugin {
               eloMap = await eloTrackerPlugin.getRatingsByEosIDs(eosIDs);
               Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ELO snapshot empty, fell back to DB read (${eloMap.size} players).`);
             }
+
+            // --- Enforce 40-55 Person Scramble for Edge Cases ---
+            // If teams are already extremely close in ELO (diff < 0.4), the scrambler 
+            // has no mathematical incentive to move players. To ensure a fresh match 
+            // feeling, we forcefully increase the churn bounds to a minimum of 40 
+            // and maximum of 55 players.
+            let t1Mu = 0, t2Mu = 0, t1Count = 0, t2Count = 0;
+            const defaultMu = 25.0;
+            for (const p of transformedPlayers) {
+              const rating = eloMap.get(p.eosID);
+              const mu = rating ? rating.mu : defaultMu;
+              if (p.teamID === '1') { t1Mu += mu; t1Count++; }
+              else if (p.teamID === '2') { t2Mu += mu; t2Count++; }
+            }
+            const avgT1 = t1Count > 0 ? (t1Mu / t1Count) : defaultMu;
+            const avgT2 = t2Count > 0 ? (t2Mu / t2Count) : defaultMu;
+            const muDelta = Math.abs(avgT1 - avgT2);
+
+            if (muDelta < 0.4) {
+              Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Pre-scramble ELO diff is extremely small (${muDelta.toFixed(2)}μ). Enforcing 40-55 person scramble bound.`);
+              minPlayersToMove = 40;
+              maxPlayersToMove = 55;
+            }
+
           } catch (err) {
             Logger.verbose('TeamBalancer', 1, `[TeamBalancer] ELO fetch failed, scrambling without ratings: ${err.message}`);
             eloMap = null;
@@ -1566,11 +1593,13 @@ export default class TeamBalancer extends BasePlugin {
         winStreakTeam: this.winStreakTeam,
         scramblePercentage: this.options.scramblePercentage,
         debug: this.options.debugLogs,
-        eloMap
+        eloMap,
+        minPlayersToMove,
+        maxPlayersToMove
       });
 
       if (this.discordChannel && this.options.postScrambleDetails) {
-        const embed = await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this);
+        const embed = await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this, eloMap);
         DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
       }
 
