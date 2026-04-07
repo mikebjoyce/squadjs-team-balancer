@@ -18,7 +18,7 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 * **Single-Round Scramble**: Optional "Mercy Rule" to scramble immediately after a single game with extreme ticket disparity.
 
-* **Seed Auto-Scramble**: Automatically scrambles teams at the end of a Seed round when server population crosses a configurable threshold, ensuring balanced teams as the server fills up.
+* **Seed Auto-Scramble**: Automatically scrambles teams at the end of a Seed round, ensuring balanced teams as the server fills up.
 
 * **ELO-Weighted Balancing**: Optional integration with EloTracker. When `useEloForBalance` is enabled, the scoring function switches to an ELO-weighted branch: mu difference penalty + regular parity penalty + numerical balance. The standard heuristic penalties (churn, anchor, cohesion, infantry overload) are replaced entirely, not supplemented.
 
@@ -114,7 +114,6 @@ Add to your `config.json`:
   "enableWinStreakTracking": true,
   "ignoredGameModes": ["Seed", "Jensen"],
   "enableSeedAutoScramble": true,
-  "seedAutoScramblePlayerThreshold": 80,
   "maxWinStreak": 2,
   "maxConsecutiveWinsWithoutThreshold": 0,
   "enableSingleRoundScramble": false,
@@ -194,8 +193,7 @@ Core Settings:
 database                            - Sequelize/SQLite connector for persistent storage.
 enableWinStreakTracking              - Enable/disable automatic win streak tracking.
 ignoredGameModes                    - Game modes or map names excluded from win streak tracking (default: ["Seed", "Jensen"]).
-enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round if pop threshold is met (default: true).
-seedAutoScramblePlayerThreshold     - Player count required at Seed round end to trigger auto-scramble (default: 80).
+enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round (default: true).
 
 Win Streak:
 maxWinStreak                        - Dominant wins in a row to trigger scramble (default: 2).

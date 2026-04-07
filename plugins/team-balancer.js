@@ -49,7 +49,7 @@
  * - ignoredGameModes matches against both gamemode and layerName
  *   (case-insensitive substring). Default: ["Seed", "Jensen"].
  * - enableSeedAutoScramble: scrambles automatically when a Seed round
- *   ends above seedAutoScramblePlayerThreshold. Independent of streak logic.
+ *   ends. Independent of streak logic.
  * - useEloForBalance: pulls mu ratings from a running EloTracker instance
  *   at scramble time. Gracefully falls back to pure numerical balance if
  *   EloTracker is absent or the cache is empty.
@@ -82,8 +82,7 @@
  *   database                           - Sequelize/SQLite connector.
  *   enableWinStreakTracking             - Enable automatic win streak tracking.
  *   ignoredGameModes                   - Modes/maps excluded from tracking (default: ["Seed", "Jensen"]).
- *   enableSeedAutoScramble             - Auto-scramble at end of Seed if pop threshold met.
- *   seedAutoScramblePlayerThreshold    - Player count to trigger seed auto-scramble (default: 80).
+ *   enableSeedAutoScramble             - Auto-scramble at end of Seed.
  *
  * Win Streak:
  *   maxWinStreak                       - Dominant wins to trigger scramble (default: 2).
@@ -131,7 +130,6 @@
  *   "enableWinStreakTracking": true,
  *   "ignoredGameModes": ["Seed", "Jensen"],
  *   "enableSeedAutoScramble": true,
- *   "seedAutoScramblePlayerThreshold": 80,
  *   "maxWinStreak": 2,
  *   "maxConsecutiveWinsWithoutThreshold": 0,
  *   "enableSingleRoundScramble": false,
@@ -176,7 +174,7 @@ import fs from 'fs';
 import path from 'path';
 
 export default class TeamBalancer extends BasePlugin {
-  static version = '3.0.0';
+  static version = '3.0.1';
 
   static get description() {
     return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';
@@ -206,12 +204,7 @@ export default class TeamBalancer extends BasePlugin {
       enableSeedAutoScramble: {
         default: true,
         type: 'boolean',
-        description: 'Automatically scramble teams when a Seed match ends and population threshold is met.'
-      },
-      seedAutoScramblePlayerThreshold: {
-        default: 80,
-        type: 'number',
-        description: 'Player count threshold required at the end of a Seed match to trigger an auto-scramble.'
+        description: 'Automatically scramble teams when a Seed match ends.'
       },
       maxWinStreak: {
         default: 2,
@@ -523,19 +516,49 @@ export default class TeamBalancer extends BasePlugin {
   // ║          POLLING MECHANISMS           ║
   // ╚═══════════════════════════════════════╝
 
+  async resolveLayerInfo(layerData, source = 'Unknown') {
+    let layer = layerData;
+    if (layer instanceof Promise) {
+      try {
+        layer = await layer;
+      } catch (err) {
+        Logger.verbose('TeamBalancer', 1, `[${source}] Failed to resolve layer promise: ${err.message}`);
+        layer = null;
+      }
+    }
+    
+    if (!layer) {
+      Logger.verbose('TeamBalancer', 2, `[${source}] Layer object is completely null or undefined.`);
+      return false;
+    }
+    
+    let gamemode = 'Unknown';
+    let name = 'Unknown';
+
+    if (typeof layer === 'string') {
+      name = layer;
+      Logger.verbose('TeamBalancer', 2, `[${source}] Layer is a string ("${layer}"), gamemode unknown.`);
+    } else if (typeof layer === 'object') {
+      gamemode = layer.gamemode || 'Unknown';
+      name = layer.name || layer.layer || 'Unknown';
+      if (gamemode === 'Unknown' || name === 'Unknown') {
+         Logger.verbose('TeamBalancer', 2, `[${source}] Layer object missing properties: ${JSON.stringify(layer)}`);
+      }
+    }
+
+    this.gameModeCached = gamemode;
+    this.layerNameCached = name;
+    this.lastKnownGoodLayer = { gamemode, name };
+    Logger.verbose('TeamBalancer', 4, `[${source}] Layer info updated: ${gamemode} / ${name}`);
+    return true;
+  }
+
   async onLayerInfoUpdated() {
     try {
-      const layer = this.server.currentLayer;
-      if (!layer || !layer.gamemode) return;
-
-      this.gameModeCached = layer.gamemode;
-      this.layerNameCached = layer.name;
-      this.lastKnownGoodLayer = { gamemode: layer.gamemode, name: layer.name };
-      Logger.verbose('TeamBalancer', 4, `[onLayerInfoUpdated] Layer cached: ${this.gameModeCached} / ${this.layerNameCached}`);
-
-      if (this.gameInfoPollInterval) {
-        clearInterval(this.gameInfoPollInterval);
-        this.gameInfoPollInterval = null;
+      const resolved = await this.resolveLayerInfo(this.server.currentLayer, 'onLayerInfoUpdated');
+      if (resolved && this._gameInfoPollingInterval) {
+        clearInterval(this._gameInfoPollingInterval);
+        this._gameInfoPollingInterval = null;
         Logger.verbose('TeamBalancer', 4, 'Game info polling stopped (layer info updated).');
       }
     } catch (err) {
@@ -547,15 +570,11 @@ export default class TeamBalancer extends BasePlugin {
     Logger.verbose('TeamBalancer', 4, 'Starting game info polling.');
     const pollGameInfo = async () => {
       try {
-        const layer = this.server.currentLayer;
-        if (layer && layer.gamemode) {
-          this.gameModeCached = layer.gamemode;
-          this.layerNameCached = layer.name;
-          this.lastKnownGoodLayer = { gamemode: layer.gamemode, name: layer.name };
-          Logger.verbose('TeamBalancer', 4, `Game mode/layer resolved and cached: ${this.gameModeCached} / ${this.layerNameCached}`);
-          if (this.gameInfoPollInterval) {
-            clearInterval(this.gameInfoPollInterval);
-            this.gameInfoPollInterval = null;
+        const resolved = await this.resolveLayerInfo(this.server.currentLayer, 'startPollingGameInfo');
+        if (resolved) {
+          if (this._gameInfoPollingInterval) {
+            clearInterval(this._gameInfoPollingInterval);
+            this._gameInfoPollingInterval = null;
             Logger.verbose('TeamBalancer', 4, 'Game info polling stopped.');
           }
         } else {
@@ -566,7 +585,7 @@ export default class TeamBalancer extends BasePlugin {
       }
     };
     await pollGameInfo();
-    this.gameInfoPollInterval = setInterval(pollGameInfo, 10000); // Poll every 10 seconds.
+    this._gameInfoPollingInterval = setInterval(pollGameInfo, 10000); // Poll every 10 seconds.
   }
 
   stopPollingGameInfo() {
@@ -880,13 +899,13 @@ export default class TeamBalancer extends BasePlugin {
       this.layerNameCached = null;
       this.cachedAbbreviations = {};
 
-      if (data && data.layer && data.layer.gamemode) {
-        this.gameModeCached = data.layer.gamemode;
-        this.layerNameCached = data.layer.name;
-        this.lastKnownGoodLayer = { gamemode: data.layer.gamemode, name: data.layer.name };
-        Logger.verbose('TeamBalancer', 4, `[onNewGame] Layer info cached from event: ${this.gameModeCached} / ${this.layerNameCached}`);
-      } else {
-        this.startPollingGameInfo();
+      let layerResolved = false;
+      if (data && data.layer) {
+         layerResolved = await this.resolveLayerInfo(data.layer, 'onNewGame');
+      }
+      
+      if (!layerResolved) {
+         this.startPollingGameInfo();
       }
 
       this.startPollingTeamAbbreviations();
@@ -1005,20 +1024,18 @@ export default class TeamBalancer extends BasePlugin {
         let shouldScramble = false;
         if (this.isSeedMatch() && this.options.enableSeedAutoScramble) {
           const playerCount = this.server.players.length;
-          if (playerCount >= this.options.seedAutoScramblePlayerThreshold) {
-            shouldScramble = true;
-            roundReport.scrambled = true;
-            roundReport.scrambleCondition = 'Seed Auto Scramble';
-            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Seed match ended with ${playerCount} players. Triggering auto-scramble.`);
-            const msg = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.seedScrambleAnnouncement, { delay: this.options.scrambleAnnouncementDelay })}`;
-            try {
-              await this.server.rcon.broadcast(msg);
-            } catch (err) {
-              Logger.verbose('TeamBalancer', 1, `Failed to broadcast seed scramble announcement: ${err.message}`);
-            }
-            this.mirrorRconToDiscord(msg, 'warning');
-            this.initiateScramble(false, false);
+          shouldScramble = true;
+          roundReport.scrambled = true;
+          roundReport.scrambleCondition = 'Seed Auto Scramble';
+          Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Seed match ended with ${playerCount} players. Triggering auto-scramble.`);
+          const msg = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.seedScrambleAnnouncement, { delay: this.options.scrambleAnnouncementDelay })}`;
+          try {
+            await this.server.rcon.broadcast(msg);
+          } catch (err) {
+            Logger.verbose('TeamBalancer', 1, `Failed to broadcast seed scramble announcement: ${err.message}`);
           }
+          this.mirrorRconToDiscord(msg, 'warning');
+          this.initiateScramble(false, false);
         }
 
         if (!shouldScramble) {
