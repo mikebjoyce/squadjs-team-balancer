@@ -32,7 +32,7 @@
  * ─── NOTES ───────────────────────────────────────────────────────
  *
  * - Admin permission is checked via server.getAdminPermBySteamID() or
- *   the discordAdminRoleID role check. devMode bypasses both.
+ *   the discordAdminRoleIDs role check. devMode bypasses both.
  * - !scramble confirm has a scrambleConfirmationTimeout window. Pending
  *   state is stored on tb.scrambleConfirmation.
  * - Discord commands mirror the in-game admin command set. Public
@@ -438,11 +438,12 @@ const CommandHandlers = {
             ].join('\n');
             const response = await this.respond(player, diagMsg);
 
-            if (this.discordChannel) {
+            const targetReportChannel = this.discordReportChannel || this.discordChannel;
+            if (targetReportChannel) {
               const embeds = DiscordHelpers.buildDiagEmbeds(this, results);
               // Add context to the first embed description
               embeds[0].description = `Executed by **${adminName}** (In-Game)\n${embeds[0].description}`;
-              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds });
+              await DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds });
             }
             return response;
           }
@@ -508,16 +509,16 @@ const CommandHandlers = {
           } else {
             return await this.respond(player, 'No pending scramble to cancel.');
           }
-          if (this.discordChannel) {
-            const embed = {
-              color: 0x3498db,
-              title: '🎮 In-Game Command: !scramble cancel',
-              description: `Executed by **${adminName}**`,
-              fields: [{ name: 'Response', value: cancelled ? 'Pending scramble cancelled.' : 'No pending scramble to cancel.', inline: false }],
-              timestamp: new Date().toISOString()
-            };
-            await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
-          }
+            if (this.discordChannel) {
+              const embed = {
+                color: 0x3498db,
+                title: '🎮 In-Game Command: !teambalancer on',
+                description: `Executed by **${adminName}**`,
+                fields: [{ name: 'Response', value: 'Win streak tracking enabled.', inline: false }],
+                timestamp: new Date().toISOString()
+              };
+              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+            }
           return;
         }
 

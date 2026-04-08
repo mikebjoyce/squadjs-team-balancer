@@ -108,8 +108,9 @@
  *
  * Discord:
  *   discordClient                      - Discord connector name.
- *   discordChannelID                   - Channel for admin commands and logs.
- *   discordAdminRoleID                 - Role required for Discord admin commands (empty = all).
+ *   discordAdminChannelID              - Channel for admin commands.
+ *   discordReportChannelID             - Channel for automated reports (win streaks, scramble plans, errors). Defaults to admin channel if unset.
+ *   discordAdminRoleIDs                - Array of Role IDs required for Discord admin commands (empty = all in channel).
  *   mirrorRconBroadcasts               - Mirror RCON broadcasts to Discord.
  *   postScrambleDetails                - Post detailed swap plan to Discord after scramble.
  *
@@ -147,8 +148,9 @@
  *   "requireScrambleConfirmation": true,
  *   "scrambleConfirmationTimeout": 60,
  *   "discordClient": "discord",
- *   "discordChannelID": "",
- *   "discordAdminRoleID": "",
+ *   "discordAdminChannelID": "",
+ *   "discordReportChannelID": "",
+ *   "discordAdminRoleIDs": [],
  *   "mirrorRconBroadcasts": true,
  *   "postScrambleDetails": true,
  *   "useEloForBalance": false,
@@ -269,20 +271,26 @@ export default class TeamBalancer extends BasePlugin {
         description: 'Discord connector for admin commands and event logging.',
         default: 'discord'
       },
-      discordChannelID: {
+      discordAdminChannelID: {
         required: false,
-        description: 'Discord channel ID for admin commands and event mirroring.',
+        description: 'Discord channel ID for admin commands. Falls back to discordChannelID if unset.',
         default: ''
       },
-      discordAdminRoleID: {
+      discordReportChannelID: {
         required: false,
-        description: 'Discord role ID for admin permissions. Leave empty to allow all users in channel.',
+        description: 'Discord channel ID for automated reports (win streaks, scramble plans, errors). Defaults to admin channel if unset.',
         default: ''
+      },
+      discordAdminRoleIDs: {
+        required: false,
+        type: 'array',
+        description: 'List of Discord role IDs that have admin permissions. Leave empty to allow all users in the admin channel.',
+        default: []
       },
       mirrorRconBroadcasts: {
         default: true,
         type: 'boolean',
-        description: 'Mirror RCON broadcasts to Discord channel.'
+        description: 'Mirror RCON broadcasts to Discord.'
       },
       postScrambleDetails: {
         default: true,
@@ -317,6 +325,17 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   validateOptions() {
+    // Backwards compatibility for older configs
+    if (!this.options.discordAdminChannelID && this.options.discordChannelID) {
+      this.options.discordAdminChannelID = this.options.discordChannelID;
+    }
+    if (!this.options.discordReportChannelID) {
+      this.options.discordReportChannelID = this.options.discordAdminChannelID;
+    }
+    if ((!this.options.discordAdminRoleIDs || this.options.discordAdminRoleIDs.length === 0) && this.options.discordAdminRoleID) {
+      this.options.discordAdminRoleIDs = [this.options.discordAdminRoleID];
+    }
+
     if (this.options.scrambleAnnouncementDelay < 10) {
       Logger.verbose('TeamBalancer', 1, `scrambleAnnouncementDelay (${this.options.scrambleAnnouncementDelay}s) too low. Enforcing minimum 10 seconds.`);
       this.options.scrambleAnnouncementDelay = 10;
@@ -428,13 +447,24 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 1, `[DB] mount/initDB failed: ${err.message}`);
     }
 
-    if (this.options.discordClient && this.options.discordChannelID) {
-      try {
-        this.discordChannel = await this.options.discordClient.channels.fetch(this.options.discordChannelID);
-        Logger.verbose('TeamBalancer', 2, `Discord channel connected: ${this.discordChannel.name}`);
-        this.options.discordClient.on('message', this.listeners.onDiscordMessage);
-      } catch (err) {
-        Logger.verbose('TeamBalancer', 1, `Failed to fetch Discord channel: ${err.message}`);
+    if (this.options.discordClient) {
+      if (this.options.discordAdminChannelID) {
+        try {
+          this.discordChannel = await this.options.discordClient.channels.fetch(this.options.discordAdminChannelID);
+          Logger.verbose('TeamBalancer', 2, `Discord admin channel connected: ${this.discordChannel.name}`);
+          this.options.discordClient.on('message', this.listeners.onDiscordMessage);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `Failed to fetch Discord admin channel: ${err.message}`);
+        }
+      }
+      
+      if (this.options.discordReportChannelID) {
+        try {
+          this.discordReportChannel = await this.options.discordClient.channels.fetch(this.options.discordReportChannelID);
+          Logger.verbose('TeamBalancer', 2, `Discord report channel connected: ${this.discordReportChannel.name}`);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `Failed to fetch Discord report channel: ${err.message}`);
+        }
       }
     }
 
@@ -710,7 +740,7 @@ export default class TeamBalancer extends BasePlugin {
   async onDiscordMessage(message) {
     if (!this.ready) return;
     if (message.author.bot) return;
-    if (message.channel.id !== this.options.discordChannelID) return;
+    if (message.channel.id !== this.options.discordAdminChannelID) return;
 
     const content = message.content.trim();
     if (!content.startsWith('!teambalancer') && !content.startsWith('!scramble')) return;
@@ -728,8 +758,8 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   checkDiscordAdminPermission(member) {
-    if (!this.options.discordAdminRoleID) return true;
-    return member.roles.cache.has(this.options.discordAdminRoleID);
+    if (!this.options.discordAdminRoleIDs || this.options.discordAdminRoleIDs.length === 0) return true;
+    return this.options.discordAdminRoleIDs.some(roleID => member.roles.cache.has(roleID));
   }
 
   async handleDiscordTeamBalancerCommand(message) {
@@ -1272,8 +1302,9 @@ export default class TeamBalancer extends BasePlugin {
         Logger.verbose('TeamBalancer', 1, `[DB] incrementStreak failed: ${err.message}`);
       }
 
-      if (this.discordChannel && isDominant) {
-        DiscordHelpers.sendDiscordMessage(this.discordChannel, {
+      const targetReportChannel = this.discordReportChannel || this.discordChannel;
+      if (targetReportChannel && isDominant) {
+        DiscordHelpers.sendDiscordMessage(targetReportChannel, {
           embeds: [DiscordHelpers.buildWinStreakEmbed(
             teamNames.winnerName,
             winnerID,
@@ -1339,17 +1370,19 @@ export default class TeamBalancer extends BasePlugin {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble announcement: ${broadcastErr.message}`);
         }
         this.mirrorRconToDiscord(`${this.RconMessages.prefix} ${message}`, 'warning');
-        if (this.discordChannel) {
-          DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [DiscordHelpers.buildScrambleTriggeredEmbed('Win streak threshold reached', teamNames.winnerName, this.winStreakCount, this.options.scrambleAnnouncementDelay)] });
+        const targetReportChannel = this.discordReportChannel || this.discordChannel;
+        if (targetReportChannel) {
+          DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [DiscordHelpers.buildScrambleTriggeredEmbed('Win streak threshold reached', teamNames.winnerName, this.winStreakCount, this.options.scrambleAnnouncementDelay)] });
         }
         this.initiateScramble(false, false);
       }
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error in onRoundEnded: ${err.message}`);      
       
-      if (this.discordChannel) {
+      const targetReportChannel = this.discordReportChannel || this.discordChannel;
+      if (targetReportChannel) {
         const embed = DiscordHelpers.buildFatalErrorEmbed(err, 'Round End Processing', this);
-        DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
       }
 
       this.winStreakTeam = null;
@@ -1651,9 +1684,10 @@ export default class TeamBalancer extends BasePlugin {
         maxPlayersToMove
       });
 
-      if (this.discordChannel && this.options.postScrambleDetails) {
+      const targetReportChannel = this.discordReportChannel || this.discordChannel;
+      if (targetReportChannel && this.options.postScrambleDetails) {
         const embed = await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this, eloMap);
-        DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
       }
 
       if (swapPlan && swapPlan.length > 0) {
@@ -1707,9 +1741,10 @@ export default class TeamBalancer extends BasePlugin {
             Logger.verbose('TeamBalancer', 1, `Failed to broadcast scramble failed message: ${broadcastErr.message}`);
           }
           this.mirrorRconToDiscord(msg, 'warning');
-          if (this.discordChannel) {
+          const targetReportChannel = this.discordReportChannel || this.discordChannel;
+          if (targetReportChannel) {
             const embed = DiscordHelpers.buildScrambleFailedEmbed('No valid swap solution found.', swapPlan?.calculationTime || 0, this);
-            DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+            DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
           }
           // Note: We do NOT reset the streak here, as the imbalance likely persists.
         } else {
@@ -1723,9 +1758,10 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 4, `Squad data at error:`, JSON.stringify(this.server.squads, null, 2));
       Logger.verbose('TeamBalancer', 4, `Player data at error:`, JSON.stringify(this.server.players, null, 2));      
       
-      if (this.discordChannel) {
+      const targetReportChannel = this.discordReportChannel || this.discordChannel;
+      if (targetReportChannel) {
         const embed = DiscordHelpers.buildFatalErrorEmbed(error, 'Scramble Execution', this);
-        DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
       }
 
       this.cleanupScrambleTracking();
@@ -1802,7 +1838,8 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   async mirrorRconToDiscord(message, type = 'info') {
-    if (!this.discordChannel || !this.options.mirrorRconBroadcasts) return;
+    const targetReportChannel = this.discordReportChannel || this.discordChannel;
+    if (!targetReportChannel || !this.options.mirrorRconBroadcasts) return;
 
     if (!message || typeof message !== 'string' || message.trim() === '') {
       Logger.verbose('TeamBalancer', 1, `[Discord] Attempted to mirror empty/invalid message: ${message}`);
@@ -1823,7 +1860,7 @@ export default class TeamBalancer extends BasePlugin {
         description: `📢 **Server Broadcast**\n${message}`,
         timestamp: new Date().toISOString()
       };
-      DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+      DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[Discord] Mirror failed: ${err.message}`);
     }

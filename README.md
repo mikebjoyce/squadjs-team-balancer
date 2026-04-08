@@ -131,8 +131,9 @@ Add to your `config.json`:
   "requireScrambleConfirmation": true,
   "scrambleConfirmationTimeout": 60,
   "discordClient": "discord",
-  "discordChannelID": "",
-  "discordAdminRoleID": "",
+  "discordAdminChannelID": "",
+  "discordReportChannelID": "",
+  "discordAdminRoleIDs": [],
   "mirrorRconBroadcasts": true,
   "postScrambleDetails": true,
   "useEloForBalance": false,
@@ -219,8 +220,9 @@ useGenericTeamNamesInBroadcasts     - Use "Team 1"/"Team 2" instead of faction n
 
 Discord Integration:
 discordClient                       - Discord connector name.
-discordChannelID                    - Channel for admin commands and output.
-discordAdminRoleID                  - Role required for Discord admin commands (empty = all in channel).
+discordAdminChannelID               - Channel for admin commands.
+discordReportChannelID              - Channel for automated reports (win streaks, scramble plans, errors). Defaults to admin channel if unset.
+discordAdminRoleIDs                 - Array of Role IDs required for Discord admin commands (empty = all in channel).
 mirrorRconBroadcasts                - Mirror RCON broadcasts to Discord.
 postScrambleDetails                 - Post detailed swap plan to Discord after scramble.
 
