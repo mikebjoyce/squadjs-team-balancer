@@ -620,6 +620,12 @@ export default class TeamBalancer extends BasePlugin {
   async onServerInfoUpdated(info) {
     try {
       if (info && info.currentLayer) {
+        const incomingName = typeof info.currentLayer === 'string'
+          ? info.currentLayer
+          : info.currentLayer?.name;
+
+        if (this.lastKnownGoodLayer?.name === incomingName) return;
+
         const resolved = await this.resolveLayerInfo(info.currentLayer, 'onServerInfoUpdated');
         if (resolved && this._gameInfoPollingInterval) {
           clearInterval(this._gameInfoPollingInterval);
@@ -634,24 +640,37 @@ export default class TeamBalancer extends BasePlugin {
 
   async startPollingGameInfo() {
     Logger.verbose('TeamBalancer', 4, 'Starting game info polling.');
+
     const pollGameInfo = async () => {
+      // Guard: already resolved via onServerInfoUpdated during the initial await
+      if (this.gameModeCached && this.gameModeCached !== 'Unknown') {
+        if (this._gameInfoPollingInterval) {
+          clearInterval(this._gameInfoPollingInterval);
+          this._gameInfoPollingInterval = null;
+          Logger.verbose('TeamBalancer', 4, 'Game info polling stopped (resolved externally).');
+        }
+        return;
+      }
       try {
         const resolved = await this.resolveLayerInfo(this.server.currentLayer, 'startPollingGameInfo');
-        if (resolved) {
-          if (this._gameInfoPollingInterval) {
-            clearInterval(this._gameInfoPollingInterval);
-            this._gameInfoPollingInterval = null;
-            Logger.verbose('TeamBalancer', 4, 'Game info polling stopped.');
-          }
-        } else {
+        if (resolved && this._gameInfoPollingInterval) {
+          clearInterval(this._gameInfoPollingInterval);
+          this._gameInfoPollingInterval = null;
+          Logger.verbose('TeamBalancer', 4, 'Game info polling stopped.');
+        } else if (!resolved) {
           Logger.verbose('TeamBalancer', 4, 'Game info not yet available. Retrying...');
         }
       } catch (err) {
         Logger.verbose('TeamBalancer', 4, `Error during game info polling: ${err.message}`);
       }
     };
+
     await pollGameInfo();
-    this._gameInfoPollingInterval = setInterval(pollGameInfo, 10000); // Poll every 10 seconds.
+
+    // Race condition guard: onServerInfoUpdated may have resolved during the above await
+    if (this.gameModeCached && this.gameModeCached !== 'Unknown') return;
+
+    this._gameInfoPollingInterval = setInterval(pollGameInfo, 10000);
   }
 
   stopPollingGameInfo() {
