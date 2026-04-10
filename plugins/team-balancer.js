@@ -578,7 +578,7 @@ export default class TeamBalancer extends BasePlugin {
     }
     
     if (!layer) {
-      Logger.verbose('TeamBalancer', 2, `[${source}] Layer object is completely null or undefined.`);
+      Logger.verbose('TeamBalancer', 3, `[${source}] Layer object is completely null or undefined.`);
       return false;
     }
     
