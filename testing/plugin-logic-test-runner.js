@@ -97,7 +97,9 @@ const defaultTestOptions = {
   maxScrambleCompletionTime: 5000,
   warnOnSwap: false,
   discordClient: null,
-  discordChannelID: null,
+  discordAdminChannelID: null,
+  discordReportChannelID: null,
+  discordAdminRoleIDs: [],
 };
 
 // Helper for asserting test conditions

@@ -1,4 +1,4 @@
-# Team Balancer Plugin v3.0.1
+# Team Balancer Plugin v3.0.2
 
 **SquadJS Plugin for Fair Match Enforcement**
 
@@ -298,12 +298,12 @@ Scrambles trigger if one team either wins 2 rounds with 150+ ticket margins, or 
 
 ## Critical Server Configuration
 
-For a scramble to succeed, **all RCON team-swap commands must complete before Faction Voting begins**. The game engine blocks team changes once voting starts.
+For a scramble to succeed, **all team-swap calculations and RCON commands must complete before Faction Voting begins**. The game engine blocks team changes once faction voting starts.
 
 **File:** `SquadServer/SquadGame/ServerConfig/Server.cfg`
 
 ```cfg
-// How long the end screen displays before moving to faction voting
+// How long the scoreboard displays before moving to map voting
 TimeBeforeVote=45
 ```
 
@@ -314,14 +314,15 @@ TimeBeforeVote=45
 | `scrambleAnnouncementDelay` | 30s |
 | `TimeBeforeVote` | 45s (minimum) |
 
-**How the timers interact:**
+**How the phases and timers interact:**
 
-1. **T+0s** — Round ends. Server starts `TimeBeforeVote` countdown. TeamBalancer starts `scrambleAnnouncementDelay` timer.
-2. **T+30s** — Plugin delay expires. Scramble begins executing. RCON moves take ~4–8 seconds.
-3. **T+45s** — `TimeBeforeVote` expires. Server enters Faction Voting. Team changes are now locked.
+1. **T+0s** — Round ends. The Scoreboard appears. The server starts the `TimeBeforeVote` countdown. TeamBalancer starts the `scrambleAnnouncementDelay` timer.
+2. **T+30s** — Plugin delay expires. TeamBalancer runs its scramble calculations and executes RCON moves (this process is fast, but not instant). *This 30-second delay exists intentionally to give players time to debrief with their squad and give commendations before being moved.*
+3. **T+45s** — `TimeBeforeVote` expires. Map Voting begins on the scoreboard. **Players can still be safely swapped during Map Voting.**
+4. **T+X** — Map Voting ends and Faction Voting begins. **Team changes are now locked by the game engine.**
 
 > [!IMPORTANT]
-> If `TimeBeforeVote` is too low, the plugin will still be mid-execution when voting locks the teams. Players will not be swapped successfully.
+> Ensure your `scrambleAnnouncementDelay` gives the plugin enough time to calculate and execute all swaps before the Map Voting phase concludes. If the plugin is still executing when Faction Voting begins, the remaining players will not be swapped successfully.
 
 ---
 

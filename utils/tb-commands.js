@@ -36,7 +36,7 @@
  * - !scramble confirm has a scrambleConfirmationTimeout window. Pending
  *   state is stored on tb.scrambleConfirmation.
  * - Discord commands mirror the in-game admin command set. Public
- *   commands are available to all users in the configured channel.
+ *   commands are available to all users in the configured admin channel.
  * - formatMessage replaces {key} placeholders — not a full template
  *   engine. Values not found in the params object are left as-is.
  *
