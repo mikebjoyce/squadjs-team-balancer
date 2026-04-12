@@ -402,6 +402,7 @@ export default class TeamBalancer extends BasePlugin {
     this.listeners.onChatMessage = this.onChatMessage.bind(this);
     this.listeners.onDiscordMessage = this.onDiscordMessage.bind(this);
     this.discordChannel = null;
+    this.discordReportChannel = null;
     
     this._gameInfoPollingInterval = null;
     this.gameModeCached = null;
@@ -430,6 +431,7 @@ export default class TeamBalancer extends BasePlugin {
     }
     this.ready = false;
     Logger.verbose('TeamBalancer', 4, 'Mounting plugin and adding listeners.');
+    this.validateOptions();
     try {
       const dbState = await this.db.initDB();
       if (dbState && !dbState.isStale) {
@@ -502,7 +504,6 @@ export default class TeamBalancer extends BasePlugin {
     }
     
     this.startPollingTeamAbbreviations();
-    this.validateOptions();
     this._isMounted = true;
     this.ready = true;
 
@@ -785,7 +786,7 @@ export default class TeamBalancer extends BasePlugin {
       case 'status':
         DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [DiscordHelpers.buildStatusEmbed(this)] });
         break;
-      case 'diag':
+      case 'diag': {
         await message.channel.send('🔄 Running diagnostics... please wait.');
         const diagnostics = new TBDiagnostics(this);
         const results = await diagnostics.runAll();
@@ -808,6 +809,7 @@ export default class TeamBalancer extends BasePlugin {
         }
 
         break;
+      }
       case 'on':
       case 'off':
         await this.discordCommandToggle(message, subcommand);
@@ -818,7 +820,7 @@ export default class TeamBalancer extends BasePlugin {
       case 'clear':
         await this.discordCommandClear(message);
         break;
-      case 'help':
+      case 'help': {
         const helpEmbed = {
           color: 0x3498db,
           title: '📚 TeamBalancer Command Reference',
@@ -838,6 +840,7 @@ export default class TeamBalancer extends BasePlugin {
         };
         DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [helpEmbed] });
         break;
+      }
       default:
         await message.reply('Invalid command. Use: `status`, `diag`, `on`, `off`, `export`, `clear`, `help` or `!scramble <now|dry|cancel>`.');
     }
@@ -1305,7 +1308,7 @@ export default class TeamBalancer extends BasePlugin {
       const streakBroken = this.winStreakTeam && this.winStreakTeam !== winnerID;
       if (streakBroken) {
         Logger.verbose('TeamBalancer', 4, `Streak broken. Previous streak team: ${this.winStreakTeam}`);
-        await this.resetStreak('Streak broken by opposing team');
+        await this.resetStreak('Streak broken by opposing team', false);
       }
 
       try {
