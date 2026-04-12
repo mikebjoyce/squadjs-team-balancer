@@ -276,7 +276,7 @@ export const DiscordHelpers = {
         }
       }
 
-      const getBackboneAvg = (arr) => {
+      const getTop15Avg = (arr) => {
         if (!arr.length) return 25.0;
         const sorted = [...arr].sort((a, b) => b - a);
         const slice = sorted.slice(0, 15);
@@ -288,13 +288,13 @@ export const DiscordHelpers = {
       const pAvgT1 = projT1Count > 0 ? (projT1Mu / projT1Count).toFixed(1) : '25.0';
       const pAvgT2 = projT2Count > 0 ? (projT2Mu / projT2Count).toFixed(1) : '25.0';
 
-      const bbT1 = getBackboneAvg(t1Elos).toFixed(1);
-      const bbT2 = getBackboneAvg(t2Elos).toFixed(1);
-      const pBbT1 = getBackboneAvg(projT1Elos).toFixed(1);
-      const pBbT2 = getBackboneAvg(projT2Elos).toFixed(1);
+      const top15T1 = getTop15Avg(t1Elos).toFixed(1);
+      const top15T2 = getTop15Avg(t2Elos).toFixed(1);
+      const pTop15T1 = getTop15Avg(projT1Elos).toFixed(1);
+      const pTop15T2 = getTop15Avg(projT2Elos).toFixed(1);
 
       balanceProjectionValue += `\n**Global ELO Avg:** Team 1: ${avgT1}μ ➔ ${pAvgT1}μ | Team 2: ${avgT2}μ ➔ ${pAvgT2}μ`;
-      balanceProjectionValue += `\n**Backbone ELO (Top 15):** Team 1: ${bbT1}μ ➔ ${pBbT1}μ | Team 2: ${bbT2}μ ➔ ${pBbT2}μ`;
+      balanceProjectionValue += `\n**Top 15 ELO Avg:** Team 1: ${top15T1}μ ➔ ${pTop15T1}μ | Team 2: ${top15T2}μ ➔ ${pTop15T2}μ`;
       balanceProjectionValue += `\n**Regulars:** Team 1: ${t1Regs} ➔ ${projT1Regs} | Team 2: ${t2Regs} ➔ ${projT2Regs}`;
     }
 

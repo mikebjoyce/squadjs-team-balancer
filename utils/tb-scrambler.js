@@ -251,6 +251,7 @@ export const Scrambler = {
           .map(p => getElo(p.eosID))
           .concat([...movingToT2].map(getElo));
 
+        const getAvg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : defaultMu);
         const getBackboneAvg = (arr) => {
           if (!arr.length) return defaultMu;
           const sorted = [...arr].sort((a, b) => b - a);
@@ -258,17 +259,18 @@ export const Scrambler = {
           return slice.reduce((a, b) => a + b, 0) / slice.length;
         };
 
-        const globalDiff = Math.abs(getBackboneAvg(t1Elos) - getBackboneAvg(t2Elos));
-        
-        let eloBalancePenalty = 0;
-        if (globalDiff <= 0.2) {
-          eloBalancePenalty = globalDiff * 10;
-        } else if (globalDiff <= 0.5) {
-          eloBalancePenalty = 2.0 + ((globalDiff - 0.2) * 25);
-        } else {
-          eloBalancePenalty = 9.5 + ((globalDiff - 0.5) * 50);
-        }
-        eloBalancePenalty = Math.min(eloBalancePenalty, 480);
+        const meanDiff = Math.abs(getAvg(t1Elos) - getAvg(t2Elos));
+        const backboneDiff = Math.abs(getBackboneAvg(t1Elos) - getBackboneAvg(t2Elos));
+
+        const getPenalty = (diff) => {
+          if (diff <= 0.2) return diff * 10;
+          if (diff <= 0.5) return 2.0 + (diff - 0.2) * 25;
+          return 9.5 + (diff - 0.5) * 50;
+        };
+
+        // Individually bound each penalty to 240 (total 480) so that a failure in one metric
+        // doesn't mask improvements in the other after hitting a shared ceiling.
+        const eloBalancePenalty = Math.min(getPenalty(meanDiff), 240) + Math.min(getPenalty(backboneDiff), 240);
         
         combinedScore += eloBalancePenalty;
         // --- VETERAN PARITY SCORING ---

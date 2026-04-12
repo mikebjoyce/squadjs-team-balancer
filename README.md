@@ -176,6 +176,8 @@ Admin Commands:
 !teambalancer diag             → Run self-diagnostics (DB check + live scramble sim).
 !teambalancer on               → Enable win streak tracking.
 !teambalancer off              → Disable win streak tracking.
+!teambalancer export           → Export the round reports JSONL file.
+!teambalancer clear            → Clear the round reports log file.
 !teambalancer help             → List available commands.
 
 !scramble                      → Manually trigger scramble with countdown.
@@ -231,6 +233,7 @@ useEloForBalance                    - Weight scrambles by EloTracker mu ratings.
 
 Dev:
 devMode                             - Allow commands from any player regardless of admin status.
+reportLogPath                       - Path to the JSONL log file for round reports (default: 'team-balancer-reports.jsonl').
 ```
 
 ---

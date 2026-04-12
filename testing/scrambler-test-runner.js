@@ -171,11 +171,11 @@ async function runEloTest() {
     players.push({ eosID: id, teamID: 1, squadID: 101, name: `Pro_${i}` });
     eloMap.set(id, { mu: 35.0 });
   }
-  // Team 1: 35 Newbies
+  // Team 1: 35 Newbies (math fixed so Team 1 average is exactly 25.0)
   for (let i = 0; i < 35; i++) {
     const id = `noob_${i}`;
     players.push({ eosID: id, teamID: 1, squadID: null, name: `Noob_${i}` });
-    eloMap.set(id, { mu: 15.0 });
+    eloMap.set(id, { mu: 725 / 35 }); // ~20.71
   }
   // Team 2: 50 Average
   for (let i = 0; i < 50; i++) {
