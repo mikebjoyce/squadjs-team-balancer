@@ -501,25 +501,22 @@ const CommandHandlers = {
           if (cancelled) {
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Scramble cancelled by ${adminName}`);
             const response = await this.respond(player, 'Pending scramble cancelled.');
-            // Discord logging logic...
-            if (this.discordChannel) { /* ... */ } // (omitted for brevity, keeping existing logic structure)
+            if (this.discordChannel) {
+              const embed = {
+                color: 0x3498db,
+                title: '🎮 In-Game Command: !scramble cancel',
+                description: `Executed by **${adminName}**`,
+                fields: [{ name: 'Response', value: 'Pending scramble cancelled.', inline: false }],
+                timestamp: new Date().toISOString()
+              };
+              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+            }
             return response;
           } else if (this._scrambleInProgress) {
             return await this.respond(player, 'Cannot cancel scramble - it is already executing.');
           } else {
             return await this.respond(player, 'No pending scramble to cancel.');
           }
-            if (this.discordChannel) {
-              const embed = {
-                color: 0x3498db,
-                title: '🎮 In-Game Command: !teambalancer on',
-                description: `Executed by **${adminName}**`,
-                fields: [{ name: 'Response', value: 'Win streak tracking enabled.', inline: false }],
-                timestamp: new Date().toISOString()
-              };
-              await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
-            }
-          return;
         }
 
         // Prevent duplicate scrambles

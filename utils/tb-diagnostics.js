@@ -62,7 +62,7 @@ export class TBDiagnostics {
       }
 
       // 1. Read current state
-      const initialState = await this.tb.db.TeamBalancerStateModel.findByPk(1);
+      const initialState = await this.tb.db._executeWithRetry(() => this.tb.db.TeamBalancerStateModel.findByPk(1));
       if (!initialState) {
         throw new Error('Could not find state record in database.');
       }
@@ -73,14 +73,14 @@ export class TBDiagnostics {
       await this.tb.db.saveState(initialState.winStreakTeam, testValue, initialState.consecutiveWinsTeam, initialState.consecutiveWinsCount);
 
       // 3. Read back and verify
-      const updatedState = await this.tb.db.TeamBalancerStateModel.findByPk(1);
+      const updatedState = await this.tb.db._executeWithRetry(() => this.tb.db.TeamBalancerStateModel.findByPk(1));
       if (updatedState.winStreakCount !== testValue) {
         throw new Error('Dummy data write could not be verified.');
       }
 
       // 4. Restore original value
       await this.tb.db.saveState(initialState.winStreakTeam, originalCount, initialState.consecutiveWinsTeam, initialState.consecutiveWinsCount);
-      const restoredState = await this.tb.db.TeamBalancerStateModel.findByPk(1);
+      const restoredState = await this.tb.db._executeWithRetry(() => this.tb.db.TeamBalancerStateModel.findByPk(1));
       if (restoredState.winStreakCount !== originalCount) {
         throw new Error('Could not restore original database state.');
       }

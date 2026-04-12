@@ -240,6 +240,11 @@ export const DiscordHelpers = {
       let projT1Mu = 0, projT2Mu = 0, projT1Regs = 0, projT2Regs = 0;
       let projT1Count = 0, projT2Count = 0;
 
+      const t1Elos = [];
+      const t2Elos = [];
+      const projT1Elos = [];
+      const projT2Elos = [];
+
       for (const p of players) {
         const rating = eloMap.get(p.eosID);
         const mu = rating ? rating.mu : 25.0;
@@ -248,9 +253,11 @@ export const DiscordHelpers = {
         // Baseline logic
         if (String(p.teamID) === '1') {
           t1Mu += mu; t1Count++;
+          t1Elos.push(mu);
           if (isReg) t1Regs++;
         } else if (String(p.teamID) === '2') {
           t2Mu += mu; t2Count++;
+          t2Elos.push(mu);
           if (isReg) t2Regs++;
         }
 
@@ -260,19 +267,34 @@ export const DiscordHelpers = {
         
         if (projectedTeam === '1') {
           projT1Mu += mu; projT1Count++;
+          projT1Elos.push(mu);
           if (isReg) projT1Regs++;
         } else if (projectedTeam === '2') {
           projT2Mu += mu; projT2Count++;
+          projT2Elos.push(mu);
           if (isReg) projT2Regs++;
         }
       }
+
+      const getBackboneAvg = (arr) => {
+        if (!arr.length) return 25.0;
+        const sorted = [...arr].sort((a, b) => b - a);
+        const slice = sorted.slice(0, 15);
+        return slice.reduce((a, b) => a + b, 0) / slice.length;
+      };
 
       const avgT1 = t1Count > 0 ? (t1Mu / t1Count).toFixed(1) : '25.0';
       const avgT2 = t2Count > 0 ? (t2Mu / t2Count).toFixed(1) : '25.0';
       const pAvgT1 = projT1Count > 0 ? (projT1Mu / projT1Count).toFixed(1) : '25.0';
       const pAvgT2 = projT2Count > 0 ? (projT2Mu / projT2Count).toFixed(1) : '25.0';
 
-      balanceProjectionValue += `\n**Average ELO:** Team 1: ${avgT1}μ ➔ ${pAvgT1}μ | Team 2: ${avgT2}μ ➔ ${pAvgT2}μ`;
+      const bbT1 = getBackboneAvg(t1Elos).toFixed(1);
+      const bbT2 = getBackboneAvg(t2Elos).toFixed(1);
+      const pBbT1 = getBackboneAvg(projT1Elos).toFixed(1);
+      const pBbT2 = getBackboneAvg(projT2Elos).toFixed(1);
+
+      balanceProjectionValue += `\n**Global ELO Avg:** Team 1: ${avgT1}μ ➔ ${pAvgT1}μ | Team 2: ${avgT2}μ ➔ ${pAvgT2}μ`;
+      balanceProjectionValue += `\n**Backbone ELO (Top 15):** Team 1: ${bbT1}μ ➔ ${pBbT1}μ | Team 2: ${bbT2}μ ➔ ${pBbT2}μ`;
       balanceProjectionValue += `\n**Regulars:** Team 1: ${t1Regs} ➔ ${projT1Regs} | Team 2: ${t2Regs} ➔ ${projT2Regs}`;
     }
 

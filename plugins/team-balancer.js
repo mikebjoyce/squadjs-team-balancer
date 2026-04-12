@@ -176,7 +176,7 @@ import fs from 'fs';
 import path from 'path';
 
 export default class TeamBalancer extends BasePlugin {
-  static version = '3.0.2';
+  static version = '3.1.0';
 
   static get description() {
     return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';
@@ -467,14 +467,6 @@ export default class TeamBalancer extends BasePlugin {
         }
       }
     }
-
-    this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
-    this.server.removeListener('NEW_GAME', this.listeners.onNewGame);
-    this.server.removeListener('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
-    this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
-    this.server.removeListener('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
-    this.server.removeListener('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
-    this.server.removeListener('CHAT_MESSAGE', this.listeners.onChatMessage);
 
     const listenerCounts = {
       ROUND_ENDED: this.server.listenerCount('ROUND_ENDED'),
@@ -1038,6 +1030,9 @@ export default class TeamBalancer extends BasePlugin {
   async onRoundEnded(data) {
     if (!this.ready) return;
 
+    // Note: roundReport is initialized early to capture state, but will be silently 
+    // abandoned (not logged to JSONL) if the match ends in a draw, is disabled, 
+    // or is an ignored mode before reaching the end of the method.
     let roundReport = {
       timestamp: new Date().toISOString(),
       gameMode: this.gameModeCached || 'Unknown',
@@ -1120,7 +1115,9 @@ export default class TeamBalancer extends BasePlugin {
             Logger.verbose('TeamBalancer', 1, `Failed to broadcast seed scramble announcement: ${err.message}`);
           }
           this.mirrorRconToDiscord(msg, 'warning');
-          this.initiateScramble(false, false);
+          this.initiateScramble(false, false).catch(err =>
+            Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
+          );
         }
 
         if (!shouldScramble) {
@@ -1173,7 +1170,9 @@ export default class TeamBalancer extends BasePlugin {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast consecutive wins scramble message: ${e.message}`);
         }
         this.mirrorRconToDiscord(message, 'warning');
-        this.initiateScramble(false, false);
+        this.initiateScramble(false, false).catch(err =>
+          Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
+        );
         return;
       }
 
@@ -1193,7 +1192,9 @@ export default class TeamBalancer extends BasePlugin {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast single-round scramble message: ${broadcastErr.message}`);
         }
         this.mirrorRconToDiscord(message, 'warning');
-        this.initiateScramble(false, false);
+        this.initiateScramble(false, false).catch(err =>
+          Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
+        );
         return;
       }
 
@@ -1393,7 +1394,9 @@ export default class TeamBalancer extends BasePlugin {
         if (targetReportChannel) {
           DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [DiscordHelpers.buildScrambleTriggeredEmbed('Win streak threshold reached', teamNames.winnerName, this.winStreakCount, this.options.scrambleAnnouncementDelay)] });
         }
-        this.initiateScramble(false, false);
+        this.initiateScramble(false, false).catch(err =>
+          Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
+        );
       }
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Error in onRoundEnded: ${err.message}`);      
@@ -1540,7 +1543,7 @@ export default class TeamBalancer extends BasePlugin {
         squad.squadID &&
         squad.teamID &&
         typeof squad.squadID !== 'undefined' &&
-        typeof squad.squadID !== 'undefined'
+        typeof squad.teamID !== 'undefined'
     );
 
     const normalizedPlayers = (players || []).filter(

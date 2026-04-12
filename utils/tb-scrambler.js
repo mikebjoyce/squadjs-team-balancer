@@ -96,8 +96,9 @@ export const Scrambler = {
       players: [...s.players]
     }));
 
+    const playerMap = new Map(workingPlayers.map(p => [p.eosID, p]));
     const updatePlayerTeam = (eosID, newTeamID) => {
-      const player = workingPlayers.find((p) => p.eosID === eosID);
+      const player = playerMap.get(eosID);
       if (player) {
         player.teamID = String(newTeamID);
       }
@@ -145,6 +146,7 @@ export const Scrambler = {
       }
     };
 
+    const SQUAD_FIT_GRACE = 3;
     const selectTieredSquads = (candidates, maxPlayersToSelect, usedSquadIds) => {
       const selected = [];
       let currentCount = 0;
@@ -169,7 +171,7 @@ export const Scrambler = {
           usedSquadIds.add(squad.id);
           currentCount += size;
         } else {          
-          if (currentCount < maxPlayersToSelect && currentCount + size - maxPlayersToSelect <= 3) {
+          if (currentCount < maxPlayersToSelect && currentCount + size - maxPlayersToSelect <= SQUAD_FIT_GRACE) {
             selected.push(squad);
             usedSquadIds.add(squad.id);
             currentCount += size;
@@ -249,8 +251,14 @@ export const Scrambler = {
           .map(p => getElo(p.eosID))
           .concat([...movingToT2].map(getElo));
 
-        const avg = (arr) => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : defaultMu;
-        const globalDiff = Math.abs(avg(t1Elos) - avg(t2Elos));
+        const getBackboneAvg = (arr) => {
+          if (!arr.length) return defaultMu;
+          const sorted = [...arr].sort((a, b) => b - a);
+          const slice = sorted.slice(0, 15);
+          return slice.reduce((a, b) => a + b, 0) / slice.length;
+        };
+
+        const globalDiff = Math.abs(getBackboneAvg(t1Elos) - getBackboneAvg(t2Elos));
         
         let eloBalancePenalty = 0;
         if (globalDiff <= 0.2) {
@@ -330,6 +338,8 @@ export const Scrambler = {
         utilityReward -= (Math.min(t2Stats.utilityCount, 3) * 60);
 
         let winStreakTax = 0;
+        // Squad preserving algorithm intent: break at least one locked squad from the winning team to disrupt their dominant core.
+        // A penalty of 150 is frequently dominated by other factors, but discourages leaving the dominant core completely intact.
         if (String(winStreakTeam) === '1' && !selectedT1Squads.some(s => s.locked)) winStreakTax += 150;
         if (String(winStreakTeam) === '2' && !selectedT2Squads.some(s => s.locked)) winStreakTax += 150;
 
@@ -454,13 +464,19 @@ export const Scrambler = {
         targetPlayersToMove
       );
 
-      Logger.verbose(
-        'TeamBalancer',
-        4,
-        `Attempt ${i + 1}: Score = ${currentScore.toFixed(2)}, Move T1->T2 = ${selT1.reduce((n, s) => n + s.players.length, 0)}, Move T2->T1 = ${selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T1 = ${initialCounts.team1Count - selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}, Hypo T2 = ${initialCounts.team2Count - selT2.reduce((n, s) => n + s.players.length, 0) + selT1.reduce((n, s) => n + s.players.length, 0)} | Churn: ${selT1.reduce((n, s) => n + s.players.length, 0) + selT2.reduce((n, s) => n + s.players.length, 0)}/${targetPlayersToMove}`
-      );
-      Logger.verbose('TeamBalancer', 4, `Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
-      Logger.verbose('TeamBalancer', 4, `Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
+      if (Logger.verboseness && Logger.verboseness['TeamBalancer'] >= 4) {
+        const selT1Players = selT1.reduce((n, s) => n + s.players.length, 0);
+        const selT2Players = selT2.reduce((n, s) => n + s.players.length, 0);
+        const hypoT1 = initialCounts.team1Count - selT1Players + selT2Players;
+        const hypoT2 = initialCounts.team2Count - selT2Players + selT1Players;
+        Logger.verbose(
+          'TeamBalancer',
+          4,
+          `Attempt ${i + 1}: Score = ${currentScore.toFixed(2)}, Move T1->T2 = ${selT1Players}, Move T2->T1 = ${selT2Players}, Hypo T1 = ${hypoT1}, Hypo T2 = ${hypoT2} | Churn: ${selT1Players + selT2Players}/${targetPlayersToMove}`
+        );
+        Logger.verbose('TeamBalancer', 4, `Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
+        Logger.verbose('TeamBalancer', 4, `Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
+      }
 
       const t1Ids = new Set(selT1.map((s) => s.id));
       const t2Ids = new Set(selT2.map((s) => s.id));

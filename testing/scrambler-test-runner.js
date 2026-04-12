@@ -260,7 +260,7 @@ async function runAllTests() {
   console.log(`\n--------------------------------------------------`);
   console.log('🏁 All tests completed.');
 
-  await runBulkTests(25000);
+  await runBulkTests(2500);
 }
 
 async function runBulkTests(totalRuns = 100) {

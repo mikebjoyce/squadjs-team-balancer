@@ -55,6 +55,7 @@ export default class TBDatabase {
   constructor(server, options, connectors) {
     this.sequelize = connectors && connectors.sqlite;
     this.TeamBalancerStateModel = null;
+    this._mutex = Promise.resolve();
   }
 
   async _executeWithRetry(logicFn, attempts = 5) {
@@ -79,12 +80,8 @@ export default class TBDatabase {
     };
 
     if (this.sequelize && typeof this.sequelize.getDialect === 'function' && this.sequelize.getDialect() === 'sqlite') {
-      if (!this.sequelize._squadjs_mutex) {
-        this.sequelize._squadjs_mutex = Promise.resolve();
-      }
-      
-      const resultPromise = this.sequelize._squadjs_mutex.then(() => runAttempt());
-      this.sequelize._squadjs_mutex = resultPromise.catch(() => {});
+      const resultPromise = this._mutex.then(() => runAttempt());
+      this._mutex = resultPromise.catch(() => {});
       return resultPromise;
     }
 
@@ -268,6 +265,9 @@ export default class TBDatabase {
       if (!await this.saveState(1, 0)) throw new Error("Setup saveState failed");
 
       // 3. Run parallel increments
+      // Note: This tests that the class-level mutex properly serializes writes to produce 
+      // the correct final count. It does not test raw SQLite transaction concurrency 
+      // because the _executeWithRetry mutex queues the promises sequentially.
       const iterations = 5;
       const promises = [];
       for (let i = 0; i < iterations; i++) {
