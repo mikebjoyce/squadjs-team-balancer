@@ -2,6 +2,10 @@
  * ╔═══════════════════════════════════════════════════════════════╗
  * ║           SCRAMBLER REAL DATA TEST SUITE                      ║
  * ╚═══════════════════════════════════════════════════════════════╝
+ * 
+ * Evaluates the Scrambler's performance using real ELO distribution
+ * data, evaluating numerical balance, Mean ELO parity, and Top-15
+ * ELO parity over 2000 iteration search spaces.
  */
 
 import { readFileSync } from 'fs';
@@ -55,6 +59,14 @@ function getStats(players, eloMap) {
     return sum / list.length;
   };
 
+  const getTop15Mu = (list) => {
+    if (list.length === 0) return 25.0;
+    const sorted = [...list].map(p => eloMap.get(p.eosID)?.mu || 25).sort((a, b) => b - a);
+    const slice = sorted.slice(0, 15);
+    const sum = slice.reduce((acc, val) => acc + val, 0);
+    return sum / slice.length;
+  };
+
   const getVetRatio = (list) => {
     if (list.length === 0) return 0;
     const vets = list.filter(p => (eloMap.get(p.eosID)?.roundsPlayed || 0) >= 50);
@@ -63,6 +75,8 @@ function getStats(players, eloMap) {
 
   const mu1 = getAvgMu(t1);
   const mu2 = getAvgMu(t2);
+  const top15Mu1 = getTop15Mu(t1);
+  const top15Mu2 = getTop15Mu(t2);
   const v1  = getVetRatio(t1);
   const v2  = getVetRatio(t2);
 
@@ -73,6 +87,7 @@ function getStats(players, eloMap) {
     mu1,
     mu2,
     muDiff: Math.abs(mu1 - mu2),
+    top15Diff: Math.abs(top15Mu1 - top15Mu2),
     vet1: v1,
     vet2: v2,
     vetDiff: Math.abs(v1 - v2)
@@ -256,7 +271,9 @@ async function runScenario(name, { t1Players, t2Players, note = '' }) {
   const vetStatus = after.vetDiff <= before.vetDiff ? '[PASS]' : (after.vetDiff <= 0.05 ? '--' : '[WARN]');
   const numStatus = after.numDiff <= 2 ? '[PASS]' : '[FAIL]';
 
+  const top15Status = after.top15Diff <= before.top15Diff ? '[PASS]' : '[WARN]';
   console.log(`   ELO diff:  ${before.muDiff.toFixed(3)} -> ${after.muDiff.toFixed(3)}  ${muStatus}`);
+  console.log(`   Top15 diff:${before.top15Diff.toFixed(3)} -> ${after.top15Diff.toFixed(3)}  ${top15Status}`);
   console.log(`   Vet diff:  ${before.vetDiff.toFixed(3)} -> ${after.vetDiff.toFixed(3)}  ${vetStatus}`);
   console.log(`   Num diff:  ${before.numDiff} -> ${after.numDiff}  ${numStatus}`);
   console.log(`   Locked:    ${lockedIntact ? '[PASS] intact' : '[FAIL] BROKEN'}`);
@@ -321,8 +338,9 @@ async function runScenario(name, { t1Players, t2Players, note = '' }) {
 
 async function runBulk(name, generator, runs = 200) {
   const results = {
-    total: 0, balanced: 0, eloImproved: 0, vetImproved: 0, lockedBroken: 0,
+    total: 0, balanced: 0, eloImproved: 0, top15Improved: 0, vetImproved: 0, lockedBroken: 0,
     totalTime: 0, totalMoves: 0, totalMuBefore: 0, totalMuAfter: 0,
+    totalTop15Before: 0, totalTop15After: 0,
     totalVetBefore: 0, totalVetAfter: 0
   };
 
@@ -357,6 +375,7 @@ async function runBulk(name, generator, runs = 200) {
     results.total++;
     if (after.numDiff <= 2) results.balanced++;
     if (after.muDiff < before.muDiff) results.eloImproved++;
+    if (after.top15Diff < before.top15Diff) results.top15Improved++;
     if (after.vetDiff < before.vetDiff) results.vetImproved++;
     if (!lockedIntact) results.lockedBroken++;
     
@@ -364,6 +383,8 @@ async function runBulk(name, generator, runs = 200) {
     results.totalMoves += swapPlan.length;
     results.totalMuBefore += before.muDiff;
     results.totalMuAfter += after.muDiff;
+    results.totalTop15Before += before.top15Diff;
+    results.totalTop15After += after.top15Diff;
     results.totalVetBefore += before.vetDiff;
     results.totalVetAfter += after.vetDiff;
 
@@ -372,6 +393,7 @@ async function runBulk(name, generator, runs = 200) {
 
   console.log(`\n   Balanced (diff<=2):   ${results.balanced}/${runs} (${(results.balanced/runs*100).toFixed(1)}%)`);
   console.log(`   ELO improved:         ${results.eloImproved}/${runs} (${(results.eloImproved/runs*100).toFixed(1)}%) | Avg ${ (results.totalMuBefore/runs).toFixed(3) } -> ${ (results.totalMuAfter/runs).toFixed(3) }`);
+  console.log(`   Top15 improved:       ${results.top15Improved}/${runs} (${(results.top15Improved/runs*100).toFixed(1)}%) | Avg ${ (results.totalTop15Before/runs).toFixed(3) } -> ${ (results.totalTop15After/runs).toFixed(3) }`);
   console.log(`   Vet improved:         ${results.vetImproved}/${runs} (${(results.vetImproved/runs*100).toFixed(1)}%) | Avg ${ (results.totalVetBefore/runs).toFixed(3) } -> ${ (results.totalVetAfter/runs).toFixed(3) }`);
   console.log(`   Locked broken:        ${results.lockedBroken}/${runs}`);
   console.log(`   Avg time: ${(results.totalTime/runs).toFixed(1)}ms | Avg moves: ${(results.totalMoves/runs).toFixed(1)}\n`);

@@ -28,7 +28,7 @@
  *
  * - Unassigned players are treated as individual pseudo-squads to
  *   maximise movement flexibility without breaking formed squads.
- * - Four-phase escalation (500 iterations total):
+ * - Four-phase escalation (2000 iterations total):
  *     Phase 1 — Pure squad swaps only. Maximises cohesion.
  *     Phase 2 — Shatters one random UNLOCKED squad if balance is poor.
  *     Phase 3 — Late fallback: may split one LOCKED squad.
@@ -36,13 +36,13 @@
  * - Scoring penalties (lower = better):
  *     balanceScore        — Exponential penalty for team diff > 2.
  *     sizeDeviationPenalty — Penalty for significant underpopulation.
- *     eloBalancePenalty   — Global mean mu diff (ELO mode only).
+ *     eloBalancePenalty   — Composite score derived from a 50/50 weighted split between Mean ELO diff and Top-15 ELO diff (ELO mode only).
  *     veteranPenalty      — Imbalanced regular player counts (ELO mode only).
  *     anchorPenalty       — Moving >2 large squads from one team (Heuristic mode only).
  * - eloMap is optional. When present, heuristic penalties are replaced by ELO parity scoring.
  * - Cap enforcement runs as a final pass, trimming team overages in
  *   priority order: Unassigned → Unlocked Squad Members. Locked players are never moved.
- * - Baseline performance: ~5–20ms per exhaustive search, 99.9% balance
+ * - Baseline performance: ~70–95ms per exhaustive search, 99.9% balance
  *   success rate (diff ≤ 2 players) under standard conditions.
  *
  * Author:
@@ -252,7 +252,7 @@ export const Scrambler = {
           .concat([...movingToT2].map(getElo));
 
         const getAvg = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : defaultMu);
-        const getBackboneAvg = (arr) => {
+        const getTop15Avg = (arr) => {
           if (!arr.length) return defaultMu;
           const sorted = [...arr].sort((a, b) => b - a);
           const slice = sorted.slice(0, 15);
@@ -260,17 +260,17 @@ export const Scrambler = {
         };
 
         const meanDiff = Math.abs(getAvg(t1Elos) - getAvg(t2Elos));
-        const backboneDiff = Math.abs(getBackboneAvg(t1Elos) - getBackboneAvg(t2Elos));
+        const top15Diff = Math.abs(getTop15Avg(t1Elos) - getTop15Avg(t2Elos));
 
         const getPenalty = (diff) => {
-          if (diff <= 0.2) return diff * 10;
-          if (diff <= 0.5) return 2.0 + (diff - 0.2) * 25;
-          return 9.5 + (diff - 0.5) * 50;
+          if (diff <= 0.1) return diff * 20;
+          if (diff <= 0.3) return 2.0 + (diff - 0.1) * 40;
+          if (diff <= 0.6) return 10.0 + (diff - 0.3) * 80;
+          return 34.0 + (diff - 0.6) * 150;
         };
 
-        // Individually bound each penalty to 240 (total 480) so that a failure in one metric
-        // doesn't mask improvements in the other after hitting a shared ceiling.
-        const eloBalancePenalty = Math.min(getPenalty(meanDiff), 240) + Math.min(getPenalty(backboneDiff), 240);
+        const compositeDiff = 0.6 * meanDiff + 0.4 * top15Diff;
+        const eloBalancePenalty = Math.min(getPenalty(compositeDiff), 480);
         
         combinedScore += eloBalancePenalty;
         // --- VETERAN PARITY SCORING ---
@@ -363,9 +363,9 @@ export const Scrambler = {
       return combinedScore;
     };
 
-    // Hardcoded to 500 as an exhaustive search bound.
-    // At ~5-20ms per search, this provides a 99.9% success rate without impacting server performance.
-    const MAX_ATTEMPTS = 500;
+    // Hardcoded to 2000 as an exhaustive search bound.
+    // At ~5-20ms per 500 searches, this takes ~20-80ms and provides deeper permutation exploration.
+    const MAX_ATTEMPTS = 2000;
     const SURGICAL_START = Math.floor(MAX_ATTEMPTS * 0.5);
     const LOCKED_START = Math.floor(MAX_ATTEMPTS * 0.8);
     const NUCLEAR_START = MAX_ATTEMPTS - 5;

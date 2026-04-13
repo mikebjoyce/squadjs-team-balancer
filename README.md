@@ -20,7 +20,7 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 * **Seed Auto-Scramble**: Automatically scrambles teams at the end of a Seed round, ensuring balanced teams as the server fills up.
 
-* **ELO-Weighted Balancing**: Optional integration with EloTracker. When `useEloForBalance` is enabled, the scoring function switches to an ELO-weighted branch: mu difference penalty + regular parity penalty + numerical balance. The standard heuristic penalties (churn, anchor, cohesion, infantry overload) are replaced entirely, not supplemented.
+* **ELO-Weighted Balancing**: Optional integration with EloTracker. When `useEloForBalance` is enabled, the scoring function switches to an ELO-weighted branch: a composite penalty (50% Mean ELO diff + 50% Top-15 ELO diff) + veteran parity penalty + numerical balance. The standard heuristic penalties (churn, anchor, cohesion, infantry overload) are replaced entirely, not supplemented.
 
 * **Discord Integration**: Administer the plugin via Discord, mirror RCON broadcasts, and view detailed swap plans.
 
@@ -44,7 +44,7 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 **[squadjs-elo-tracker](https://github.com/mikebjoyce/squadjs-elo-tracker)**
 
-Tracks per-player TrueSkill ratings (μ/σ) across rounds. When `useEloForBalance` is enabled, its scoring function switches to an ELO-weighted branch. It pulls live mu ratings and regular player counts from EloTracker at scramble time, evaluating mu difference, regular parity, and numerical balance (replacing its standard heuristic penalties). This prevents skill stacks from reforming after a scramble.
+Tracks per-player TrueSkill ratings (μ/σ) across rounds. When `useEloForBalance` is enabled, its scoring function switches to an ELO-weighted branch. It pulls live mu ratings and regular player counts from EloTracker at scramble time, evaluating a composite ELO difference (Mean and Top-15 players), veteran parity, and numerical balance (replacing its standard heuristic penalties). This prevents skill stacks from reforming after a scramble.
 
 **Why this matters**: Numerical balance alone can still produce lopsided matches if high-skill players cluster on one side. ELO-aware balancing distributes skill more evenly alongside headcount.
 
@@ -72,20 +72,20 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 
 * **Target Calc**: Computes ideal player swap targets (default 50% churn) adjusted by current team population deltas.
 
-* **Tiered Optimization (500 Iterations)**:
+* **Tiered Optimization (2000 Iterations)**:
   * **Phase 1 (Pure Swaps)**: Focuses exclusively on whole-squad moves to maximize friend-group cohesion.
   * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments.
   * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues.
   * **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to achieve maximum numerical balance. Runs for the last 5 iterations.
 
-* **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (mu diff + regular parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
+* **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (composite Mean/Top-15 ELO diff + veteran parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
 
 * **Identity Preservation**: In heuristic (non-ELO) mode, a penalty discourages moving more than 2 large infantry squads from a single team per scramble.
 
 * **Cap Enforcement**: A final corrective pass trims overages in priority order: Unassigned → Unlocked Squad Members. Locked players are never moved during cap enforcement.
 
 ### Performance Benchmarks
-* **Execution Time**: ~5–20ms per search (exhaustive 500-attempt pass).
+* **Execution Time**: ~70–95ms per search (exhaustive 2000-attempt pass).
 * **Balance Success**: 99.9% rate of achieving a team differential of ≤ 2 players.
 * **Cohesion**: Locked squads are preserved during Phases 1–2. Phase 3 may split one locked squad as a late-stage fallback. Phase 4 decomposes all squads.
 
