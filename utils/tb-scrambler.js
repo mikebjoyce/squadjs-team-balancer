@@ -365,6 +365,8 @@ export const Scrambler = {
 
     // Hardcoded to 2000 as an exhaustive search bound.
     // At ~5-20ms per 500 searches, this takes ~20-80ms and provides deeper permutation exploration.
+    // NOTE: The scrambler runs for 2,000 iterations to ensure it fully explores 
+    // the possibility space before escalating to more destructive phases.
     const MAX_ATTEMPTS = 2000;
     const SURGICAL_START = Math.floor(MAX_ATTEMPTS * 0.5);
     const LOCKED_START = Math.floor(MAX_ATTEMPTS * 0.8);
@@ -415,7 +417,12 @@ export const Scrambler = {
         }
       }
 
-      // Nuclear Option
+      // Phase 4: Nuclear Option
+      // NOTE: This phase is explicitly designed as a last-resort safety valve. 
+      // It only triggers in the final 5 iterations (1995-1999) if 1,995 attempts 
+      // failed to find a mathematically viable solution that preserves squads. 
+      // It sacrifices squad cohesion to ensure numerical balance can be achieved 
+      // in unresolvable edge cases.
       if (i >= NUCLEAR_START) {
         if (i === NUCLEAR_START) Logger.verbose('TeamBalancer', 2, 'Engaging Nuclear Option: Decomposing all squads for final attempts.');
         localT1 = decomposeList(localT1, null, true);

@@ -432,6 +432,11 @@ export default class TeamBalancer extends BasePlugin {
     this.ready = false;
     Logger.verbose('TeamBalancer', 4, 'Mounting plugin and adding listeners.');
     this.validateOptions();
+    
+    if (this.options.devMode) {
+      Logger.verbose('TeamBalancer', 1, '⚠️ CRITICAL SECURITY WARNING: devMode is enabled in configuration! This allows ANY player to execute admin commands. This should never be enabled in a production environment.');
+    }
+
     try {
       const dbState = await this.db.initDB();
       if (dbState && !dbState.isStale) {

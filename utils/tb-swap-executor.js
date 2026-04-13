@@ -57,6 +57,7 @@ export default class SwapExecutor {
     this.overallTimeout = null;
     this.activeSession = null;
     this.isProcessing = false;
+    this._completing = false; // Atomic lock to prevent duplicate verifyMoves() calls
     this.sessionMoves = new Map(); // Track all moves for verification
   }
 
@@ -89,7 +90,7 @@ export default class SwapExecutor {
     this.activeSession = {
       startTime: Date.now(),
       totalMoves: this.pendingPlayerMoves.size,
-      completedMoves: 0,
+      movesSent: 0, // Counts RCON sends, used only as a fallback for verifyMoves
       failedMoves: 0
     };
 
@@ -125,14 +126,14 @@ export default class SwapExecutor {
 
           const player = currentPlayers.find((p) => p.eosID === eosID);
           if (!player) {
-            this.activeSession.completedMoves++;
+            this.activeSession.movesSent++;
             playersToRemove.push(eosID);
             continue;
           }
 
           // Check if player is already on the target team to prevent RCON spam
           if (String(player.teamID) === String(moveData.targetTeamID)) {
-            this.activeSession.completedMoves++;
+            this.activeSession.movesSent++;
             playersToRemove.push(eosID);
             continue;
           }
@@ -142,13 +143,13 @@ export default class SwapExecutor {
 
           if (moveData.attempts <= maxRconAttempts) {
             try {
-              const rconIdentifier = player?.steamID ?? player?.name;
+              const rconIdentifier = player?.steamID || player?.name;
               if (!player?.steamID) {
                 Logger.verbose('TeamBalancer', 1, 
                   `[SwapExecutor] No steamID for ${eosID}, falling back to name: ${player?.name}`);
               }
               await this.server.rcon.switchTeam(rconIdentifier, moveData.targetTeamID);
-              this.activeSession.completedMoves++;
+              this.activeSession.movesSent++;
               playersToRemove.push(eosID);
               if (this.options.warnOnSwap) {
                 try {
@@ -181,6 +182,11 @@ export default class SwapExecutor {
     }
   }
 
+  /**
+   * Verifies that players actually ended up on their intended teams.
+   * This fetches the live player list from the server after RCON moves are complete,
+   * tallying successes/failures, and producing a report to ensure no silent failures.
+   */
   async verifyMoves() {
     try {
       await this.server.updatePlayerList();
@@ -189,7 +195,7 @@ export default class SwapExecutor {
       // Fall back to current counts if update fails
       return {
         totalMoves: this.activeSession.totalMoves,
-        movedSuccessfully: this.activeSession.completedMoves,
+        movedSuccessfully: this.activeSession.movesSent,
         failedToMove: this.activeSession.failedMoves,
         disconnected: 0
       };
@@ -220,7 +226,8 @@ export default class SwapExecutor {
   }
 
   async completeSession() {
-    if (!this.activeSession) return;
+    if (!this.activeSession || this._completing) return;
+    this._completing = true;
 
     if (this.scrambleRetryTimer) {
       clearInterval(this.scrambleRetryTimer);
@@ -255,6 +262,7 @@ export default class SwapExecutor {
     this.pendingPlayerMoves.clear();
     this.sessionMoves.clear(); 
     this.activeSession = null;
+    this._completing = false;
   }
 
   async waitForCompletion(timeoutMs = 10000, intervalMs = 100) {
