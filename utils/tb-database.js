@@ -110,6 +110,10 @@ export default class TBDatabase {
         { timestamps: false, tableName: 'TeamBalancerState' }
       );
 
+      // Enforce WAL mode to prevent SQLITE_BUSY deadlocks in high-concurrency environments (e.g. DBLog + TeamBalancer writing simultaneously)
+      await this.sequelize.query('PRAGMA journal_mode=WAL;');
+      await this.sequelize.query('PRAGMA synchronous=NORMAL;');
+      
       await this.TeamBalancerStateModel.sync({ alter: true });
 
       return await this._executeWithRetry(async () => {
