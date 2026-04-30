@@ -976,8 +976,9 @@ export default class TeamBalancer extends BasePlugin {
 
 
   /**
-   * Triggered when the match officially begins after the Staging Phase (approx. 2-3 mins).
-   * Note: This does not fire at map load, but when the "Live" combat phase starts.
+   * Triggered when the new map finishes loading and staging begins (NOT when staging ends).
+   * Per SquadJS plugin dev reference: NEW_GAME fires ~260 seconds before "Live" combat actually starts.
+   * At this moment, players' teamIDs may be null (unresolved by RCON). Wait ~30s before relying on team state.
    */
   async onNewGame(data) {
     if (!this.ready) return;
@@ -1558,16 +1559,32 @@ export default class TeamBalancer extends BasePlugin {
         typeof squad.teamID !== 'undefined'
     );
 
-    const normalizedPlayers = (players || []).filter(
+    // NOTE: Per SquadJS Plugin Dev Reference §3 (Null-TeamID Lifecycle):
+    // At NEW_GAME, players' teamIDs can be null (unresolved by RCON) for 30-60 seconds.
+    // On full servers (93+ players), this can affect up to 94+ players simultaneously.
+    // We filter them out here (they cannot be moved without a valid teamID anyway).
+    // If significant numbers are dropped, log a warning — this usually indicates
+    // a manual scramble triggered shortly after NEW_GAME before RCON state resolved.
+    const allValidPlayers = (players || []).filter(
       (player) =>
         player &&
         player.eosID &&
-        player.teamID &&
         typeof player.eosID === 'string' &&
         typeof player.teamID !== 'undefined'
     );
 
-    Logger.verbose('TeamBalancer', 4, `Input validation: ${normalizedSquads.length} valid squads, ${normalizedPlayers.length} valid players`);
+    const normalizedPlayers = allValidPlayers.filter((player) => player.teamID !== null);
+    const droppedNullTeamPlayers = allValidPlayers.filter((player) => player.teamID === null);
+
+    if (droppedNullTeamPlayers.length > 0) {
+      Logger.verbose('TeamBalancer', 1, 
+        `⚠️ [Scramble] Dropped ${droppedNullTeamPlayers.length} players with null teamID during transformSquadJSData. ` +
+        `This is normal at NEW_GAME (players loading into round). ` +
+        `Consider delaying manual scrambles ~30-60s after map load to allow RCON team resolution.`
+      );
+    }
+
+    Logger.verbose('TeamBalancer', 4, `Input validation: ${normalizedSquads.length} valid squads, ${normalizedPlayers.length} valid players${droppedNullTeamPlayers.length > 0 ? ` (dropped ${droppedNullTeamPlayers.length} null-teamID)` : ''}`);
     
     const squadPlayerMap = new Map();
 
