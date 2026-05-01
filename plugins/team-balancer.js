@@ -1047,7 +1047,7 @@ export default class TeamBalancer extends BasePlugin {
     // abandoned (not logged to JSONL) if the match ends in a draw, is disabled, 
     // or is an ignored mode before reaching the end of the method.
     let roundReport = {
-      timestamp: new Date().toISOString(),
+      ts: Date.now(),
       gameMode: this.gameModeCached || 'Unknown',
       layerName: this.layerNameCached || 'Unknown',
       playerCount: this.server.players ? this.server.players.length : 0,
