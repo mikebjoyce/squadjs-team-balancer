@@ -11,3 +11,7 @@ npm-debug.log*
 yarn-error.log*
 *.jsonl
 SQUADJS_EVENT_ARCHITECTURE.md
+
+# Docker / local env
+/.env
+/testing/data/

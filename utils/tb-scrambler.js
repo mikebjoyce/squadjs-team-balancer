@@ -61,7 +61,9 @@ export const Scrambler = {
     scramblePercentage = 0.5,
     eloMap = null,
     minPlayersToMove = 0,
-    maxPlayersToMove = 0
+    maxPlayersToMove = 0,
+    clanGroups = null,
+    pullEntireSquads = false
   }) {
     const startTime = Date.now();
     const totalPlayers = players.length;
@@ -139,6 +141,116 @@ export const Scrambler = {
 
     Logger.verbose('TeamBalancer', 4, `Candidate squads filtered: Team1 = ${t1Candidates.length}, Team2 = ${t2Candidates.length}`);
 
+    // ─── Clan Tag Grouping (Pre-Phase) ─────────────────────────────
+    // Build "virtual squads" per team that bind same-team clan members
+    // together so Phase 1 swaps them as a unit. Only mutates the
+    // candidate arrays (t1Candidates / t2Candidates) — workingSquads is
+    // left intact so the cap-enforcement pass at the end still sees the
+    // original game-state lock semantics.
+    //
+    // Cross-team consolidation is intentionally NOT performed: clan
+    // members already split across teams are treated as two independent
+    // groups (per user spec).
+    const virtualSquadsByTag = new Map(); // `${teamID}:${tag}` -> { originalMembers: Set<eosID> }
+    if (clanGroups && Object.keys(clanGroups).length > 0) {
+      // Largest clans first so big groups claim their preferred anchors.
+      const sortedClans = Object.entries(clanGroups).sort(
+        (a, b) => b[1].length - a[1].length
+      );
+
+      const PER_TEAM_MIN = 2; // Sanity floor; broader filtering happened in extractClanGroups
+
+      for (const teamID of ['1', '2']) {
+        const teamCandidates = teamID === '1' ? t1Candidates : t2Candidates;
+
+        for (const [tag, eosIDs] of sortedClans) {
+          const sameTeamMembers = eosIDs.filter(
+            (id) => playerMap.get(id)?.teamID === teamID
+          );
+          if (sameTeamMembers.length < PER_TEAM_MIN) continue;
+
+          const memberSet = new Set(sameTeamMembers);
+
+          // Squads (real or unassigned-pseudo) currently in candidates that hold any clan member.
+          const contributing = teamCandidates.filter((s) =>
+            s.players.some((p) => memberSet.has(p))
+          );
+          if (contributing.length === 0) continue;
+
+          // Always register for the scoring penalty so Phase 2/3/4 don't re-split a clan
+          // even when no virtualization was needed (everyone already in one squad).
+          virtualSquadsByTag.set(`${teamID}:${tag}`, {
+            originalMembers: memberSet
+          });
+
+          if (contributing.length === 1) continue;
+
+          // Anchor: most clan members; tiebreak by larger total size; tiebreak by lower id.
+          const anchor = [...contributing].sort((a, b) => {
+            const aClan = a.players.filter((p) => memberSet.has(p)).length;
+            const bClan = b.players.filter((p) => memberSet.has(p)).length;
+            if (aClan !== bClan) return bClan - aClan;
+            if (a.players.length !== b.players.length) return b.players.length - a.players.length;
+            return a.id < b.id ? -1 : 1;
+          })[0];
+          const others = contributing.filter((s) => s.id !== anchor.id);
+
+          // Build the virtual squad's player list.
+          const seen = new Set(anchor.players);
+          const newPlayers = [...anchor.players];
+          for (const s of others) {
+            for (const p of s.players) {
+              const include = pullEntireSquads || memberSet.has(p);
+              if (include && !seen.has(p)) {
+                newPlayers.push(p);
+                seen.add(p);
+              }
+            }
+          }
+
+          const virtualSquad = {
+            ...anchor,
+            players: newPlayers,
+            isVirtual: true,
+            clanTag: tag
+          };
+
+          // Replace anchor in the candidate list with the virtual squad.
+          const anchorIdx = teamCandidates.indexOf(anchor);
+          if (anchorIdx !== -1) teamCandidates[anchorIdx] = virtualSquad;
+
+          // Update other contributing squads (iterate in reverse for safe splicing).
+          const otherSet = new Set(others);
+          for (let i = teamCandidates.length - 1; i >= 0; i--) {
+            const s = teamCandidates[i];
+            if (s === virtualSquad || !otherSet.has(s)) continue;
+            if (pullEntireSquads) {
+              teamCandidates.splice(i, 1);
+            } else {
+              const remaining = s.players.filter((p) => !memberSet.has(p));
+              if (remaining.length === 0) {
+                teamCandidates.splice(i, 1);
+              } else {
+                teamCandidates[i] = { ...s, players: remaining };
+              }
+            }
+          }
+
+          Logger.verbose(
+            'TeamBalancer',
+            4,
+            `Clan grouping: Team ${teamID} [${tag}] (${sameTeamMembers.length} members) -> virtual squad anchored on ${anchor.id} (${newPlayers.length} total players, pullEntireSquads=${pullEntireSquads})`
+          );
+        }
+      }
+      Logger.verbose(
+        'TeamBalancer',
+        2,
+        `Clan grouping active: ${virtualSquadsByTag.size} per-team groups built across ${Object.keys(clanGroups).length} extracted clans.`
+      );
+    }
+    // ────────────────────────────────────────────────────────────────
+
     const shuffle = (arr) => {
       for (let i = arr.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -170,7 +282,7 @@ export const Scrambler = {
           selected.push(squad);
           usedSquadIds.add(squad.id);
           currentCount += size;
-        } else {          
+        } else {
           if (currentCount < maxPlayersToSelect && currentCount + size - maxPlayersToSelect <= SQUAD_FIT_GRACE) {
             selected.push(squad);
             usedSquadIds.add(squad.id);
@@ -360,6 +472,31 @@ export const Scrambler = {
         }
       }
 
+      // ─── Clan Cohesion Penalty ──────────────────────────────────────
+      // Soft penalty for splitting a registered virtual clan group across teams.
+      // Phase 1 swaps virtual squads atomically so this only triggers after
+      // Phase 2/3/4 decomposes a virtual squad — exactly when we want to push
+      // the search away from breaking up a clan unless balance demands it.
+      if (virtualSquadsByTag.size > 0) {
+        const movingToT2 = new Set(selectedT1Squads.flatMap((s) => s.players));
+        const movingToT1 = new Set(selectedT2Squads.flatMap((s) => s.players));
+        let clanSplitPenalty = 0;
+        for (const vs of virtualSquadsByTag.values()) {
+          let onT1 = 0, onT2 = 0;
+          for (const pid of vs.originalMembers) {
+            const orig = playerMap.get(pid);
+            if (!orig) continue;
+            let finalTeam = orig.teamID;
+            if (movingToT2.has(pid)) finalTeam = '2';
+            else if (movingToT1.has(pid)) finalTeam = '1';
+            if (finalTeam === '1') onT1++;
+            else onT2++;
+          }
+          clanSplitPenalty += Math.min(onT1, onT2) * 75;
+        }
+        combinedScore += clanSplitPenalty;
+      }
+
       return combinedScore;
     };
 
@@ -411,7 +548,10 @@ export const Scrambler = {
         const allEligible = [...t1Eligible, ...t2Eligible];
 
         if (allEligible.length > 0) {
-          const victim = allEligible[Math.floor(Math.random() * allEligible.length)];
+          // Prefer non-clan-virtual squads so clan groups stay intact unless nothing else is eligible.
+          const nonClanEligible = allEligible.filter((s) => !s.isVirtual);
+          const victimPool = nonClanEligible.length > 0 ? nonClanEligible : allEligible;
+          const victim = victimPool[Math.floor(Math.random() * victimPool.length)];
           if (victim.teamID === '1') localT1 = decomposeList(localT1, victim.id);
           else localT2 = decomposeList(localT2, victim.id);
         }

@@ -171,6 +171,7 @@
 import BasePlugin from './base-plugin.js';
 import { DiscordHelpers } from '../utils/tb-discord-helpers.js';
 import Scrambler from '../utils/tb-scrambler.js';
+import { extractClanGroups } from '../utils/tb-clan-grouping.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
 import CommandHandlers from '../utils/tb-commands.js';
 import TBDatabase from '../utils/tb-database.js';
@@ -248,6 +249,36 @@ export default class TeamBalancer extends BasePlugin {
       scramblePercentage: {
         default: 0.5,
         type: 'number'
+      },
+      enableClanTagGrouping: {
+        default: false,
+        type: 'boolean',
+        description: 'Keep players sharing a clan tag (e.g. [ABC]) together when they are on the same team during a scramble. Forms per-team "virtual squads" so Phase 1 swaps clan members atomically and Phase 3 only breaks them as a last resort. Cross-team clan splits are NOT consolidated by design.'
+      },
+      minClanGroupSize: {
+        default: 2,
+        type: 'number',
+        description: 'Minimum total members of a clan tag to be considered for grouping. Smaller clans are ignored.'
+      },
+      maxClanGroupSize: {
+        default: 18,
+        type: 'number',
+        description: 'Maximum total members of a clan tag to be considered for grouping. Larger clans are ignored to avoid distorting balance.'
+      },
+      clanTagMaxEditDistance: {
+        default: 1,
+        type: 'number',
+        description: 'Max Levenshtein edit distance to merge similar clan tags into one group (e.g. [CLAN] and [CLAM] at distance 1). Set 0 for exact match only.'
+      },
+      clanTagCaseSensitive: {
+        default: true,
+        type: 'boolean',
+        description: 'When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + a gamer-character lookalike map (λ→a, я→r, ø→o, ß→ss, etc.) + non-alphanumeric strip + uppercase, so case variants and decorative Unicode collapse into one group ([Café]/[CAFE]/[CΛFE] all merge).'
+      },
+      clanGroupingPullEntireSquads: {
+        default: false,
+        type: 'boolean',
+        description: 'When true, contributing squads merge wholesale into the virtual clan squad — non-clan teammates travel with their clan members. When false (default), only clan members are pulled into the anchor squad and non-clan teammates stay where they are. Only relevant when enableClanTagGrouping is true.'
       },
       changeTeamRetryInterval: {
         default: 150,
@@ -1722,6 +1753,27 @@ export default class TeamBalancer extends BasePlugin {
         }
       }
 
+      let clanGroups = null;
+      if (this.options.enableClanTagGrouping) {
+        try {
+          clanGroups = extractClanGroups(this.server.players, {
+            minSize: this.options.minClanGroupSize,
+            maxSize: this.options.maxClanGroupSize,
+            maxEditDistance: this.options.clanTagMaxEditDistance,
+            caseSensitive: this.options.clanTagCaseSensitive
+          });
+          const tagCount = Object.keys(clanGroups).length;
+          if (tagCount > 0) {
+            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Clan tag grouping: extracted ${tagCount} qualifying clan(s).`);
+          } else {
+            Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Clan tag grouping enabled but no qualifying clans found.');
+          }
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Clan tag extraction failed, scrambling without clan grouping: ${err.message}`);
+          clanGroups = null;
+        }
+      }
+
       Logger.verbose('TeamBalancer', 4, `Calling scrambler with ${transformedSquads.length} squads and ${transformedPlayers.length} players`);
 
       const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
@@ -1732,7 +1784,9 @@ export default class TeamBalancer extends BasePlugin {
         debug: this.options.debugLogs,
         eloMap,
         minPlayersToMove,
-        maxPlayersToMove
+        maxPlayersToMove,
+        clanGroups,
+        pullEntireSquads: this.options.clanGroupingPullEntireSquads
       });
 
       const targetReportChannel = this.discordReportChannel || this.discordChannel;

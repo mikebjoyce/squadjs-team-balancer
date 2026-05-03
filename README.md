@@ -73,9 +73,9 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 * **Target Calc**: Computes ideal player swap targets (default 50% churn) adjusted by current team population deltas.
 
 * **Tiered Optimization (2000 Iterations)**:
-  * **Phase 1 (Pure Swaps)**: Focuses exclusively on whole-squad moves to maximize friend-group cohesion.
+  * **Phase 1 (Pure Swaps)**: Focuses exclusively on whole-squad moves to maximize friend-group cohesion. When **Clan Tag Grouping** is enabled, same-team clan members are first folded into "virtual squads" (anchored on the squad with the most clan members), so Phase 1 swaps the entire clan as a single unit.
   * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments.
-  * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues.
+  * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues. With **Clan Tag Grouping** enabled, virtual clan squads are excluded from the victim pool unless no other squad is eligible.
   * **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to achieve maximum numerical balance. Runs for the last 5 iterations.
 
 * **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (composite Mean/Top-15 ELO diff + veteran parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
@@ -89,9 +89,28 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 * **Balance Success**: 99.9% rate of achieving a team differential of ≤ 2 players.
 * **Cohesion**: Locked squads are preserved during Phases 1–2. Phase 3 may split one locked squad as a late-stage fallback. Phase 4 decomposes all squads.
 
----
+### Clan Tag Grouping (Optional)
 
-## Installation
+When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan tag (e.g. `[ABC]`) and are already on the same team together when shuffling.
+
+**How it works**:
+
+* Player names are scanned for a leading clan tag using a five-strategy detector ported from the [squadjs-elo-tracker](https://github.com/mikebjoyce/squadjs-elo-tracker) project, applied in priority order:
+  1. **Bracket pair** — tag wrapped in matched or mismatched brackets, including a wide variety of Unicode bracket-like glyphs (`[TAG]`, `(TAG)`, `<TAG>`, `{TAG}`, `【TAG】`, `╔TAG╗`, `{TAG)`). Captures the inside of the pair.
+  2. **Explicit separator** — tag followed by `|`, `//`, `-`, `:`, `†`, `™`, `✯`, `~`, or `*` and a space (`KqXz | Korvath`, `TAG // Name`).
+  3. **2+ space gap** — tag separated from the name by two or more spaces (`TAG  PlayerName`).
+  4. **Short ASCII ALL-CAPS tag** — 2–4 uppercase chars followed by a single space and an uppercase continuation (`KM Lookout`).
+  5. **Bare-prefix fallback** — any 2–7 non-bracket non-whitespace chars followed by whitespace + a non-empty token. Catches Unicode and mixed-case bare prefixes that strategies 1–4 don't pick up (`KΛZ Korven`, `♣ΛCE Wurstwasser`, `RmdV Habicht`, `[OPN Player` open-only bracket).
+* Examples: `[QRZ] Steel Hawks` → `QRZ`, `[QZ℘] Voidstomper` → `QZ℘`, `KqXz | Korvath` → `KqXz`, `[XQR]™ Drazo` → `XQR`, `[7th-CAV]Player` → `7th-CAV`, `KM Lookout` → `KM`, `KΛZ Korven` → `KΛZ`, `♣ΛCE Wurstwasser` → `♣ΛCE`. Only names with no visible tag/name boundary at all — like `ABCJohnSmith` (no whitespace, no bracket, no separator) — yield no group. Strategy 5 requires whitespace + a non-empty following token, which keeps unrelated 7-char-prefix collisions out while still recovering bare-prefix names.
+* Tag matching is case-sensitive by default (`[Clan]` and `[clan]` are different unless merged via edit distance). Set `clanTagCaseSensitive: false` to normalize tags before grouping: NFD-decompose + strip combining marks (`Café` → `Cafe`), map gamer-character lookalikes (`λ`→`a`, `я`→`r`, `丹`→`a`, `ø`→`o`, …), strip non-alphanumerics, and uppercase. Variants like `[Café]` / `[CAFE]` / `[CΛFE]` then collapse into one group.
+* Tags within `clanTagMaxEditDistance` Levenshtein distance of one another are merged into a single group, with the smaller group absorbed into the larger. The merge runs iteratively so transitive matches (e.g. `[AAA] ↔ [AAB] ↔ [ABB]`) collapse into one group.
+* For each team, the scrambler identifies that team's members of each qualifying clan and folds them into a **virtual squad** anchored on the squad already holding the most clan members (tiebreak: larger total squad size, then lower squad ID).
+* `clanGroupingPullEntireSquads` toggles whether contributing squads merge wholesale into the virtual squad (non-clan teammates travel with their clan members), or only the clan members themselves are pulled in (the default — non-clan teammates stay where they are).
+* Phase 1 then swaps virtual squads atomically, and Phase 3 prefers any other victim before breaking one. A soft scoring penalty discourages Phase 2/3/4 from re-splitting a virtual squad once decomposition is underway.
+
+**Cross-team clans are intentionally not consolidated** — if a clan starts split across both teams, each side's group is treated independently. The feature only protects clan members already together on a team.
+
+See [`CLAN_GROUPING_EXAMPLES.md`](CLAN_GROUPING_EXAMPLES.md) for worked-out scenarios covering pull-mode comparison, cross-team handling, similarity merging, and anchor tiebreakers.
 
 Add to your `config.json`:
 
@@ -123,6 +142,12 @@ Add to your `config.json`:
   "invasionDefenceTeamThreshold": 650,
   "scrambleAnnouncementDelay": 12,
   "scramblePercentage": 0.5,
+  "enableClanTagGrouping": false,
+  "minClanGroupSize": 2,
+  "maxClanGroupSize": 18,
+  "clanTagMaxEditDistance": 1,
+  "clanTagCaseSensitive": true,
+  "clanGroupingPullEntireSquads": false,
   "changeTeamRetryInterval": 150,
   "maxScrambleCompletionTime": 15000,
   "showWinStreakMessages": true,
@@ -150,6 +175,7 @@ squad-server/
 │   └── team-balancer.js
 ├── utils/
 │   ├── tb-scrambler.js
+│   ├── tb-clan-grouping.js
 │   ├── tb-database.js
 │   ├── tb-commands.js
 │   ├── tb-diagnostics.js
@@ -158,6 +184,7 @@ squad-server/
 └── testing/ (optional)
     ├── scrambler-test-runner.js
     ├── historical-scramble-test.js
+    ├── historical-elo-backbone-test.js
     ├── plugin-logic-test-runner.js
     ├── elo-integration-test.js
     └── mock-data-generator.js
@@ -227,6 +254,14 @@ discordReportChannelID              - Channel for automated reports (win streaks
 discordAdminRoleIDs                 - Array of Role IDs required for Discord admin commands (empty = all in channel).
 mirrorRconBroadcasts                - Mirror RCON broadcasts to Discord.
 postScrambleDetails                 - Post detailed swap plan to Discord after scramble.
+
+Clan Tag Grouping:
+enableClanTagGrouping               - Keep players sharing a clan tag (e.g. [ABC]) together when they are on the same team during a scramble (default: false).
+minClanGroupSize                    - Min total members of a clan tag to be considered for grouping (default: 2).
+maxClanGroupSize                    - Max total members of a clan tag to be considered for grouping; larger clans are ignored (default: 18).
+clanTagMaxEditDistance              - Max Levenshtein edit distance to merge similar clan tags (e.g. [CLAN]+[CLAM] at distance 1). 0 = exact match only (default: 1).
+clanTagCaseSensitive                - When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + gamer-character map (λ→a, я→r, etc.) + non-alphanumeric strip + uppercase, so [Café]/[CAFE]/[CΛFE] all collapse into one group.
+clanGroupingPullEntireSquads        - When true, contributing squads merge wholesale into the virtual clan squad (non-clan teammates travel with their clan members). When false (default), only clan members are pulled into the anchor squad.
 
 Advanced:
 useEloForBalance                    - Weight scrambles by EloTracker mu ratings. Requires EloTracker plugin. Falls back to numerical balance if EloTracker is absent.
