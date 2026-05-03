@@ -177,13 +177,12 @@ export const Scrambler = {
           );
           if (contributing.length === 0) continue;
 
-          // Always register for the scoring penalty so Phase 2/3/4 don't re-split a clan
-          // even when no virtualization was needed (everyone already in one squad).
+          // Register for the Phase 2/3/4 scoring penalty regardless of how many
+          // squads the clan spans the penalty applies whenever a final plan
+          // separates clan members across teams.
           virtualSquadsByTag.set(`${teamID}:${tag}`, {
             originalMembers: memberSet
           });
-
-          if (contributing.length === 1) continue;
 
           // Anchor: most clan members; tiebreak by larger total size; tiebreak by lower id.
           const anchor = [...contributing].sort((a, b) => {
@@ -262,11 +261,11 @@ export const Scrambler = {
     const selectTieredSquads = (candidates, maxPlayersToSelect, usedSquadIds) => {
       const selected = [];
       let currentCount = 0;
-      
+
       const sortedCandidates = [...candidates].sort((a, b) => {
         if (a.players.length === 1 && b.players.length !== 1) return 1;
         if (a.players.length !== 1 && b.players.length === 1) return -1;
-        
+
         const lenA = a.players.length + (Math.random() * 20 - 10);
         const lenB = b.players.length + (Math.random() * 20 - 10);
         return lenB - lenA;
@@ -320,21 +319,21 @@ export const Scrambler = {
       const sum = (squads) => squads.reduce((n, s) => n + s.players.length, 0);
       const playersMovedFromT1 = sum(selectedT1Squads);
       const playersMovedFromT2 = sum(selectedT2Squads);
-      
+
       const actualPlayersMoved = playersMovedFromT1 + playersMovedFromT2;
-      
+
       const hypotheticalNewT1 = initialT1Count - playersMovedFromT1 + playersMovedFromT2;
       const hypotheticalNewT2 = initialT2Count - playersMovedFromT2 + playersMovedFromT1;
-      
+
       const diff = Math.abs(hypotheticalNewT1 - hypotheticalNewT2);
       // 0-1 diff = 0 penalty
       // 2 diff   = 40 penalty (Small enough that ELO/Vet improvements easily override it)
       // 3+ diff  = Exponential (3=400, 4=900, etc.)
       const balanceScore = diff <= 1 ? 0 : Math.pow(diff + 1, 2) * 100;
-      
+
       const penaltyT1Overcap = Math.max(0, hypotheticalNewT1 - maxTeamSize) * 10000; // Increased penalty
       const penaltyT2Overcap = Math.max(0, hypotheticalNewT2 - maxTeamSize) * 10000; // Increased penalty
-      
+
       const totalPlayers = initialT1Count + initialT2Count;
       const idealTeamSize = totalPlayers / 2;
       let sizeDeviationPenalty = 0;
@@ -383,7 +382,7 @@ export const Scrambler = {
 
         const compositeDiff = 0.6 * meanDiff + 0.4 * top15Diff;
         const eloBalancePenalty = Math.min(getPenalty(compositeDiff), 480);
-        
+
         combinedScore += eloBalancePenalty;
         // --- VETERAN PARITY SCORING ---
         const countRegs = (teamID, movingOut, movingIn) => {
@@ -421,7 +420,7 @@ export const Scrambler = {
           return brokenSquads.size * 500;
         };
         const lockedPenalty = calcLockedPenalty(selectedT1Squads) + calcLockedPenalty(selectedT2Squads);
-        
+
         const calcCohesionPenalty = (squads) => {
           let penalty = 0;
           for (const s of squads) {
@@ -457,9 +456,9 @@ export const Scrambler = {
         if (String(winStreakTeam) === '1' && !selectedT1Squads.some(s => s.locked)) winStreakTax += 150;
         if (String(winStreakTeam) === '2' && !selectedT2Squads.some(s => s.locked)) winStreakTax += 150;
 
-        combinedScore += 
-          (churnScore * 2) + 
-          churnUnderPenalty + 
+        combinedScore +=
+          (churnScore * 2) +
+          churnUnderPenalty +
           lockedPenalty +
           cohesionPenalty +
           anchorPenalty +
@@ -502,7 +501,7 @@ export const Scrambler = {
 
     // Hardcoded to 2000 as an exhaustive search bound.
     // At ~5-20ms per 500 searches, this takes ~20-80ms and provides deeper permutation exploration.
-    // NOTE: The scrambler runs for 2,000 iterations to ensure it fully explores 
+    // NOTE: The scrambler runs for 2,000 iterations to ensure it fully explores
     // the possibility space before escalating to more destructive phases.
     const MAX_ATTEMPTS = 2000;
     const SURGICAL_START = Math.floor(MAX_ATTEMPTS * 0.5);
@@ -558,10 +557,10 @@ export const Scrambler = {
       }
 
       // Phase 4: Nuclear Option
-      // NOTE: This phase is explicitly designed as a last-resort safety valve. 
-      // It only triggers in the final 5 iterations (1995-1999) if 1,995 attempts 
-      // failed to find a mathematically viable solution that preserves squads. 
-      // It sacrifices squad cohesion to ensure numerical balance can be achieved 
+      // NOTE: This phase is explicitly designed as a last-resort safety valve.
+      // It only triggers in the final 5 iterations (1995-1999) if 1,995 attempts
+      // failed to find a mathematically viable solution that preserves squads.
+      // It sacrifices squad cohesion to ensure numerical balance can be achieved
       // in unresolvable edge cases.
       if (i >= NUCLEAR_START) {
         if (i === NUCLEAR_START) Logger.verbose('TeamBalancer', 2, 'Engaging Nuclear Option: Decomposing all squads for final attempts.');
@@ -570,16 +569,16 @@ export const Scrambler = {
       }
 
       const currentUsedSquadIds = new Set(); // Reset for each attempt
-      
+
       shuffle(localT1);
       shuffle(localT2);
-      
+
       const teamDiff = initialCounts.team1Count - initialCounts.team2Count;
-      
+
       // Determine the swap range based on whether custom bounds were provided (ELO edge-case logic)
       let currentMaxBaseSwap = Math.floor(targetPlayersToMove / 2);
       let currentMinBaseSwap = 0;
-      
+
       if (eloMap && minPlayersToMove > 0 && maxPlayersToMove >= minPlayersToMove) {
         currentMinBaseSwap = Math.floor(minPlayersToMove / 2);
         currentMaxBaseSwap = Math.floor(maxPlayersToMove / 2);
@@ -587,13 +586,13 @@ export const Scrambler = {
 
       // Randomize the base swap size within the calculated bounds
       const baseSwapSize = Math.floor(Math.random() * (currentMaxBaseSwap - currentMinBaseSwap + 1)) + currentMinBaseSwap;
-      
+
       let targetMoveFromT1 = Math.round(baseSwapSize + (teamDiff / 4));
       let targetMoveFromT2 = Math.round(baseSwapSize - (teamDiff / 4));
-      
+
       targetMoveFromT1 = Math.max(0, targetMoveFromT1 + Math.floor(Math.random() * 3) - 1); // +/- 1 player
       targetMoveFromT2 = Math.max(0, targetMoveFromT2 + Math.floor(Math.random() * 3) - 1); // +/- 1 player
-      
+
       targetMoveFromT1 = Math.min(
         targetMoveFromT1,
         localT1.reduce((sum, s) => sum + s.players.length, 0)
@@ -602,7 +601,7 @@ export const Scrambler = {
         targetMoveFromT2,
         localT2.reduce((sum, s) => sum + s.players.length, 0)
       );
-      
+
       const selT1 = selectTieredSquads(localT1, targetMoveFromT1, currentUsedSquadIds);
       const selT2 = selectTieredSquads(localT2, targetMoveFromT2, currentUsedSquadIds);
 
@@ -652,7 +651,7 @@ export const Scrambler = {
       res.calculationTime = Date.now() - startTime;
       return res; // Return empty array if no solution found
     }
-    
+
     const finalT1Ids = new Set(bestT1SwapCandidates.map((s) => s.id));
     const finalT2Ids = new Set(bestT2SwapCandidates.map((s) => s.id));
     const finalIntersection = [...finalT1Ids].filter((id) => finalT2Ids.has(id));
@@ -676,7 +675,7 @@ export const Scrambler = {
       }
     }
 
-    
+
     for (const squad of bestT2SwapCandidates) {
       for (const eosID of squad.players) {
         finalPlayerMovesMap.set(eosID, { eosID, targetTeamID: '1' });
@@ -687,7 +686,7 @@ export const Scrambler = {
     const postInitialSwapCounts = getCurrentTeamCounts();
     Logger.verbose('TeamBalancer', 4, `Post-initial-swap internal team sizes: Team1 = ${postInitialSwapCounts.team1Count}, Team2 = ${postInitialSwapCounts.team2Count}`);
 
-    
+
     const getPlayersForTrimming = (
       teamID,
       currentWorkingPlayers,
@@ -696,14 +695,14 @@ export const Scrambler = {
     ) => {
       const playersOnTeam = currentWorkingPlayers.filter((p) => p.teamID === String(teamID));
 
-      
+
       const eligiblePlayers = playersOnTeam.filter((p) => !existingMovesMap.has(p.eosID));
 
       const unassignedPlayers = eligiblePlayers.filter((p) => p.squadID === null);
 
       const playersInSquads = eligiblePlayers.filter((p) => p.squadID !== null);
 
-      
+
       const playersWithSquadStatus = playersInSquads.map((p) => {
         const squad = currentWorkingSquads.find((s) => s.players.includes(p.eosID));
         return {
@@ -715,21 +714,21 @@ export const Scrambler = {
       const unlockedSquadPlayers = playersWithSquadStatus.filter((p) => !p.isLocked);
       const lockedSquadPlayers = playersWithSquadStatus.filter((p) => p.isLocked);
 
-      
+
       return [...unassignedPlayers, ...unlockedSquadPlayers, ...lockedSquadPlayers];
     };
 
     let team1Overcap = postInitialSwapCounts.team1Count - maxTeamSize;
     let team2Overcap = postInitialSwapCounts.team2Count - maxTeamSize;
 
-    
+
     let madeProgress = true;
     while (madeProgress && (team1Overcap > 0 || team2Overcap > 0)) {
       madeProgress = false;
 
-      
+
       if (team1Overcap > 0) {
-        
+
         const playersToConsider = getPlayersForTrimming(
           '1',
           workingPlayers,
@@ -748,14 +747,14 @@ export const Scrambler = {
         }
       }
 
-      
+
       const currentCountsAfterT1Trim = getCurrentTeamCounts();
       team1Overcap = currentCountsAfterT1Trim.team1Count - maxTeamSize;
       team2Overcap = currentCountsAfterT1Trim.team2Count - maxTeamSize;
 
-      
+
       if (team2Overcap > 0) {
-        
+
         const playersToConsider = getPlayersForTrimming(
           '2',
           workingPlayers,
@@ -774,7 +773,7 @@ export const Scrambler = {
         }
       }
 
-      
+
       const currentCounts = getCurrentTeamCounts();
       team1Overcap = currentCounts.team1Count - maxTeamSize;
       team2Overcap = currentCounts.team2Count - maxTeamSize;
@@ -783,7 +782,7 @@ export const Scrambler = {
     const finalInternalCounts = getCurrentTeamCounts();
     Logger.verbose('TeamBalancer', 4, `Final internal team sizes after all adjustments: Team1 = ${finalInternalCounts.team1Count}, Team2 = ${finalInternalCounts.team2Count}, Unassigned (no squad) = ${finalInternalCounts.unassignedCount}`);
 
-    
+
     const finalTeam1Overcap = finalInternalCounts.team1Count - maxTeamSize;
     const finalTeam2Overcap = finalInternalCounts.team2Count - maxTeamSize;
 
