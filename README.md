@@ -73,10 +73,11 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 * **Target Calc**: Computes ideal player swap targets (default 50% churn) adjusted by current team population deltas.
 
 * **Tiered Optimization (2000 Iterations)**:
-  * **Phase 1 (Pure Swaps)**: Focuses exclusively on whole-squad moves to maximize friend-group cohesion. When **Clan Tag Grouping** is enabled, same-team clan members are first folded into "virtual squads" (anchored on the squad with the most clan members), so Phase 1 swaps the entire clan as a single unit.
-  * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments. With **Clan Tag Grouping** enabled, virtual clan squads are excluded from the victim pool unless no other unlocked squad is eligible.
-  * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues. With **Clan Tag Grouping** enabled, virtual clan squads are excluded from the victim pool unless no other squad is eligible.
+  * **Phase 1 (Pure Swaps)**: Focuses exclusively on whole-squad moves to maximize friend-group cohesion.
+  * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments.
+  * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues.
   * **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to achieve maximum numerical balance. Runs for the last 5 iterations.
+  * **With Clan Tag Grouping enabled**: same-team clan members are folded into "virtual squads" anchored on the squad with the most clan members; Phase 1 swaps them as one unit, and Phases 2/3 only shatter a virtual squad when no non-clan squad is eligible.
 
 * **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (composite Mean/Top-15 ELO diff + veteran parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
 
