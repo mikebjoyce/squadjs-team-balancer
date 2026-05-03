@@ -74,7 +74,7 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 
 * **Tiered Optimization (2000 Iterations)**:
   * **Phase 1 (Pure Swaps)**: Focuses exclusively on whole-squad moves to maximize friend-group cohesion. When **Clan Tag Grouping** is enabled, same-team clan members are first folded into "virtual squads" (anchored on the squad with the most clan members), so Phase 1 swaps the entire clan as a single unit.
-  * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments.
+  * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments. With **Clan Tag Grouping** enabled, virtual clan squads are excluded from the victim pool unless no other unlocked squad is eligible.
   * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues. With **Clan Tag Grouping** enabled, virtual clan squads are excluded from the victim pool unless no other squad is eligible.
   * **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to achieve maximum numerical balance. Runs for the last 5 iterations.
 
@@ -106,7 +106,7 @@ When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan
 * Tags within `clanTagMaxEditDistance` Levenshtein distance of one another are merged into a single group, with the smaller group absorbed into the larger. The merge runs iteratively so transitive matches (e.g. `[AAA] ↔ [AAB] ↔ [ABB]`) collapse into one group.
 * For each team, the scrambler identifies that team's members of each qualifying clan and folds them into a **virtual squad** anchored on the squad already holding the most clan members (tiebreak: larger total squad size, then lower squad ID).
 * `clanGroupingPullEntireSquads` toggles whether contributing squads merge wholesale into the virtual squad (non-clan teammates travel with their clan members), or only the clan members themselves are pulled in (the default — non-clan teammates stay where they are).
-* Phase 1 then swaps virtual squads atomically, and Phase 3 prefers any other victim before breaking one. A soft scoring penalty discourages Phase 2/3/4 from re-splitting a virtual squad once decomposition is underway.
+* Phase 1 then swaps virtual squads atomically, and Phases 2 and 3 prefer any other victim before breaking a virtual clan squad — they only target one when no non-clan squad is eligible. A soft scoring penalty further discourages Phase 2/3/4 from re-splitting a virtual squad once decomposition is underway.
 
 **Cross-team clans are intentionally not consolidated** — if a clan starts split across both teams, each side's group is treated independently. The feature only protects clan members already together on a team.
 
