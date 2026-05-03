@@ -110,8 +110,6 @@ When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan
 
 **Cross-team clans are intentionally not consolidated** — if a clan starts split across both teams, each side's group is treated independently. The feature only protects clan members already together on a team.
 
-See [`CLAN_GROUPING_EXAMPLES.md`](CLAN_GROUPING_EXAMPLES.md) for worked-out scenarios covering pull-mode comparison, cross-team handling, similarity merging, and anchor tiebreakers.
-
 Add to your `config.json`:
 
 ```json
