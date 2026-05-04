@@ -96,20 +96,12 @@ When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan
 
 **How it works**:
 
-* Player names are scanned for a leading clan tag using a five-strategy detector ported from the [squadjs-elo-tracker](https://github.com/mikebjoyce/squadjs-elo-tracker) project, applied in priority order:
-  1. **Bracket pair** — tag wrapped in matched or mismatched brackets, including a wide variety of Unicode bracket-like glyphs (`[TAG]`, `(TAG)`, `<TAG>`, `{TAG}`, `【TAG】`, `╔TAG╗`, `{TAG)`). Captures the inside of the pair.
-  2. **Explicit separator** — tag followed by `|`, `//`, `-`, `:`, `†`, `™`, `✯`, `~`, or `*` and a space (`KqXz | Korvath`, `TAG // Name`).
-  3. **2+ space gap** — tag separated from the name by two or more spaces (`TAG  PlayerName`).
-  4. **Short ASCII ALL-CAPS tag** — 2–4 uppercase chars followed by a single space and an uppercase continuation (`KM Lookout`).
-  5. **Bare-prefix fallback** — any 2–7 non-bracket non-whitespace chars followed by whitespace + a non-empty token. Catches Unicode and mixed-case bare prefixes that strategies 1–4 don't pick up (`KΛZ Korven`, `♣ΛCE Wurstwasser`, `RmdV Habicht`, `[OPN Player` open-only bracket).
-* Examples: `[QRZ] Steel Hawks` → `QRZ`, `[QZ℘] Voidstomper` → `QZ℘`, `KqXz | Korvath` → `KqXz`, `[XQR]™ Drazo` → `XQR`, `[7th-CAV]Player` → `7th-CAV`, `KM Lookout` → `KM`, `KΛZ Korven` → `KΛZ`, `♣ΛCE Wurstwasser` → `♣ΛCE`. Only names with no visible tag/name boundary at all — like `ABCJohnSmith` (no whitespace, no bracket, no separator) — yield no group. Strategy 5 requires whitespace + a non-empty following token, which keeps unrelated 7-char-prefix collisions out while still recovering bare-prefix names.
-* Tag matching is case-sensitive by default (`[Clan]` and `[clan]` are different unless merged via edit distance). Set `clanTagCaseSensitive: false` to normalize tags before grouping: NFD-decompose + strip combining marks (`Café` → `Cafe`), map gamer-character lookalikes (`λ`→`a`, `я`→`r`, `丹`→`a`, `ø`→`o`, …), strip non-alphanumerics, and uppercase. Variants like `[Café]` / `[CAFE]` / `[CΛFE]` then collapse into one group.
-* Tags within `clanTagMaxEditDistance` Levenshtein distance of one another are merged into a single group, with the smaller group absorbed into the larger. The merge runs iteratively so transitive matches (e.g. `[AAA] ↔ [AAB] ↔ [ABB]`) collapse into one group.
-* For each team, the scrambler identifies that team's members of each qualifying clan and folds them into a **virtual squad** anchored on the squad already holding the most clan members (tiebreak: larger total squad size, then lower squad ID).
-* `clanGroupingPullEntireSquads` toggles whether contributing squads merge wholesale into the virtual squad (non-clan teammates travel with their clan members), or only the clan members themselves are pulled in (the default — non-clan teammates stay where they are).
-* Phase 1 then swaps virtual squads atomically, and Phases 2 and 3 prefer any other victim before breaking a virtual clan squad — they only target one when no non-clan squad is eligible. A soft scoring penalty further discourages Phase 2/3/4 from re-splitting a virtual squad once decomposition is underway.
+* **Tag detection**: Player names are scanned for a leading clan tag via a five-strategy detector (ported from [squadjs-elo-tracker](https://github.com/mikebjoyce/squadjs-elo-tracker)), tried in order: bracket pairs (`[TAG]`, `【TAG】`, `╔TAG╗`), explicit separators (`TAG | Name`, `TAG // Name`), 2+ space gap, short ASCII ALL-CAPS (`KM Lookout`), and a bare-prefix fallback for Unicode/mixed-case prefixes (`KΛZ Korven`). Names with no visible tag/name boundary (e.g. `ABCJohnSmith`) yield no group.
+* **Matching**: Case-sensitive by default. Set `clanTagCaseSensitive: false` to normalize via NFD-decompose, lookalike mapping (`λ`→`a`, `я`→`r`, …), and uppercase, collapsing variants like `[Café]` / `[CAFE]` / `[CΛFE]`. Tags within `clanTagMaxEditDistance` Levenshtein distance are iteratively merged so transitive matches (`[AAA] ↔ [AAB] ↔ [ABB]`) collapse into one group.
+* **Virtual squads**: Per team, clan members are folded into a virtual squad anchored on the squad already holding the most clan members (tiebreak: larger size, lower ID). `clanGroupingPullEntireSquads` toggles whether non-clan teammates travel along (default: only clan members are pulled).
+* **Phase behavior**: Phase 1 swaps virtual squads atomically. Phases 2/3 prefer non-clan victims and only break a virtual squad when no other option exists; a soft scoring penalty further discourages re-splitting once decomposition begins.
 
-**Cross-team clans are intentionally not consolidated** — if a clan starts split across both teams, each side's group is treated independently. The feature only protects clan members already together on a team.
+**Cross-team clans are intentionally not consolidated** — if a clan starts split across teams, each side is treated independently.
 
 Add to your `config.json`:
 
