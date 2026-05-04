@@ -77,6 +77,7 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
   * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments.
   * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues.
   * **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to achieve maximum numerical balance. Runs for the last 5 iterations.
+  * **With Clan Tag Grouping enabled**: same-team clan members are folded into "virtual squads" anchored on the squad with the most clan members; Phase 1 swaps them as one unit, and Phases 2/3 only shatter a virtual squad when no non-clan squad is eligible.
 
 * **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (composite Mean/Top-15 ELO diff + veteran parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
 
@@ -89,9 +90,18 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 * **Balance Success**: 99.9% rate of achieving a team differential of ≤ 2 players.
 * **Cohesion**: Locked squads are preserved during Phases 1–2. Phase 3 may split one locked squad as a late-stage fallback. Phase 4 decomposes all squads.
 
----
+### Clan Tag Grouping (Optional)
 
-## Installation
+When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan tag (e.g. `[ABC]`) and are already on the same team together when shuffling.
+
+**How it works**:
+
+* **Tag detection**: Player names are scanned for a leading clan tag via a five-strategy detector (ported from [squadjs-elo-tracker](https://github.com/mikebjoyce/squadjs-elo-tracker)), tried in order: bracket pairs (`[TAG]`, `【TAG】`, `╔TAG╗`), explicit separators (`TAG | Name`, `TAG // Name`), 2+ space gap, short ASCII ALL-CAPS (`KM Lookout`), and a bare-prefix fallback for Unicode/mixed-case prefixes (`KΛZ Korven`). Names with no visible tag/name boundary (e.g. `ABCJohnSmith`) yield no group.
+* **Matching**: Case-sensitive by default. Set `clanTagCaseSensitive: false` to normalize via NFD-decompose, lookalike mapping (`λ`→`a`, `я`→`r`, …), and uppercase, collapsing variants like `[Café]` / `[CAFE]` / `[CΛFE]`. Tags within `clanTagMaxEditDistance` Levenshtein distance are iteratively merged so transitive matches (`[AAA] ↔ [AAB] ↔ [ABB]`) collapse into one group.
+* **Virtual squads**: Per team, clan members are folded into a virtual squad anchored on the squad already holding the most clan members (tiebreak: larger size, lower ID). `clanGroupingPullEntireSquads` toggles whether non-clan teammates travel along (default: only clan members are pulled).
+* **Phase behavior**: Phase 1 swaps virtual squads atomically. Phases 2/3 prefer non-clan victims and only break a virtual squad when no other option exists; a soft scoring penalty further discourages re-splitting once decomposition begins.
+
+**Cross-team clans are intentionally not consolidated** — if a clan starts split across teams, each side is treated independently.
 
 Add to your `config.json`:
 
@@ -123,6 +133,12 @@ Add to your `config.json`:
   "invasionDefenceTeamThreshold": 650,
   "scrambleAnnouncementDelay": 12,
   "scramblePercentage": 0.5,
+  "enableClanTagGrouping": false,
+  "minClanGroupSize": 2,
+  "maxClanGroupSize": 18,
+  "clanTagMaxEditDistance": 1,
+  "clanTagCaseSensitive": true,
+  "clanGroupingPullEntireSquads": false,
   "changeTeamRetryInterval": 150,
   "maxScrambleCompletionTime": 15000,
   "showWinStreakMessages": true,
@@ -150,6 +166,7 @@ squad-server/
 │   └── team-balancer.js
 ├── utils/
 │   ├── tb-scrambler.js
+│   ├── tb-clan-grouping.js
 │   ├── tb-database.js
 │   ├── tb-commands.js
 │   ├── tb-diagnostics.js
@@ -158,6 +175,7 @@ squad-server/
 └── testing/ (optional)
     ├── scrambler-test-runner.js
     ├── historical-scramble-test.js
+    ├── historical-elo-backbone-test.js
     ├── plugin-logic-test-runner.js
     ├── elo-integration-test.js
     └── mock-data-generator.js
@@ -227,6 +245,14 @@ discordReportChannelID              - Channel for automated reports (win streaks
 discordAdminRoleIDs                 - Array of Role IDs required for Discord admin commands (empty = all in channel).
 mirrorRconBroadcasts                - Mirror RCON broadcasts to Discord.
 postScrambleDetails                 - Post detailed swap plan to Discord after scramble.
+
+Clan Tag Grouping:
+enableClanTagGrouping               - Keep players sharing a clan tag (e.g. [ABC]) together when they are on the same team during a scramble (default: false).
+minClanGroupSize                    - Min total members of a clan tag to be considered for grouping (default: 2).
+maxClanGroupSize                    - Max total members of a clan tag to be considered for grouping; larger clans are ignored (default: 18).
+clanTagMaxEditDistance              - Max Levenshtein edit distance to merge similar clan tags (e.g. [CLAN]+[CLAM] at distance 1). 0 = exact match only (default: 1).
+clanTagCaseSensitive                - When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + gamer-character map (λ→a, я→r, etc.) + non-alphanumeric strip + uppercase, so [Café]/[CAFE]/[CΛFE] all collapse into one group.
+clanGroupingPullEntireSquads        - When true, contributing squads merge wholesale into the virtual clan squad (non-clan teammates travel with their clan members). When false (default), only clan members are pulled into the anchor squad.
 
 Advanced:
 useEloForBalance                    - Weight scrambles by EloTracker mu ratings. Requires EloTracker plugin. Falls back to numerical balance if EloTracker is absent.
