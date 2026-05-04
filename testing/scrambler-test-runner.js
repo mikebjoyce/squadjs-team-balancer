@@ -17,6 +17,21 @@ import {
   generateScenario_LowPopLargeClan
 } from './mock-data-generator.js';
 
+// Failure tracker — turns observational checks into a real gate (process.exit on regression).
+const _failures = [];
+const track = (name, pass, detail = '') => {
+  console.log(`   ${pass ? '✅' : '❌'} ${name}${pass ? '' : detail}`);
+  if (!pass) _failures.push(`${name}${detail}`);
+};
+const requireRate = (label, passed, total, minRate) =>
+  track(`${label} ${passed}/${total} (${total ? (passed/total*100).toFixed(1) : '0'}%) ≥ ${(minRate*100).toFixed(0)}%`,
+        total > 0 && passed/total >= minRate);
+const requireAll = () => {
+  if (!_failures.length) return console.log(`\n🎯 All checks passed.`);
+  console.error(`\n❌ ${_failures.length} FAILED:\n` + _failures.map(f => `  - ${f}`).join('\n'));
+  process.exit(1);
+};
+
 // Helper to analyze team composition (Large vs Small vs Solo)
 function getComposition(players) {
   const stats = {
@@ -320,14 +335,7 @@ async function runClanTest(testName, dataGeneratorFn, opts = {}) {
     });
   }
 
-  let passCount = 0;
-  checks.forEach(c => {
-    if (c.pass) passCount++;
-    console.log(`   ${c.pass ? '✅' : '❌'} ${c.name}${c.detail || ''}`);
-  });
-  console.log(`   ${passCount}/${checks.length} checks passed`);
-
-  return { passCount, total: checks.length };
+  checks.forEach(c => track(`${testName}: ${c.name}`, c.pass, c.detail || ''));
 }
 
 async function runClanBulkTest(totalRuns = 200) {
@@ -335,12 +343,11 @@ async function runClanBulkTest(totalRuns = 200) {
   console.log(`🚀 CLAN GROUPING BULK STRESS TEST (${totalRuns} runs)`);
   console.log(`==================================================`);
 
-  let totalRunCount = 0;
-  let cohesionPassRuns = 0;
-  let totalCohesionChecks = 0;
-  let totalCohesionPasses = 0;
-  let balanceFailRuns = 0;
-  let crashes = 0;
+  // Mix Unicode/special-char tags into 40% of runs so the bulk exercises the
+  // hard extractor strategies (not just the easy ALL-CAPS-ASCII path).
+  const REAL_TAGS = ['KΛZ', '7-CAV', 'H_M', '♣ΛCE', 'B.A.D'];
+  let totalRunCount = 0, cohesionPassRuns = 0, totalCohesionChecks = 0, totalCohesionPasses = 0;
+  let balanceFailRuns = 0, extractionFailRuns = 0, crashes = 0;
 
   for (let i = 0; i < totalRuns; i++) {
     try {
@@ -351,9 +358,11 @@ async function runClanBulkTest(totalRuns = 200) {
 
       // Inject 1-3 random clans of size 2-7 into random teams
       const numClans = 1 + Math.floor(Math.random() * 3);
+      const useReal = Math.random() < 0.4;
       const injections = [];
       for (let k = 0; k < numClans; k++) {
-        const tag = `R${k}${Math.floor(Math.random() * 99)}`;
+        const base = useReal ? REAL_TAGS[k % REAL_TAGS.length] : 'R';
+        const tag = `${base}${k}${Math.floor(Math.random() * 99)}`;
         const teamID = Math.random() < 0.5 ? 1 : 2;
         const count = 2 + Math.floor(Math.random() * 6);
         injections.push({ tag, count, teamID });
@@ -362,6 +371,13 @@ async function runClanBulkTest(totalRuns = 200) {
 
       const caseSensitive = Math.random() < 0.5;
       const clanGroups = extractClanGroups(players, { minSize: 2, maxSize: 18, maxEditDistance: 1, caseSensitive });
+
+      // Closes the silent-skip hole: if extraction misses players, total grouped
+      // members will be smaller than total injected. Cohesion alone wouldn't
+      // catch this — under-extracted clans simply drop below the size>=2 floor.
+      const injectedTotal = injections.reduce((s, inj) => s + inj.count, 0);
+      const groupedTotal = Object.values(clanGroups).reduce((s, ids) => s + ids.length, 0);
+      if (groupedTotal < injectedTotal) extractionFailRuns++;
       const { squads: tfSquads, players: tfPlayers } = transformForScrambler(players, squads);
 
       const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
@@ -411,6 +427,14 @@ async function runClanBulkTest(totalRuns = 200) {
   console.log(`Balance failures (>2):    ${balanceFailRuns} (${((balanceFailRuns / totalRunCount) * 100).toFixed(2)}%)`);
   console.log(`Per-clan cohesion passes: ${totalCohesionPasses}/${totalCohesionChecks} (${((totalCohesionPasses / Math.max(1, totalCohesionChecks)) * 100).toFixed(2)}%)`);
   console.log(`Runs w/ all cohesion ok:  ${cohesionPassRuns}/${totalRunCount} (${((cohesionPassRuns / Math.max(1, totalRunCount)) * 100).toFixed(2)}%)`);
+  console.log(`Extraction failures:      ${extractionFailRuns} (${((extractionFailRuns / totalRunCount) * 100).toFixed(2)}%)`);
+
+  // Thresholds set ~3pp below observed baseline on feat/clan-tag-grouping (2026-05-04).
+  // Adjust if the algorithm's stochastic behavior shifts the baseline.
+  requireRate('Bulk balance success', totalRunCount - balanceFailRuns, totalRunCount, 0.95);
+  requireRate('Bulk cohesion runs',   cohesionPassRuns,                totalRunCount, 0.95);
+  requireRate('Bulk extraction',      totalRunCount - extractionFailRuns, totalRunCount, 0.95);
+  requireRate('Bulk no-crash',        totalRunCount,                    totalRuns,     0.99);
 }
 
 async function runAllTests() {
@@ -701,4 +725,4 @@ async function runBulkTests(totalRuns = 100) {
   }
 }
 
-runAllTests().catch(console.error);
+runAllTests().then(requireAll).catch(e => { console.error(e); process.exit(1); });
