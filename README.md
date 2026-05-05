@@ -131,15 +131,15 @@ Add to your `config.json`:
   "minTicketsToCountAsDominantWin": 150,
   "invasionAttackTeamThreshold": 300,
   "invasionDefenceTeamThreshold": 650,
-  "scrambleAnnouncementDelay": 12,
-  "scramblePercentage": 0.5,
-  "enableClanTagGrouping": false,
-  "minClanGroupSize": 2,
-  "maxClanGroupSize": 18,
-  "clanTagMaxEditDistance": 1,
-  "clanTagCaseSensitive": true,
-  "clanGroupingPullEntireSquads": false,
-  "changeTeamRetryInterval": 150,
+   "scrambleAnnouncementDelay": 12,
+   "scramblePercentage": 0.5,
+   "enableClanTagGrouping": false,
+   "minClanGroupSize": 2,
+   "maxClanGroupSize": 18,
+   "clanTagMaxEditDistance": 1,
+   "clanTagCaseSensitive": true,
+   "clanGroupingPullEntireSquads": false,
+   "changeTeamRetryInterval": 50,
   "maxScrambleCompletionTime": 15000,
   "showWinStreakMessages": true,
   "warnOnSwap": true,
@@ -228,7 +228,7 @@ invasionDefenceTeamThreshold        - Ticket diff for Invasion defenders to coun
 Scramble Execution:
 scrambleAnnouncementDelay           - Seconds before scramble executes after announcement (default: 12).
 scramblePercentage                  - Fraction of players to move (default: 0.5).
-changeTeamRetryInterval             - RCON retry interval in ms (default: 150).
+changeTeamRetryInterval             - RCON retry interval in ms (default: 50).
 maxScrambleCompletionTime           - Max time in ms for all swaps to complete (default: 15000).
 warnOnSwap                          - RCON warn players when swapped.
 requireScrambleConfirmation         - Require !scramble confirm before executing manual scrambles.

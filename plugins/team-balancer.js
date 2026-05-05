@@ -285,10 +285,10 @@ export default class TeamBalancer extends BasePlugin {
          type: 'array',
          description: 'Clan tags to exclude from clan grouping entirely. Tags are matched after the same normalization used by clanTagCaseSensitive (raw match when true, normalized when false). Example: ["NL", "ADMIN"] to prevent those clans from being kept together during scrambles.'
        },
-       changeTeamRetryInterval: {
-        default: 150,
-        type: 'number'
-      },      
+        changeTeamRetryInterval: {
+         default: 50,
+         type: 'number'
+       },
       maxScrambleCompletionTime: {
         default: 15000,
         type: 'number'

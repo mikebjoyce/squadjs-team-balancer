@@ -15,7 +15,8 @@
  * Scrambler (named)
  *   Object with one public method:
  *     scrambleTeamsPreservingSquads({ squads, players, winStreakTeam,
- *       scramblePercentage, eloMap, debug })
+ *       scramblePercentage, eloMap, debug, clanGroups, pullEntireSquads,
+ *       minPlayersToMove, maxPlayersToMove })
  *       Returns an Array of { eosID, targetTeamID } move objects,
  *       with a calculationTime property attached to the array.
  *
