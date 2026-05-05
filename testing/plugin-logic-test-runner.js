@@ -17,7 +17,13 @@ const mockServer = {
     },
     execute: async (cmd) => {},
     warn: async (steamID, msg) => {},
-    switchTeam: async (steamID, teamID) => {}, // Needed for executeScramble
+    switchTeam: async (rconIdentifier, teamID) => {
+      // Actually mutate the mock player so SwapExecutor's verification step sees the move succeed.
+      const player = mockServer.players.find(
+        (p) => p.steamID === rconIdentifier || p.name === rconIdentifier || p.eosID === rconIdentifier
+      );
+      if (player) player.teamID = Number(teamID);
+    },
   },
   players: [], // empty for logic tests
   squads: [], // empty for logic tests
@@ -26,6 +32,8 @@ const mockServer = {
   removeListener: () => {},
   on: () => {},
   listenerCount: () => 0,
+  emit: () => {}, // executeScramble() emits TEAM_BALANCER_SCRAMBLE_EXECUTED
+  updatePlayerList: async () => {}, // SwapExecutor refreshes the player list to verify moves
 };
 
 const mockDbState = {
@@ -75,6 +83,7 @@ const mockConnectors = {
         LOCK: { UPDATE: 'UPDATE' },
       });
     },
+    query: async () => [], // tb-database initDB issues PRAGMA journal_mode=WAL etc.
   },
 };
 
@@ -235,15 +244,28 @@ async function runPluginLogicTests() {
   }
 
   // Test post-scramble reset
-  // We can call executeScramble directly to test the reset logic
-  // Populate server with unbalanced teams to ensure scramble generates moves and triggers success path
-  tb.server.players = Array.from({ length: 10 }, (_, i) => ({
-    steamID: `765611980000000${i}`,
-    name: `Player${i}`,
-    teamID: 1, // All on team 1 to force imbalance
-    squadID: null,
-    roles: ['Rifleman']
-  }));
+  // We can call executeScramble directly to test the reset logic.
+  // Populate server with unbalanced teams to ensure scramble generates moves and triggers the success path.
+  // Note: transformSquadJSData filters out players without eosID, so each mock player needs one.
+  // Also need players on BOTH teams (heavily imbalanced) so the scrambler has somewhere to swap to.
+  tb.server.players = [
+    ...Array.from({ length: 9 }, (_, i) => ({
+      eosID: `mock_eos_t1_${i}`,
+      steamID: `765611980000000${i}`,
+      name: `T1Player${i}`,
+      teamID: 1,
+      squadID: null,
+      roles: ['Rifleman']
+    })),
+    {
+      eosID: 'mock_eos_t2_0',
+      steamID: '76561198000000099',
+      name: 'T2Player0',
+      teamID: 2,
+      squadID: null,
+      roles: ['Rifleman']
+    }
+  ];
 
   await tb.executeScramble(false); // isSimulated = false
   assert(tb.winStreakCount === 0, 'executeScramble resets the win streak count to 0.');

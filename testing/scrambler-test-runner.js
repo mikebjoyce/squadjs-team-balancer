@@ -1,5 +1,36 @@
 import { Scrambler } from '../utils/tb-scrambler.js';
-import { generateMockPlayers, generateMockSquads, transformForScrambler, generateScenario_AllLocked, generateScenario_DavidGoliath } from './mock-data-generator.js';
+import { extractClanGroups } from '../utils/tb-clan-grouping.js';
+import {
+  generateMockPlayers,
+  generateMockSquads,
+  transformForScrambler,
+  injectClanTags,
+  generateScenario_AllLocked,
+  generateScenario_DavidGoliath,
+  generateScenario_ClanGrouping,
+  generateScenario_ClanSplitAcrossTeams,
+  generateScenario_ClanSimilarity,
+  generateScenario_ClanSpecialChars,
+  generateScenario_ClanDelimiters,
+  generateScenario_RealWorldNames,
+  generateScenario_ClanBelowMin,
+  generateScenario_LowPopLargeClan
+} from './mock-data-generator.js';
+
+// Failure tracker — turns observational checks into a real gate (process.exit on regression).
+const _failures = [];
+const track = (name, pass, detail = '') => {
+  console.log(`   ${pass ? '✅' : '❌'} ${name}${pass ? '' : detail}`);
+  if (!pass) _failures.push(`${name}${detail}`);
+};
+const requireRate = (label, passed, total, minRate) =>
+  track(`${label} ${passed}/${total} (${total ? (passed/total*100).toFixed(1) : '0'}%) ≥ ${(minRate*100).toFixed(0)}%`,
+        total > 0 && passed/total >= minRate);
+const requireAll = () => {
+  if (!_failures.length) return console.log(`\n🎯 All checks passed.`);
+  console.error(`\n❌ ${_failures.length} FAILED:\n` + _failures.map(f => `  - ${f}`).join('\n'));
+  process.exit(1);
+};
 
 // Helper to analyze team composition (Large vs Small vs Solo)
 function getComposition(players) {
@@ -213,6 +244,199 @@ async function runEloTest() {
   }
 }
 
+async function runClanTest(testName, dataGeneratorFn, opts = {}) {
+  const {
+    pullEntireSquads = false,
+    minSize = 2,
+    maxSize = 18,
+    maxEditDistance = 1,
+    caseSensitive = true,
+    scramblePercentage = 0.5,
+    expectMerged = [],   // optional: array of arrays of tags that should have merged into one group
+    expectNotGrouped = [] // optional: tags that should NOT appear in extracted groups
+  } = opts;
+
+  console.log(`\n--------------------------------------------------`);
+  console.log(`🧪 TEST: ${testName}  (pullEntireSquads=${pullEntireSquads}, edit=${maxEditDistance}, caseSensitive=${caseSensitive}, scramble=${scramblePercentage})`);
+
+  const { players, squads } = dataGeneratorFn();
+
+  const clanGroups = extractClanGroups(players, { minSize, maxSize, maxEditDistance, caseSensitive });
+  const tags = Object.keys(clanGroups);
+  console.log(`   Extracted clans: ${tags.length === 0 ? '(none)' : tags.map(t => `[${t}]:${clanGroups[t].length}`).join(' ')}`);
+
+  const { squads: tfSquads, players: tfPlayers } = transformForScrambler(players, squads);
+  const t1Start = tfPlayers.filter(p => p.teamID === '1').length;
+  const t2Start = tfPlayers.filter(p => p.teamID === '2').length;
+  console.log(`   Initial State: Team 1: ${t1Start} | Team 2: ${t2Start} | Total: ${tfPlayers.length}`);
+
+  const startTime = Date.now();
+  const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+    squads: tfSquads,
+    players: tfPlayers,
+    winStreakTeam: 1,
+    scramblePercentage,
+    clanGroups,
+    pullEntireSquads
+  });
+  const duration = Date.now() - startTime;
+
+  const moveByEosID = new Map(swapPlan.map(m => [m.eosID, m.targetTeamID]));
+  const finalPlayers = tfPlayers.map(p =>
+    moveByEosID.has(p.eosID) ? { ...p, teamID: moveByEosID.get(p.eosID) } : p
+  );
+  const finalTeamByEosID = new Map(finalPlayers.map(p => [p.eosID, p.teamID]));
+
+  const t1End = finalPlayers.filter(p => p.teamID === '1').length;
+  const t2End = finalPlayers.filter(p => p.teamID === '2').length;
+  const diff = Math.abs(t1End - t2End);
+
+  console.log(`   Results: Time=${duration}ms | Moves=${swapPlan.length} | Final T1:${t1End} T2:${t2End} (Diff:${diff})`);
+
+  const checks = [];
+  checks.push({ name: 'Teams Balanced (Diff <= 2)', pass: diff <= 2 });
+  checks.push({ name: 'No Duplicate Moves', pass: new Set(swapPlan.map(m => m.eosID)).size === swapPlan.length });
+
+  // Per-team clan cohesion: for each extracted clan, members starting on the same team must stay together
+  for (const [tag, eosIDs] of Object.entries(clanGroups)) {
+    for (const startTeam of ['1', '2']) {
+      const sameTeamMembers = eosIDs.filter(id => {
+        const p = tfPlayers.find(pp => pp.eosID === id);
+        return p?.teamID === startTeam;
+      });
+      if (sameTeamMembers.length < 2) continue;
+      const finalTeams = new Set(sameTeamMembers.map(id => finalTeamByEosID.get(id)));
+      const cohesive = finalTeams.size === 1;
+      const onT1 = sameTeamMembers.filter(id => finalTeamByEosID.get(id) === '1').length;
+      const onT2 = sameTeamMembers.filter(id => finalTeamByEosID.get(id) === '2').length;
+      checks.push({
+        name: `Cohesion: [${tag}] (T${startTeam} group of ${sameTeamMembers.length}) ended together`,
+        pass: cohesive,
+        detail: cohesive ? '' : ` (split T1:${onT1} T2:${onT2})`
+      });
+    }
+  }
+
+  for (const mergeSet of expectMerged) {
+    const presentTags = mergeSet.filter(t => tags.includes(t));
+    const allMembers = mergeSet.flatMap(t => clanGroups[t] ?? []);
+    const wasMerged = presentTags.length === 1 && new Set(allMembers).size > 0;
+    checks.push({
+      name: `Similarity: ${mergeSet.map(t => `[${t}]`).join(' + ')} merged into one group`,
+      pass: wasMerged,
+      detail: wasMerged ? '' : ` (saw separate tags: ${presentTags.join(', ')})`
+    });
+  }
+
+  for (const tag of expectNotGrouped) {
+    checks.push({
+      name: `Filter: [${tag}] excluded from groups`,
+      pass: !tags.includes(tag)
+    });
+  }
+
+  checks.forEach(c => track(`${testName}: ${c.name}`, c.pass, c.detail || ''));
+}
+
+async function runClanBulkTest(totalRuns = 200) {
+  console.log(`\n==================================================`);
+  console.log(`🚀 CLAN GROUPING BULK STRESS TEST (${totalRuns} runs)`);
+  console.log(`==================================================`);
+
+  // Mix Unicode/special-char tags into 40% of runs so the bulk exercises the
+  // hard extractor strategies (not just the easy ALL-CAPS-ASCII path).
+  const REAL_TAGS = ['KΛZ', '7-CAV', 'H_M', '♣ΛCE', 'B.A.D'];
+  let totalRunCount = 0, cohesionPassRuns = 0, totalCohesionChecks = 0, totalCohesionPasses = 0;
+  let balanceFailRuns = 0, extractionFailRuns = 0, crashes = 0;
+
+  for (let i = 0; i < totalRuns; i++) {
+    try {
+      const playerCount = 60 + Math.floor(Math.random() * 43);
+      const team1Ratio = 0.35 + Math.random() * 0.3;
+      const players = generateMockPlayers(playerCount, team1Ratio, Math.random() * 0.15);
+      const squads = generateMockSquads(players);
+
+      // Inject 1-3 random clans of size 2-7 into random teams
+      const numClans = 1 + Math.floor(Math.random() * 3);
+      const useReal = Math.random() < 0.4;
+      const injections = [];
+      for (let k = 0; k < numClans; k++) {
+        const base = useReal ? REAL_TAGS[k % REAL_TAGS.length] : 'R';
+        const tag = `${base}${k}${Math.floor(Math.random() * 99)}`;
+        const teamID = Math.random() < 0.5 ? 1 : 2;
+        const count = 2 + Math.floor(Math.random() * 6);
+        injections.push({ tag, count, teamID });
+      }
+      injectClanTags(players, injections);
+
+      const caseSensitive = Math.random() < 0.5;
+      const clanGroups = extractClanGroups(players, { minSize: 2, maxSize: 18, maxEditDistance: 1, caseSensitive });
+
+      // Closes the silent-skip hole: if extraction misses players, total grouped
+      // members will be smaller than total injected. Cohesion alone wouldn't
+      // catch this — under-extracted clans simply drop below the size>=2 floor.
+      const injectedTotal = injections.reduce((s, inj) => s + inj.count, 0);
+      const groupedTotal = Object.values(clanGroups).reduce((s, ids) => s + ids.length, 0);
+      if (groupedTotal < injectedTotal) extractionFailRuns++;
+      const { squads: tfSquads, players: tfPlayers } = transformForScrambler(players, squads);
+
+      const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+        squads: tfSquads,
+        players: tfPlayers,
+        winStreakTeam: 1,
+        scramblePercentage: 0.5,
+        clanGroups,
+        pullEntireSquads: Math.random() < 0.5
+      });
+
+      const moveByEosID = new Map(swapPlan.map(m => [m.eosID, m.targetTeamID]));
+      const finalTeamByEosID = new Map(
+        tfPlayers.map(p => [p.eosID, moveByEosID.get(p.eosID) ?? p.teamID])
+      );
+      const t1End = [...finalTeamByEosID.values()].filter(t => t === '1').length;
+      const t2End = [...finalTeamByEosID.values()].filter(t => t === '2').length;
+      if (Math.abs(t1End - t2End) > 2) balanceFailRuns++;
+
+      let runCohesionPass = true;
+      for (const [, eosIDs] of Object.entries(clanGroups)) {
+        for (const startTeam of ['1', '2']) {
+          const sameTeam = eosIDs.filter(id => {
+            const p = tfPlayers.find(pp => pp.eosID === id);
+            return p?.teamID === startTeam;
+          });
+          if (sameTeam.length < 2) continue;
+          totalCohesionChecks++;
+          const finalTeams = new Set(sameTeam.map(id => finalTeamByEosID.get(id)));
+          if (finalTeams.size === 1) totalCohesionPasses++;
+          else runCohesionPass = false;
+        }
+      }
+      if (runCohesionPass) cohesionPassRuns++;
+
+      totalRunCount++;
+      if ((i + 1) % (totalRuns / 10) === 0) process.stdout.write('■');
+    } catch (err) {
+      crashes++;
+      console.error(`Run ${i + 1} crashed:`, err.message);
+    }
+  }
+  process.stdout.write('\n\n');
+
+  console.log(`Total runs:               ${totalRunCount}/${totalRuns}`);
+  console.log(`Crashes:                  ${crashes}`);
+  console.log(`Balance failures (>2):    ${balanceFailRuns} (${((balanceFailRuns / totalRunCount) * 100).toFixed(2)}%)`);
+  console.log(`Per-clan cohesion passes: ${totalCohesionPasses}/${totalCohesionChecks} (${((totalCohesionPasses / Math.max(1, totalCohesionChecks)) * 100).toFixed(2)}%)`);
+  console.log(`Runs w/ all cohesion ok:  ${cohesionPassRuns}/${totalRunCount} (${((cohesionPassRuns / Math.max(1, totalRunCount)) * 100).toFixed(2)}%)`);
+  console.log(`Extraction failures:      ${extractionFailRuns} (${((extractionFailRuns / totalRunCount) * 100).toFixed(2)}%)`);
+
+  // Thresholds set ~3pp below observed baseline on feat/clan-tag-grouping (2026-05-04).
+  // Adjust if the algorithm's stochastic behavior shifts the baseline.
+  requireRate('Bulk balance success', totalRunCount - balanceFailRuns, totalRunCount, 0.95);
+  requireRate('Bulk cohesion runs',   cohesionPassRuns,                totalRunCount, 0.95);
+  requireRate('Bulk extraction',      totalRunCount - extractionFailRuns, totalRunCount, 0.95);
+  requireRate('Bulk no-crash',        totalRunCount,                    totalRuns,     0.99);
+}
+
 async function runAllTests() {
   console.log('🚀 Starting Scrambler Stress Tests...');
 
@@ -260,7 +484,55 @@ async function runAllTests() {
   console.log(`\n--------------------------------------------------`);
   console.log('🏁 All tests completed.');
 
+  console.log(`\n==================================================`);
+  console.log(`🚀 CLAN TAG GROUPING TESTS`);
+  console.log(`==================================================`);
+
+  await runClanTest('Same-team clan in multiple squads (pull mode: players only)', generateScenario_ClanGrouping);
+  await runClanTest('Same-team clan in multiple squads (pull mode: entire squads)', generateScenario_ClanGrouping, { pullEntireSquads: true });
+  await runClanTest('Cross-team clan: each side group cohesive, no forced consolidation', generateScenario_ClanSplitAcrossTeams);
+  await runClanTest('Sub-min clan ignored', generateScenario_ClanBelowMin, { expectNotGrouped: ['SOLO'] });
+  await runClanTest('Similarity merging at edit distance 1', generateScenario_ClanSimilarity, {
+    maxEditDistance: 1,
+    expectMerged: [['CLAN', 'CLAM'], ['TBG', 'TBx']],
+    expectNotGrouped: []
+  });
+  await runClanTest('Similarity merging at edit distance 0 (exact only)', generateScenario_ClanSimilarity, {
+    maxEditDistance: 0
+  });
+  await runClanTest('Case-insensitive: [ABC] and [Abc] collapse into one group (edit=0)', generateScenario_ClanSimilarity, {
+    maxEditDistance: 0,
+    caseSensitive: false,
+    expectMerged: [['ABC', 'Abc']]
+  });
+  await runClanTest('Case-insensitive + similarity merging combined (edit=1)', generateScenario_ClanSimilarity, {
+    maxEditDistance: 1,
+    caseSensitive: false,
+    expectMerged: [['CLAN', 'CLAM'], ['TBG', 'TBx', 'TBX'], ['ABC', 'Abc']]
+  });
+  await runClanTest('Case-sensitive default: [ABC] and [Abc] stay separate (edit=0)', generateScenario_ClanSimilarity, {
+    maxEditDistance: 0,
+    caseSensitive: true
+  });
+  await runClanTest('Special-char tags: [7-CAV], [H_M], [B.A.D] all extract correctly', generateScenario_ClanSpecialChars, {
+    expectMerged: [['7-CAV', '7-CV']]
+  });
+  await runClanTest('Special-char tags: [7-CAV] and [7-CV] stay separate at edit=0', generateScenario_ClanSpecialChars, {
+    maxEditDistance: 0
+  });
+  await runClanTest('Delimiter styles: [], <>, (), {}, none, open-only all extract', generateScenario_ClanDelimiters, {
+    maxEditDistance: 0
+  });
+  await runClanTest('Real-world Squad names: Unicode, separators, mixed formats', generateScenario_RealWorldNames, {
+    maxEditDistance: 1,
+    expectMerged: [['♣ΛCE', '♣ΛC€']]
+  });
+  await runClanTest('Low-pop + large clan: 15-member virtual at scramble=0.2', generateScenario_LowPopLargeClan, {
+    scramblePercentage: 0.2
+  });
+
   await runBulkTests(2500);
+  await runClanBulkTest(500);
 }
 
 async function runBulkTests(totalRuns = 100) {
@@ -453,4 +725,4 @@ async function runBulkTests(totalRuns = 100) {
   }
 }
 
-runAllTests().catch(console.error);
+runAllTests().then(requireAll).catch(e => { console.error(e); process.exit(1); });
