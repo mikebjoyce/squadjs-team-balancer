@@ -250,7 +250,51 @@ export default class TeamBalancer extends BasePlugin {
         default: 0.5,
         type: 'number'
       },
+      enableClanTagGrouping: {
+        default: false,
+        type: 'boolean',
+        description: 'Keep players sharing a clan tag (e.g. [ABC]) together when they are on the same team during a scramble. Forms per-team "virtual squads" so Phase 1 swaps clan members atomically and Phase 3 only breaks them as a last resort. Cross-team clan splits are NOT consolidated by design.'
+      },
+      minClanGroupSize: {
+        default: 2,
+        type: 'number',
+        description: 'Minimum total members of a clan tag to be considered for grouping. Smaller clans are ignored.'
+      },
+      maxClanGroupSize: {
+        default: 18,
+        type: 'number',
+        description: 'Maximum total members of a clan tag to be considered for grouping. Larger clans are ignored to avoid distorting balance.'
+      },
+      clanTagMaxEditDistance: {
+        default: 1,
+        type: 'number',
+        description: 'Max Levenshtein edit distance to merge similar clan tags into one group (e.g. [CLAN] and [CLAM] at distance 1). Set 0 for exact match only.'
+      },
+      clanTagCaseSensitive: {
+        default: true,
+        type: 'boolean',
+        description: 'When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + a gamer-character lookalike map (λ→a, я→r, ø→o, ß→ss, etc.) + non-alphanumeric strip + uppercase, so case variants and decorative Unicode collapse into one group ([Café]/[CAFE]/[CΛFE] all merge).'
+      },
+<<<<<<< Updated upstream
+      clanGroupingPullEntireSquads: {
+        default: false,
+        type: 'boolean',
+        description: 'When true, contributing squads merge wholesale into the virtual clan squad — non-clan teammates travel with their clan members. When false (default), only clan members are pulled into the anchor squad and non-clan teammates stay where they are. Only relevant when enableClanTagGrouping is true.'
+      },
       changeTeamRetryInterval: {
+=======
+       clanGroupingPullEntireSquads: {
+         default: false,
+         type: 'boolean',
+         description: 'When true, contributing squads merge wholesale into the virtual clan squad — non-clan teammates travel with their clan members. When false (default), only clan members are pulled into the anchor squad and non-clan teammates stay where they are. Only relevant when enableClanTagGrouping is true.'
+       },
+       clanTagIgnoreList: {
+         default: [],
+         type: 'array',
+         description: 'Clan tags to exclude from clan grouping entirely. Tags are matched after the same normalization used by clanTagCaseSensitive (raw match when true, normalized when false). Example: ["NL", "ADMIN"] to prevent those clans from being kept together during scrambles.'
+       },
+       changeTeamRetryInterval: {
+>>>>>>> Stashed changes
         default: 150,
         type: 'number'
       },      
@@ -1720,6 +1764,32 @@ export default class TeamBalancer extends BasePlugin {
           }
         } else {
           Logger.verbose('TeamBalancer', 2, '[TeamBalancer] EloTracker plugin not found! Scrambling without ELO data.');
+        }
+      }
+
+      let clanGroups = null;
+      if (this.options.enableClanTagGrouping) {
+        try {
+          clanGroups = extractClanGroups(this.server.players, {
+            minSize: this.options.minClanGroupSize,
+            maxSize: this.options.maxClanGroupSize,
+            maxEditDistance: this.options.clanTagMaxEditDistance,
+<<<<<<< Updated upstream
+            caseSensitive: this.options.clanTagCaseSensitive
+=======
+            caseSensitive: this.options.clanTagCaseSensitive,
+            ignoreList: this.options.clanTagIgnoreList
+>>>>>>> Stashed changes
+          });
+          const tagCount = Object.keys(clanGroups).length;
+          if (tagCount > 0) {
+            Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Clan tag grouping: extracted ${tagCount} qualifying clan(s).`);
+          } else {
+            Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Clan tag grouping enabled but no qualifying clans found.');
+          }
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Clan tag extraction failed, scrambling without clan grouping: ${err.message}`);
+          clanGroups = null;
         }
       }
 
