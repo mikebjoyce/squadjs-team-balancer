@@ -104,6 +104,15 @@
  *   requireScrambleConfirmation        - Require !scramble confirm for manual scrambles.
  *   scrambleConfirmationTimeout        - Seconds to wait for confirm (default: 60).
  *
+ * Clan Tag Grouping:
+ *   enableClanTagGrouping              - Keep same-team clan members together (default: false).
+ *   minClanGroupSize                   - Min clan members to group (default: 2).
+ *   maxClanGroupSize                   - Max clan members to group (default: 18).
+ *   clanTagMaxEditDistance             - Levenshtein distance for merging tags (default: 1).
+ *   clanTagCaseSensitive               - Case-sensitive tag matching (default: true).
+ *   clanGroupingPullEntireSquads       - Pull non-clan teammates with clan (default: false).
+ *   clanTagIgnoreList                  - Clan tags to exclude from grouping (default: []).
+ *
  * Messaging:
  *   showWinStreakMessages              - Broadcast win streak updates.
  *   useGenericTeamNamesInBroadcasts    - Use "Team 1/2" instead of faction names.

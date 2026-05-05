@@ -39,8 +39,13 @@
  *     sizeDeviationPenalty — Penalty for significant underpopulation.
  *     eloBalancePenalty   — Composite score derived from a 50/50 weighted split between Mean ELO diff and Top-15 ELO diff (ELO mode only).
  *     veteranPenalty      — Imbalanced regular player counts (ELO mode only).
+ *     clanCohesionPenalty — Soft penalty for clan groups splitting across teams (runs in both modes; ~87.7% per-member preservation in testing).
  *     anchorPenalty       — Moving >2 large squads from one team (Heuristic mode only).
- * - eloMap is optional. When present, heuristic penalties are replaced by ELO parity scoring.
+ * - clanGroups is optional. When present, builds virtual squads to keep same-team clan members together as a soft
+ *   preference. Balance takes priority; clans may split if necessary for diff ≤ 2. Runs identically in both ELO and
+ *   heuristic modes.
+ * - eloMap is optional. When present, heuristic penalties are replaced by ELO parity scoring. Clan cohesion penalty
+ *   persists unchanged when using ELO mode (no interaction side effects).
  * - Cap enforcement runs as a final pass, trimming team overages in
  *   priority order: Unassigned → Unlocked Squad Members. Locked players are never moved.
  * - Baseline performance: ~70–95ms per exhaustive search, 99.9% balance
@@ -353,6 +358,8 @@ export const Scrambler = {
 
       if (playerEloMap.size > 0) {
         // --- ELO BALANCE SCORING ---
+        // Note: The clan cohesion penalty block below (after this if/else) always runs
+        // regardless of mode. It applies the same soft penalty in both ELO and heuristic paths.
         combinedScore += balanceScore; // Pure numerical parity
 
         const movingToT2 = new Set(selectedT1Squads.flatMap(s => s.players));

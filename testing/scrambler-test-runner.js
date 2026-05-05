@@ -533,9 +533,314 @@ async function runAllTests() {
 
   await runBulkTests(2500);
   await runClanBulkTest(500);
+  await runEloClanBulkTest(500);
+  await runDiagnosticClanTest(50);
+}
+
+
+async function runDiagnosticClanTest(totalRuns = 50) {
+  console.log(`\n==================================================`);
+  console.log(`🔍 DIAGNOSTIC: CLAN EXTRACTION vs SQUAD DAMAGE (${totalRuns} runs)`);
+  console.log(`==================================================`);
+  console.log(`Purpose: Detect if real squads are being broken during clan grouping`);
+  console.log(`         and correlate with cohesion failures.\n`);
+
+  const REAL_TAGS = ['KΛZ', '7-CAV', 'H_M', '♣ΛCE', 'B.A.D'];
+  let totalRuns_processed = 0;
+  let runsWithSquadDamage = 0;
+  let runsWithCohesionFail = 0;
+  let runsWithBoth = 0;
+  let totalSquadsModified = 0;
+  let totalSquadsRemoved = 0;
+  let totalPlayersExtracted = 0;
+  const damageCases = [];
+
+  for (let i = 0; i < totalRuns; i++) {
+    try {
+      const playerCount = 60 + Math.floor(Math.random() * 43);
+      const team1Ratio = 0.35 + Math.random() * 0.3;
+      const players = generateMockPlayers(playerCount, team1Ratio, Math.random() * 0.15);
+      const squads = generateMockSquads(players);
+
+      // Inject 1-3 random clans
+      const numClans = 1 + Math.floor(Math.random() * 3);
+      const useReal = Math.random() < 0.4;
+      const injections = [];
+      for (let k = 0; k < numClans; k++) {
+        const base = useReal ? REAL_TAGS[k % REAL_TAGS.length] : 'R';
+        const tag = `${base}${k}${Math.floor(Math.random() * 99)}`;
+        const teamID = Math.random() < 0.5 ? 1 : 2;
+        const count = 2 + Math.floor(Math.random() * 6);
+        injections.push({ tag, count, teamID });
+      }
+      injectClanTags(players, injections);
+
+      // Extract clans
+      const clanGroups = extractClanGroups(players, {
+        minSize: 2,
+        maxSize: 18,
+        maxEditDistance: 1,
+        caseSensitive: true
+      });
+
+      const { squads: tfSquads, players: tfPlayers } = transformForScrambler(players, squads);
+      
+      // TRACK SQUAD DAMAGE: Compare original vs transformed squads
+      let squadsModified = 0;
+      let squadsRemoved = 0;
+      let playersExtracted = 0;
+      
+      for (const originalSquad of tfSquads) {
+        const transformedSquad = tfSquads.find(s => s.id === originalSquad.id);
+        if (!transformedSquad) {
+          squadsRemoved++;
+        } else if (transformedSquad.players.length < originalSquad.players.length) {
+          squadsModified++;
+          playersExtracted += originalSquad.players.length - transformedSquad.players.length;
+        }
+      }
+
+      totalSquadsModified += squadsModified;
+      totalSquadsRemoved += squadsRemoved;
+      totalPlayersExtracted += playersExtracted;
+      let hasSquadDamage = squadsModified > 0 || squadsRemoved > 0;
+
+      // Run scrambler
+      const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+        squads: tfSquads,
+        players: tfPlayers,
+        winStreakTeam: 1,
+        scramblePercentage: 0.5,
+        clanGroups,
+        pullEntireSquads: false  // Use player-only mode to trigger squad damage
+      });
+
+      const moveByEosID = new Map(swapPlan.map(m => [m.eosID, m.targetTeamID]));
+      const finalTeamByEosID = new Map(
+        tfPlayers.map(p => [p.eosID, moveByEosID.get(p.eosID) ?? p.teamID])
+      );
+
+      // Check clan cohesion
+      let hasCohesionFail = false;
+      for (const [tag, eosIDs] of Object.entries(clanGroups)) {
+        for (const startTeam of ['1', '2']) {
+          const sameTeam = eosIDs.filter(id => {
+            const p = tfPlayers.find(pp => pp.eosID === id);
+            return p?.teamID === startTeam;
+          });
+          if (sameTeam.length < 2) continue;
+          const finalTeams = new Set(sameTeam.map(id => finalTeamByEosID.get(id)));
+          if (finalTeams.size !== 1) {
+            hasCohesionFail = true;
+            break;
+          }
+        }
+        if (hasCohesionFail) break;
+      }
+
+      if (hasSquadDamage) runsWithSquadDamage++;
+      if (hasCohesionFail) runsWithCohesionFail++;
+      if (hasSquadDamage && hasCohesionFail) {
+        runsWithBoth++;
+        if (damageCases.length < 3) {
+          damageCases.push({
+            run: i + 1,
+            squadsModified,
+            squadsRemoved,
+            playersExtracted,
+            clansCount: Object.keys(clanGroups).length
+          });
+        }
+      }
+
+      totalRuns_processed++;
+    } catch (err) {
+      console.error(`Run ${i + 1} crashed:`, err.message);
+    }
+  }
+
+  console.log(`\nDIAGNOSTIC RESULTS:`);
+  console.log(`Total runs:                    ${totalRuns_processed}/${totalRuns}`);
+  console.log(`Runs with squad damage:        ${runsWithSquadDamage} (${((runsWithSquadDamage / totalRuns_processed) * 100).toFixed(2)}%)`);
+  console.log(`Runs with cohesion failure:    ${runsWithCohesionFail} (${((runsWithCohesionFail / totalRuns_processed) * 100).toFixed(2)}%)`);
+  console.log(`Runs with BOTH issues:         ${runsWithBoth} (${((runsWithBoth / totalRuns_processed) * 100).toFixed(2)}%)`);
+  console.log(`\nAggregate Squad Damage (all runs):`);
+  console.log(`  - Squads modified:           ${totalSquadsModified}`);
+  console.log(`  - Squads removed:            ${totalSquadsRemoved}`);
+  console.log(`  - Players extracted:         ${totalPlayersExtracted}`);
+  
+  if (damageCases.length > 0) {
+    console.log(`\nExample cases where BOTH squad damage + cohesion fail occurred:`);
+    damageCases.forEach(c => {
+      console.log(`  Run ${c.run}: ${c.squadsModified} squads modified, ${c.squadsRemoved} removed, ${c.playersExtracted} players extracted (from ${c.clansCount} clans)`);
+    });
+  }
+
+  console.log(`\n📋 CONCLUSION:`);
+  if (runsWithBoth / totalRuns_processed > 0.5) {
+    console.log(`   ⚠️ DOUBLE DAMAGE DETECTED: > 50% of cohesion failures occur after squad extraction`);
+    console.log(`   ACTION: Consider using pullEntireSquads=true or adjust clan strategy`);
+  } else {
+    console.log(`   ✅ NO CORRELATION: Squad damage ≠ cohesion failures`);
+    console.log(`   Cohesion failures are likely due to balance pressure, not extraction`);
+  }
+}
+
+async function runEloClanBulkTest(totalRuns = 100) {
+  console.log(`\n==================================================`);
+  console.log(`🚀 ELO + CLAN COMBINATION BULK TEST (${totalRuns} runs)`);
+  console.log(`==================================================`);
+  console.log(`Purpose: Verify clan preservation works correctly WITH ELO-based scrambling`);
+  console.log(`         and has no side effects on either feature.\n`);
+
+  const REAL_TAGS = ['KΛZ', '7-CAV', 'H_M', '♣ΛCE', 'B.A.D'];
+  let totalRunCount = 0;
+  let balanceFailRuns = 0;
+  let cohesionFailRuns = 0;
+  let eloImproveRuns = 0;
+  let eloWorsenRuns = 0;
+  let totalInitialEloDiff = 0;
+  let totalFinalEloDiff = 0;
+  let totalInitialBalance = 0;
+  let totalFinalBalance = 0;
+  let crashes = 0;
+
+
+  for (let i = 0; i < totalRuns; i++) {
+    try {
+      const playerCount = 60 + Math.floor(Math.random() * 43);
+      const team1Ratio = 0.35 + Math.random() * 0.3;
+      const players = generateMockPlayers(playerCount, team1Ratio, Math.random() * 0.15);
+      const squads = generateMockSquads(players);
+
+      // Inject 1-3 random clans of size 2-7 into teams (creating imbalance opportunity)
+      const numClans = 1 + Math.floor(Math.random() * 3);
+      const useReal = Math.random() < 0.4;
+      const injections = [];
+      for (let k = 0; k < numClans; k++) {
+        const base = useReal ? REAL_TAGS[k % REAL_TAGS.length] : 'R';
+        const tag = `${base}${k}${Math.floor(Math.random() * 99)}`;
+        const teamID = Math.random() < 0.5 ? 1 : 2;
+        const count = 2 + Math.floor(Math.random() * 6);
+        injections.push({ tag, count, teamID });
+      }
+      injectClanTags(players, injections);
+
+      // Extract clan groups
+      const caseSensitive = Math.random() < 0.5;
+      const clanGroups = extractClanGroups(players, {
+        minSize: 2,
+        maxSize: 18,
+        maxEditDistance: 1,
+        caseSensitive
+      });
+
+      // Build ELO map with some real-world stratification
+      const eloMap = new Map();
+      const defaultMu = 25.0;
+      const getBackboneEloAvg = (playerList, teamID) => {
+        const teamPlayers = playerList.filter(p => p.teamID === teamID);
+        if (teamPlayers.length === 0) return defaultMu;
+        const teamElos = teamPlayers.map(p => eloMap.get(p.eosID)?.mu ?? defaultMu).sort((a, b) => b - a);
+        const slice = teamElos.slice(0, 15); // Top 15
+        return slice.length > 0 ? slice.reduce((a, b) => a + b, 0) / slice.length : defaultMu;
+      };
+
+      players.forEach(p => {
+        let mu;
+        const rand = Math.random();
+        // All players: base ELO distribution
+        if (rand < 0.2) mu = 35.0;      // 20% pro
+        else if (rand < 0.4) mu = 30.0; // 20% vet
+        else if (rand < 0.7) mu = 25.0; // 30% average
+        else mu = 18.0;                 // 30% newbie
+        eloMap.set(p.eosID, { mu });
+      });
+
+      const { squads: tfSquads, players: tfPlayers } = transformForScrambler(players, squads);
+      const t1Start = tfPlayers.filter(p => p.teamID === '1').length;
+      const t2Start = tfPlayers.filter(p => p.teamID === '2').length;
+      const initialBalance = Math.abs(t1Start - t2Start);
+      const initialEloDiff = Math.abs(getBackboneEloAvg(tfPlayers, '1') - getBackboneEloAvg(tfPlayers, '2'));
+
+      totalInitialBalance += initialBalance;
+      totalInitialEloDiff += initialEloDiff;
+
+      // RUN SCRAMBLER WITH BOTH ELO AND CLAN
+      const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+        squads: tfSquads,
+        players: tfPlayers,
+        winStreakTeam: 1,
+        scramblePercentage: 0.5,
+        clanGroups,           // CLAN PRESERVATION
+        eloMap,               // ELO BALANCING
+        pullEntireSquads: Math.random() < 0.5
+      });
+
+      const moveByEosID = new Map(swapPlan.map(m => [m.eosID, m.targetTeamID]));
+      const finalTeamByEosID = new Map(
+        tfPlayers.map(p => [p.eosID, moveByEosID.get(p.eosID) ?? p.teamID])
+      );
+      const t1End = [...finalTeamByEosID.values()].filter(t => t === '1').length;
+      const t2End = [...finalTeamByEosID.values()].filter(t => t === '2').length;
+      const finalBalance = Math.abs(t1End - t2End);
+      const finalEloDiff = Math.abs(getBackboneEloAvg(tfPlayers.map(p => ({...p, teamID: finalTeamByEosID.get(p.eosID)})), '1') - getBackboneEloAvg(tfPlayers.map(p => ({...p, teamID: finalTeamByEosID.get(p.eosID)})), '2'));
+
+      totalFinalBalance += finalBalance;
+      totalFinalEloDiff += finalEloDiff;
+
+      if (finalBalance > 2) balanceFailRuns++;
+      if (finalEloDiff < initialEloDiff) eloImproveRuns++;
+      else eloWorsenRuns++;
+
+      // Check clan cohesion
+      let cohesionOk = true;
+      for (const [, eosIDs] of Object.entries(clanGroups)) {
+        for (const startTeam of ['1', '2']) {
+          const sameTeam = eosIDs.filter(id => {
+            const p = tfPlayers.find(pp => pp.eosID === id);
+            return p?.teamID === startTeam;
+          });
+          if (sameTeam.length < 2) continue;
+          const finalTeams = new Set(sameTeam.map(id => finalTeamByEosID.get(id)));
+          if (finalTeams.size !== 1) {
+            cohesionOk = false;
+            break;
+          }
+        }
+        if (!cohesionOk) break;
+      }
+      if (!cohesionOk) cohesionFailRuns++;
+
+      totalRunCount++;
+      if ((i + 1) % (totalRuns / 10) === 0) process.stdout.write('■');
+    } catch (err) {
+      crashes++;
+      console.error(`Run ${i + 1} crashed:`, err.message);
+    }
+  }
+  process.stdout.write('\n\n');
+
+  console.log(`ELO + CLAN COMBINATION TEST RESULTS:`);
+  console.log(`Total runs:              ${totalRunCount}/${totalRuns}`);
+  console.log(`Crashes:                 ${crashes}`);
+  console.log(`Balance failures (>2):   ${balanceFailRuns} (${((balanceFailRuns / totalRunCount) * 100).toFixed(2)}%)`);
+  console.log(`Clan cohesion failures:  ${cohesionFailRuns} (${((cohesionFailRuns / totalRunCount) * 100).toFixed(2)}%)`);
+  console.log(`ELO improved (baseline): ${eloImproveRuns}/${totalRunCount} (${((eloImproveRuns / totalRunCount) * 100).toFixed(2)}%)`);
+  console.log(`\nAvg Metrics:`);
+  console.log(`  - Initial player balance:  ${(totalInitialBalance / totalRunCount).toFixed(2)} (diff)`);
+  console.log(`  - Final player balance:    ${(totalFinalBalance / totalRunCount).toFixed(2)} (diff)`);
+  console.log(`  - Initial ELO diff:        ${(totalInitialEloDiff / totalRunCount).toFixed(2)}`);
+  console.log(`  - Final ELO diff:          ${(totalFinalEloDiff / totalRunCount).toFixed(2)}`);
+
+  // Thresholds: expect clan+ELO to maintain balance AND clan cohesion
+  requireRate('ELO+Clan balance success',  totalRunCount - balanceFailRuns, totalRunCount, 0.95);
+  requireRate('ELO+Clan cohesion ok',      totalRunCount - cohesionFailRuns, totalRunCount, 0.95);
+  requireRate('ELO+Clan no-crash',         totalRunCount,                    totalRuns,     0.99);
 }
 
 async function runBulkTests(totalRuns = 100) {
+
   console.log(`\n==================================================`);
   console.log(`🚀🚀🚀 STARTING BULK STRESS TEST (${totalRuns} runs) 🚀🚀🚀`);
   console.log(`==================================================`);
