@@ -160,10 +160,13 @@ export const Scrambler = {
 
       const PER_TEAM_MIN = 2; // Sanity floor; broader filtering happened in extractClanGroups
 
-      for (const teamID of ['1', '2']) {
-        const teamCandidates = teamID === '1' ? t1Candidates : t2Candidates;
 
-        for (const [tag, eosIDs] of sortedClans) {
+       for (const teamID of ['1', '2']) {
+         const teamCandidates = teamID === '1' ? t1Candidates : t2Candidates;
+         const claimedAnchorIds = new Set(); // track anchors already absorbed by a prior clan this team
+
+         for (const [tag, eosIDs] of sortedClans) {
+          
           const sameTeamMembers = eosIDs.filter(
             (id) => playerMap.get(id)?.teamID === teamID
           );
@@ -171,10 +174,12 @@ export const Scrambler = {
 
           const memberSet = new Set(sameTeamMembers);
 
-          // Squads (real or unassigned-pseudo) currently in candidates that hold any clan member.
-          const contributing = teamCandidates.filter((s) =>
-            s.players.some((p) => memberSet.has(p))
-          );
+           // Squads (real or unassigned-pseudo) currently in candidates that hold any clan member.
+           // Exclude any squads whose original id was already claimed as an anchor
+           // by a prior clan on this team — prevents cross-clan virtual squad merges.
+           const contributing = teamCandidates.filter((s) =>
+             !claimedAnchorIds.has(s.id) && s.players.some((p) => memberSet.has(p))
+           );
           if (contributing.length === 0) continue;
 
           // Register for the Phase 2/3/4 scoring penalty regardless of how many
@@ -207,16 +212,18 @@ export const Scrambler = {
             }
           }
 
-          const virtualSquad = {
-            ...anchor,
-            players: newPlayers,
-            isVirtual: true,
-            clanTag: tag
-          };
+           const virtualSquad = {
+             ...anchor,
+             players: newPlayers,
+             locked: false, // virtual squads are never locked; prevents wasLocked contamination via decomposeList
+             isVirtual: true,
+             clanTag: tag
+           };
 
-          // Replace anchor in the candidate list with the virtual squad.
-          const anchorIdx = teamCandidates.indexOf(anchor);
-          if (anchorIdx !== -1) teamCandidates[anchorIdx] = virtualSquad;
+           // Replace anchor in the candidate list with the virtual squad.
+           const anchorIdx = teamCandidates.indexOf(anchor);
+           if (anchorIdx !== -1) teamCandidates[anchorIdx] = virtualSquad;
+           claimedAnchorIds.add(anchor.id); // prevent later clans from re-using this anchor
 
           // Update other contributing squads (iterate in reverse for safe splicing).
           const otherSet = new Set(others);

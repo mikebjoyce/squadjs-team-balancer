@@ -171,6 +171,7 @@ export function extractClanGroups(rawPlayers, options = {}) {
   const maxSize = options.maxSize ?? 18;
   const maxEditDistance = options.maxEditDistance ?? 1;
   const caseSensitive = options.caseSensitive ?? true;
+  const ignoreList = options.ignoreList ?? [];
 
   const groups = {};
   for (const player of rawPlayers || []) {
@@ -186,6 +187,20 @@ export function extractClanGroups(rawPlayers, options = {}) {
   // Convert sets to arrays for the rest of processing.
   for (const tag of Object.keys(groups)) {
     groups[tag] = [...groups[tag]];
+  }
+
+
+  // Remove ignored clan tags
+  if (ignoreList.length > 0) {
+    const normalizedIgnores = caseSensitive
+      ? new Set(ignoreList)
+      : new Set(ignoreList.map(t => normalizeTag(t)).filter(Boolean));
+
+    for (const tag of Object.keys(groups)) {
+      if (normalizedIgnores.has(tag)) {
+        delete groups[tag];
+      }
+    }
   }
 
   if (maxEditDistance > 0) {
