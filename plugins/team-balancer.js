@@ -275,14 +275,6 @@ export default class TeamBalancer extends BasePlugin {
         type: 'boolean',
         description: 'When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + a gamer-character lookalike map (λ→a, я→r, ø→o, ß→ss, etc.) + non-alphanumeric strip + uppercase, so case variants and decorative Unicode collapse into one group ([Café]/[CAFE]/[CΛFE] all merge).'
       },
-<<<<<<< Updated upstream
-      clanGroupingPullEntireSquads: {
-        default: false,
-        type: 'boolean',
-        description: 'When true, contributing squads merge wholesale into the virtual clan squad — non-clan teammates travel with their clan members. When false (default), only clan members are pulled into the anchor squad and non-clan teammates stay where they are. Only relevant when enableClanTagGrouping is true.'
-      },
-      changeTeamRetryInterval: {
-=======
        clanGroupingPullEntireSquads: {
          default: false,
          type: 'boolean',
@@ -294,7 +286,6 @@ export default class TeamBalancer extends BasePlugin {
          description: 'Clan tags to exclude from clan grouping entirely. Tags are matched after the same normalization used by clanTagCaseSensitive (raw match when true, normalized when false). Example: ["NL", "ADMIN"] to prevent those clans from being kept together during scrambles.'
        },
        changeTeamRetryInterval: {
->>>>>>> Stashed changes
         default: 150,
         type: 'number'
       },      
@@ -1774,12 +1765,8 @@ export default class TeamBalancer extends BasePlugin {
             minSize: this.options.minClanGroupSize,
             maxSize: this.options.maxClanGroupSize,
             maxEditDistance: this.options.clanTagMaxEditDistance,
-<<<<<<< Updated upstream
-            caseSensitive: this.options.clanTagCaseSensitive
-=======
             caseSensitive: this.options.clanTagCaseSensitive,
             ignoreList: this.options.clanTagIgnoreList
->>>>>>> Stashed changes
           });
           const tagCount = Object.keys(clanGroups).length;
           if (tagCount > 0) {
