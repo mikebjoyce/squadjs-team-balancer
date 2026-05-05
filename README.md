@@ -253,6 +253,7 @@ maxClanGroupSize                    - Max total members of a clan tag to be cons
 clanTagMaxEditDistance              - Max Levenshtein edit distance to merge similar clan tags (e.g. [CLAN]+[CLAM] at distance 1). 0 = exact match only (default: 1).
 clanTagCaseSensitive                - When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + gamer-character map (λ→a, я→r, etc.) + non-alphanumeric strip + uppercase, so [Café]/[CAFE]/[CΛFE] all collapse into one group.
 clanGroupingPullEntireSquads        - When true, contributing squads merge wholesale into the virtual clan squad (non-clan teammates travel with their clan members). When false (default), only clan members are pulled into the anchor squad.
+clanTagIgnoreList                   - Clan tags to exclude from clan grouping entirely (default: []).
 
 Advanced:
 useEloForBalance                    - Weight scrambles by EloTracker mu ratings. Requires EloTracker plugin. Falls back to numerical balance if EloTracker is absent.
