@@ -132,8 +132,17 @@
  *   devMode                            - Allow commands from any player regardless of admin status.
  *   reportLogPath                      - Path to the JSONL log file for round reports.
  *
+ * IMPORTANT: The "database" option specifies which Sequelize connector to use for persistence.
+ * Set it to the name of your configured connector (default: "sqlite"). Examples:
+ *   - "database": "sqlite"  (uses connectors.sqlite)
+ *   - "database": "mysql"   (uses connectors.mysql)
+ *   - "database": "postgres" (uses connectors.postgres)
+ * The plugin will gracefully degrade if the connector is unavailable.
+ *
+ * Example SquadJS server config:
  * "connectors": {
  *   "sqlite": { "dialect": "sqlite", "storage": "squad-server.sqlite" },
+ *   "mysql": { "dialect": "mysql", "host": "localhost", "user": "squad", "password": "...", "database": "squad_db" },
  *   "discord": { "connector": "discord", "token": "YOUR_BOT_TOKEN" }
  * },
  * {
@@ -422,9 +431,6 @@ export default class TeamBalancer extends BasePlugin {
 
     // Initialize executor immediately so commands (like status) can access pendingPlayerMoves without crashing
     this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages, this);
-    this.sequelize = connectors.sqlite;
-    this.TeamBalancerStateModel = null;
-    this.stateRecord = null;
     this.db = new TBDatabase(this.server, this.options, connectors);
     this.winStreakTeam = null;
     this.winStreakCount = 0;

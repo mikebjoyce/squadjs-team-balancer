@@ -111,6 +111,14 @@ Add to your `config.json`:
     "dialect": "sqlite",
     "storage": "squad-server.sqlite"
   },
+  // MySQL example: change "database" below to "mysql" if you have a MySQL connector configured
+  // "mysql": {
+  //   "dialect": "mysql",
+  //   "host": "localhost",
+  //   "user": "squad",
+  //   "password": "...",
+  //   "database": "squad_db"
+  // },
   "discord": {
     "connector": "discord",
     "token": "YOUR_BOT_TOKEN"
@@ -211,7 +219,7 @@ Admin Commands:
 
 ```text
 Core Settings:
-database                            - Sequelize/SQLite connector for persistent storage.
+database                            - Sequelize database connector (SQLite, MySQL, PostgreSQL, etc.). Defaults to 'sqlite' if unspecified.
 enableWinStreakTracking              - Enable/disable automatic win streak tracking.
 ignoredGameModes                    - Game modes or map names excluded from win streak tracking (default: ["Seed", "Jensen"]).
 enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round (default: true).

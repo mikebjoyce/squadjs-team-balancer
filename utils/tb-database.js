@@ -5,9 +5,11 @@
  *
  * ─── PURPOSE ─────────────────────────────────────────────────────
  *
- * SQLite persistence layer for the TeamBalancer plugin. Stores and
+ * Sequelize-based persistence layer for the TeamBalancer plugin. Stores and
  * restores win streak state, last scramble timestamp, and manually
- * disabled flag across server restarts via Sequelize ORM.
+ * disabled flag across server restarts. Supports any Sequelize-compatible
+ * database backend (SQLite, MySQL, PostgreSQL, etc.) as specified in the
+ * plugin's "database" option.
  *
  * ─── EXPORTS ─────────────────────────────────────────────────────
  *
@@ -23,16 +25,23 @@
  * ─── DEPENDENCIES ────────────────────────────────────────────────
  *
  * sequelize (Sequelize)
- *   ORM for SQLite. Injected via connectors.sqlite.
+ *   ORM abstraction layer. Connector injected dynamically via
+ *   connectors[options.database] (default: 'sqlite').
  * Logger (../../core/logger.js)
  *   Verbose error logging on all caught DB exceptions.
  *
  * ─── NOTES ───────────────────────────────────────────────────────
  *
+ * - Database connector is dynamically resolved from SquadJS connectors
+ *   based on the "database" option. If unavailable, gracefully degrades.
  * - All operations go through _executeWithRetry() — retries up to 5×
- *   on SQLITE_BUSY with 200ms + random jitter backoff.
- * - A promise-chain mutex is attached to the Sequelize instance to
- *   serialise concurrent writes and prevent lock contention.
+ *   on lock timeouts (SQLITE_BUSY, SequelizeTimeoutError, etc.) with
+ *   200ms + random jitter backoff.
+ * - A promise-chain mutex is attached to SQLite connectors to serialise
+ *   concurrent writes and prevent lock contention. Other DBs use native
+ *   connection pooling.
+ * - SQLite-only: WAL mode enforced at initDB() for multi-writer safety.
+ *   MySQL/Postgres use their native concurrency controls instead.
  * - State is considered stale if lastSyncTimestamp is older than
  *   STALE_CUTOFF_MS (2.5 hours). Stale state resets streak on load
  *   but preserves lastScrambleTime.
@@ -53,7 +62,7 @@ export default class TBDatabase {
   static STALE_CUTOFF_MS = 2.5 * 60 * 60 * 1000;
 
   constructor(server, options, connectors) {
-    this.sequelize = connectors && connectors.sqlite;
+    this.sequelize = connectors && connectors[options?.database ?? 'sqlite'];
     this.TeamBalancerStateModel = null;
     this._mutex = Promise.resolve();
   }
@@ -110,11 +119,14 @@ export default class TBDatabase {
         { timestamps: false, tableName: 'TeamBalancerState' }
       );
 
-      // Enforce WAL mode to prevent SQLITE_BUSY deadlocks in high-concurrency environments (e.g. DBLog + TeamBalancer writing simultaneously)
-      await this.sequelize.query('PRAGMA journal_mode=WAL;');
-      await this.sequelize.query('PRAGMA synchronous=NORMAL;');
-      
-      await this.TeamBalancerStateModel.sync({ alter: true });
+       // Enforce WAL mode to prevent SQLITE_BUSY deadlocks in high-concurrency environments (e.g. DBLog + TeamBalancer writing simultaneously)
+       // SQLite-only: PRAGMA commands are not supported on MySQL/Postgres
+       if (this.sequelize.getDialect() === 'sqlite') {
+         await this.sequelize.query('PRAGMA journal_mode=WAL;');
+         await this.sequelize.query('PRAGMA synchronous=NORMAL;');
+       }
+       
+       await this.TeamBalancerStateModel.sync({ alter: true });
 
       return await this._executeWithRetry(async () => {
         return await this.sequelize.transaction(async (t) => {
