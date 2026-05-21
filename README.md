@@ -1,4 +1,4 @@
-# Team Balancer Plugin v3.1.1
+# Team Balancer Plugin v3.2.0
 
 **SquadJS Plugin for Fair Match Enforcement**
 
@@ -162,7 +162,8 @@ Add to your `config.json`:
   "postScrambleDetails": true,
   "useEloForBalance": false,
   "devMode": false,
-  "reportLogPath": "team-balancer-reports.jsonl"
+   "reportLogPath": "team-balancer-reports.jsonl",
+   "enableDatabaseLogging": false
 }
 ```
 
@@ -269,6 +270,7 @@ useEloForBalance                    - Weight scrambles by EloTracker mu ratings.
 Dev:
 devMode                             - Allow commands from any player regardless of admin status.
 reportLogPath                       - Path to the JSONL log file for round reports (default: 'team-balancer-reports.jsonl').
+enableDatabaseLogging               - If true, round reports are also written to the database in addition to the JSONL log (default: false).
 ```
 
 ---

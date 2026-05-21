@@ -77,26 +77,27 @@ export default class TBDatabase {
     this._mutex = Promise.resolve();
   }
 
-  async _executeWithRetry(logicFn, attempts = 5) {
-    const runAttempt = async () => {
-      for (let i = 1; i <= attempts; i++) {
-        try {
-          return await logicFn();
-        } catch (err) {
-          const isLocked = err.message && (
-            err.message.includes('SQLITE_BUSY') || 
-            err.message.includes('database is locked') ||
-            err.name === 'SequelizeTimeoutError'
-          );
-          if (isLocked && i < attempts) {
-            const jitter = Math.random() * 500;
-            await new Promise(resolve => setTimeout(resolve, 200 + jitter));
-          } else {
-            throw err;
-          }
-        }
-      }
-    };
+   async _executeWithRetry(logicFn, attempts = 5) {
+     const runAttempt = async () => {
+       for (let i = 1; i <= attempts; i++) {
+         try {
+           return await logicFn();
+         } catch (err) {
+           const isLocked = err.message && (
+             err.message.includes('SQLITE_BUSY') || 
+             err.message.includes('database is locked') ||
+             err.message.includes('Lock wait timeout exceeded') ||
+             err.name === 'SequelizeTimeoutError'
+           );
+           if (isLocked && i < attempts) {
+             const jitter = Math.random() * 500;
+             await new Promise(resolve => setTimeout(resolve, 200 + jitter));
+           } else {
+             throw err;
+           }
+         }
+       }
+     };
 
     if (this.sequelize && typeof this.sequelize.getDialect === 'function' && this.sequelize.getDialect() === 'sqlite') {
       const resultPromise = this._mutex.then(() => runAttempt());
@@ -137,6 +138,37 @@ export default class TBDatabase {
        }
        
        await this.TeamBalancerStateModel.sync({ alter: true });
+
+       // Define TBRoundReportModel for optional database logging (opt-in via enableDatabaseLogging)
+       this.TBRoundReportModel = this.sequelize.define(
+         'TB_RoundReport',
+         {
+           id: { type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+           matchId: { type: DataTypes.STRING(20), allowNull: true },
+           roundStartTime: { type: DataTypes.BIGINT, allowNull: true },
+           ts: { type: DataTypes.BIGINT, allowNull: false },
+           layerName: { type: DataTypes.STRING(255), allowNull: true },
+           gameMode: { type: DataTypes.STRING(100), allowNull: true },
+           playerCount: { type: DataTypes.INTEGER, allowNull: true },
+           winningTeamID: { type: DataTypes.INTEGER, allowNull: true },
+           winnerName: { type: DataTypes.STRING(255), allowNull: true },
+           loserName: { type: DataTypes.STRING(255), allowNull: true },
+           winnerTickets: { type: DataTypes.INTEGER, allowNull: true },
+           loserTickets: { type: DataTypes.INTEGER, allowNull: true },
+           ticketMargin: { type: DataTypes.INTEGER, allowNull: true },
+           isDominantWin: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+           winStreakTeam: { type: DataTypes.INTEGER, allowNull: true },
+           winStreakCount: { type: DataTypes.INTEGER, allowNull: true },
+           consecutiveWinsTeam: { type: DataTypes.INTEGER, allowNull: true },
+           consecutiveWinsCount: { type: DataTypes.INTEGER, allowNull: true },
+           scrambled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+           scrambleCondition: { type: DataTypes.STRING(100), allowNull: true },
+           scrambleType: { type: DataTypes.STRING(100), allowNull: true }
+         },
+         { timestamps: false, tableName: 'TB_RoundReport' }
+       );
+
+       await this.TBRoundReportModel.sync({ alter: true });
 
       return await this._executeWithRetry(async () => {
         return await this.sequelize.transaction(async (t) => {
@@ -377,6 +409,47 @@ export default class TBDatabase {
       });
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] saveManuallyDisabledState failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  async insertRoundReport(data) {
+    if (!this.TBRoundReportModel) {
+      Logger.verbose('TeamBalancer', 1, '[DB] insertRoundReport called before initDB.');
+      return null;
+    }
+
+    try {
+      return await this._executeWithRetry(async () => {
+        return await this.sequelize.transaction(async (t) => {
+          const record = await this.TBRoundReportModel.create({
+            matchId: data.matchId || null,
+            roundStartTime: data.roundStartTime || null,
+            ts: data.ts,
+            layerName: data.layerName,
+            gameMode: data.gameMode,
+            playerCount: data.playerCount,
+            winningTeamID: data.winningTeamID,
+            winnerName: data.winnerName,
+            loserName: data.loserName,
+            winnerTickets: data.winnerTickets,
+            loserTickets: data.loserTickets,
+            ticketMargin: data.ticketMargin,
+            isDominantWin: data.isDominantWin,
+            winStreakTeam: data.winStreakTeam,
+            winStreakCount: data.winStreakCount,
+            consecutiveWinsTeam: data.consecutiveWinsTeam,
+            consecutiveWinsCount: data.consecutiveWinsCount,
+            scrambled: data.scrambled,
+            scrambleCondition: data.scrambleCondition,
+            scrambleType: data.scrambleType
+          }, { transaction: t });
+          Logger.verbose('TeamBalancer', 4, `[DB] Round report logged: ${data.layerName} (${data.gameMode}) [matchId: ${data.matchId}]`);
+          return record.toJSON();
+        });
+      });
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 1, `[DB] insertRoundReport failed: ${err.message}`);
       return null;
     }
   }

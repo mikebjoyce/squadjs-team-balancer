@@ -131,6 +131,7 @@
  * Dev:
  *   devMode                            - Allow commands from any player regardless of admin status.
  *   reportLogPath                      - Path to the JSONL log file for round reports.
+ *   enableDatabaseLogging              - If true, round reports are also written to the database in addition to the JSONL log (default: false).
  *
  * IMPORTANT: The "database" option specifies which Sequelize connector to use for persistence.
  * Set it to the name of your configured connector (default: "sqlite"). Examples:
@@ -183,7 +184,8 @@
  *   "postScrambleDetails": true,
  *   "useEloForBalance": false,
  *   "devMode": false,
- *   "reportLogPath": "team-balancer-reports.jsonl"
+ *   "reportLogPath": "team-balancer-reports.jsonl",
+ *   "enableDatabaseLogging": false
  * }
  *
  * Author:
@@ -206,7 +208,7 @@ import fs from 'fs';
 import path from 'path';
 
 export default class TeamBalancer extends BasePlugin {
-  static version = '3.1.1';
+  static version = '3.2.0';
 
   static get description() {
     return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';
@@ -381,13 +383,19 @@ export default class TeamBalancer extends BasePlugin {
         default: false,
         type: 'boolean'
       },
-      reportLogPath: {
-        default: 'team-balancer-reports.jsonl',
-        type: 'string',
-        description: 'Path to a JSONL file where round reports will be logged.'
-      }
-    };
-  }
+       reportLogPath: {
+         default: 'team-balancer-reports.jsonl',
+         type: 'string',
+         description: 'Path to a JSONL file where round reports will be logged.'
+       },
+       enableDatabaseLogging: {
+         required: false,
+         default: false,
+         type: 'boolean',
+         description: 'If true, round reports are also written to the database in addition to the JSONL log.'
+       }
+     };
+   }
 
   validateOptions() {
     // Backwards compatibility for older configs
@@ -1114,6 +1122,8 @@ export default class TeamBalancer extends BasePlugin {
       scrambleCondition: 'None'
     };
 
+    let winnerID = null;
+
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
 
@@ -1146,7 +1156,7 @@ export default class TeamBalancer extends BasePlugin {
         return await this.resetStreak('Draw');
       }
 
-      const winnerID = parseInt(data?.winner?.team);
+      winnerID = parseInt(data?.winner?.team);
       const winnerTickets = parseInt(data?.winner?.tickets);
       const loserTickets = parseInt(data?.loser?.tickets);
       const margin = winnerTickets - loserTickets;
@@ -1483,9 +1493,10 @@ export default class TeamBalancer extends BasePlugin {
       this._scrambleInProgress = false;
       this._scramblePending = false;
       this.cleanupScrambleTracking();
-    } finally {
-      roundReport.winStreak = this.winStreakCount;
-      roundReport.consecutiveWins = this.consecutiveWinsCount;
+     } finally {
+       roundReport.isDominantWin = isDominant ?? null;
+       roundReport.winStreak = this.winStreakCount;
+       roundReport.consecutiveWins = this.consecutiveWinsCount;
 
       let eloLogString = '';
       try {
@@ -1547,6 +1558,43 @@ export default class TeamBalancer extends BasePlugin {
         await fs.promises.appendFile(logPath, JSON.stringify(roundReport) + '\n');
       } catch (logErr) {
         Logger.verbose('TeamBalancer', 1, `[TeamBalancer] Failed to write round report to JSONL: ${logErr.message}`);
+      }
+
+      // Log to database
+      if (this.options.enableDatabaseLogging) {
+        // Compute matchId and roundStartTime from server.matchStartTime
+        const roundStartTime = this.server.matchStartTime?.getTime() ?? null;
+        let matchId = null;
+        if (roundStartTime !== null) {
+          matchId = Math.floor(roundStartTime / 1000).toString(36).slice(-8);
+        } else {
+          Logger.verbose('TeamBalancer', 2, '[DB] Warning: server.matchStartTime is null — matchId will be null. Cross-plugin joins will not be possible for this round.');
+        }
+
+        this.db.insertRoundReport({
+          ts: roundReport.ts,
+          matchId: matchId,
+          roundStartTime: roundStartTime,
+          layerName: roundReport.layerName,
+          gameMode: roundReport.gameMode,
+          playerCount: roundReport.playerCount,
+          winningTeamID: winnerID ?? null,
+          winnerName: roundReport.winnerName ?? null,
+          loserName: roundReport.loserName ?? null,
+          winnerTickets: roundReport.winnerTickets ?? null,
+          loserTickets: roundReport.loserTickets ?? null,
+          ticketMargin: roundReport.ticketMargin ?? null,
+          isDominantWin: roundReport.isDominantWin ?? null,
+          winStreakTeam: this.winStreakTeam,
+          winStreakCount: this.winStreakCount,
+          consecutiveWinsTeam: this.consecutiveWinsTeam,
+          consecutiveWinsCount: this.consecutiveWinsCount,
+          scrambled: roundReport.scrambled ?? false,
+          scrambleCondition: roundReport.scrambleCondition ?? null,
+          scrambleType: roundReport.scrambleType ?? null
+        }).catch(err =>
+          Logger.verbose('TeamBalancer', 1, `[DB] Round report insert failed: ${err.message}`)
+        );
       }
     }
   }
