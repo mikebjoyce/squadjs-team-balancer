@@ -470,10 +470,11 @@ export default class TeamBalancer extends BasePlugin {
     this.discordChannel = null;
     this.discordReportChannel = null;
     
-    this._gameInfoPollingInterval = null;
-    this.gameModeCached = null;
-    this.layerNameCached = null;
-    this.cachedAbbreviations = {};
+     this._gameInfoPollingInterval = null;
+     this._abbreviationPollStartTimeout = null;
+     this.gameModeCached = null;
+     this.layerNameCached = null;
+     this.cachedAbbreviations = {};
   }
 
   isIgnoredMatch() {
@@ -607,6 +608,7 @@ export default class TeamBalancer extends BasePlugin {
 
     if (this._scrambleTimeout) clearTimeout(this._scrambleTimeout);
     if (this._scrambleCountdownTimeout) clearTimeout(this._scrambleCountdownTimeout);
+    if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
     this.cleanupScrambleTracking();
     this.stopPollingGameInfo();
     this.stopPollingTeamAbbreviations();
@@ -1064,7 +1066,13 @@ export default class TeamBalancer extends BasePlugin {
          this.startPollingGameInfo();
       }
 
-      this.startPollingTeamAbbreviations();
+      // Delay abbreviation polling by 5 minutes to allow RCON player data to stabilize for the new round.
+      // If polling started immediately, it might capture stale role data from the previous round,
+      // causing faction names to be "one match behind".
+      clearTimeout(this._abbreviationPollStartTimeout);
+      this._abbreviationPollStartTimeout = setTimeout(() => {
+        if (this._isMounted) this.startPollingTeamAbbreviations();
+      }, 5 * 60 * 1000); // 5 minutes
 
       this._scrambleInProgress = false;
       this._scramblePending = false;      
@@ -1134,6 +1142,7 @@ export default class TeamBalancer extends BasePlugin {
 
       this.stopPollingGameInfo();
       this.stopPollingTeamAbbreviations();
+      if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
 
       if (this.gameModeCached === null && this.layerNameCached === null && this.lastKnownGoodLayer !== null) {
         Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Warning: Layer info missing at round end. Using fallback lastKnownGoodLayer (${this.lastKnownGoodLayer.gamemode} / ${this.lastKnownGoodLayer.name})`);
