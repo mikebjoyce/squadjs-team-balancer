@@ -1131,6 +1131,8 @@ export default class TeamBalancer extends BasePlugin {
     };
 
     let winnerID = null;
+    let isDominant = false;
+    let isStomp = false;
 
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
@@ -1304,9 +1306,6 @@ export default class TeamBalancer extends BasePlugin {
 
       const invasionAttackThreshold = this.options.invasionAttackTeamThreshold ?? 300;
       const invasionDefenceThreshold = this.options.invasionDefenceTeamThreshold ?? 650;
-
-      let isDominant = false;
-      let isStomp = false;
 
       if (isInvasion) {
         if (
