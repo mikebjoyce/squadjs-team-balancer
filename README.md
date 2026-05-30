@@ -111,14 +111,22 @@ Add to your `config.json`:
     "dialect": "sqlite",
     "storage": "squad-server.sqlite"
   },
-  // MySQL example: change "database" below to "mysql" if you have a MySQL connector configured
-  // "mysql": {
-  //   "dialect": "mysql",
-  //   "host": "localhost",
-  //   "user": "squad",
-  //   "password": "...",
-  //   "database": "squad_db"
-  // },
+  //"mysql": {
+  //  "dialect": "mysql",
+  //  "host": "localhost",
+  //  "port": 3306,
+  //  "username": "squad",
+  //  "password": "password",
+  //  "database": "squad_db"
+  //},
+  //"postgres": {
+  //  "dialect": "postgres",
+  //  "host": "localhost",
+  //  "port": 5432,
+  //  "username": "squad",
+  //  "password": "password",
+  //  "database": "squad_db"
+  //},
   "discord": {
     "connector": "discord",
     "token": "YOUR_BOT_TOKEN"
@@ -166,6 +174,8 @@ Add to your `config.json`:
    "enableDatabaseLogging": false
 }
 ```
+
+**Database Options:** The `"database"` option should match a connector name from above. Use `"sqlite"` for file-based storage (default), `"mysql"` for MySQL, or `"postgres"` for PostgreSQL. Any Sequelize-compatible backend is supported.
 
 **File Placement**: Move the project files into your SquadJS directory's squad-server folder.
 
