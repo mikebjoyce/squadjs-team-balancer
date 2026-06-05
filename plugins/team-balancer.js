@@ -298,7 +298,7 @@ export default class TeamBalancer extends BasePlugin {
         description: 'Max Levenshtein edit distance to merge similar clan tags into one group (e.g. [CLAN] and [CLAM] at distance 1). Set 0 for exact match only.'
       },
       clanTagCaseSensitive: {
-        default: true,
+        default: false,
         type: 'boolean',
         description: 'When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + a gamer-character lookalike map (λ→a, я→r, ø→o, ß→ss, etc.) + non-alphanumeric strip + uppercase, so case variants and decorative Unicode collapse into one group ([Café]/[CAFE]/[CΛFE] all merge).'
       },

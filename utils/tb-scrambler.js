@@ -416,6 +416,19 @@ export const Scrambler = {
         const veteranPenalty = Math.abs(vet1 - vet2) * 300;
         combinedScore += veteranPenalty;
 
+        // --- LOCKED SQUAD PENALTY (ELO MODE) ---
+        // Apply the same locked penalty in ELO mode as in heuristic mode.
+        // This discourages the algorithm from breaking locked squads during escalation phases.
+        const calcLockedPenaltyElo = (squads) => {
+          const brokenSquads = new Set();
+          for (const s of squads) {
+            if (s.wasLocked) brokenSquads.add(s.sourceSquadId || s.id);
+          }
+          return brokenSquads.size * 500;
+        };
+        const lockedPenaltyElo = calcLockedPenaltyElo(selectedT1Squads) + calcLockedPenaltyElo(selectedT2Squads);
+        combinedScore += lockedPenaltyElo;
+
       } else {
         // --- HEURISTIC BALANCE SCORING (NO ELO) ---
         const oldBalanceScore = diff <= 2 ? diff * 80 : (diff * diff) * 60;
