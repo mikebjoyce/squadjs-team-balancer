@@ -187,43 +187,51 @@ export default class SwapExecutor {
    * This fetches the live player list from the server after RCON moves are complete,
    * tallying successes/failures, and producing a report to ensure no silent failures.
    */
-  async verifyMoves() {
-    try {
-      await this.server.updatePlayerList();
-    } catch (err) {
-      Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Failed to update player list for verification: ${err?.message || err}`);
-      // Fall back to current counts if update fails
-      return {
-        totalMoves: this.activeSession.totalMoves,
-        movedSuccessfully: this.activeSession.movesSent,
-        failedToMove: this.activeSession.failedMoves,
-        disconnected: 0
-      };
-    }
+   async verifyMoves() {
+     try {
+       await this.server.updatePlayerList();
+     } catch (err) {
+       Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Failed to update player list for verification: ${err?.message || err}`);
+       // Fall back to current counts if update fails
+       return {
+         totalMoves: this.activeSession.totalMoves,
+         movedSuccessfully: this.activeSession.movesSent,
+         failedToMove: this.activeSession.failedMoves,
+         disconnected: 0
+       };
+     }
 
-    const verified = { moved: 0, failed: 0, disconnected: 0 };
+     const verified = { moved: 0, failed: 0, disconnected: 0 };
 
-    for (const [eosID, moveData] of this.sessionMoves.entries()) {
-      const player = this.server.players.find(p => p.eosID === eosID);
+     for (const [eosID, moveData] of this.sessionMoves.entries()) {
+       const player = this.server.players.find(p => p.eosID === eosID);
 
-      if (!player) {
-        verified.disconnected++; // Player disconnected
-      } else if (String(player.teamID) === String(moveData.targetTeamID)) {
-        verified.moved++; // Successfully on correct team
-      } else {
-        verified.failed++; // Still on wrong team
-      }
-    }
+       if (!player) {
+         verified.disconnected++; // Player disconnected
+       } else if (String(player.teamID) === String(moveData.targetTeamID)) {
+         verified.moved++; // Successfully on correct team
+         // Emit per-player move event for SmartAssign attribution
+         if (player.steamID) {
+           this.server.emit('TEAM_BALANCER_PLAYER_MOVED', {
+             steamID: player.steamID,
+             eosID: player.eosID,
+             targetTeamID: moveData.targetTeamID
+           });
+         }
+       } else {
+         verified.failed++; // Still on wrong team
+       }
+     }
 
-    Logger.verbose('TeamBalancer', 2, `[SwapExecutor][Verification] ${verified.moved} moved, ${verified.disconnected} disconnected, ${verified.failed} failed (${this.sessionMoves.size} total)`);
+     Logger.verbose('TeamBalancer', 2, `[SwapExecutor][Verification] ${verified.moved} moved, ${verified.disconnected} disconnected, ${verified.failed} failed (${this.sessionMoves.size} total)`);
 
-    return {
-      totalMoves: this.sessionMoves.size,
-      movedSuccessfully: verified.moved,
-      failedToMove: verified.failed,
-      disconnected: verified.disconnected
-    };
-  }
+     return {
+       totalMoves: this.sessionMoves.size,
+       movedSuccessfully: verified.moved,
+       failedToMove: verified.failed,
+       disconnected: verified.disconnected
+     };
+   }
 
   async completeSession() {
     if (!this.activeSession || this._completing) return;
