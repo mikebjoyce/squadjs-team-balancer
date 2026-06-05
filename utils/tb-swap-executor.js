@@ -206,18 +206,19 @@ export default class SwapExecutor {
      for (const [eosID, moveData] of this.sessionMoves.entries()) {
        const player = this.server.players.find(p => p.eosID === eosID);
 
-       if (!player) {
-         verified.disconnected++; // Player disconnected
-       } else if (String(player.teamID) === String(moveData.targetTeamID)) {
-         verified.moved++; // Successfully on correct team
-         // Emit per-player move event for SmartAssign attribution
-         if (player.steamID) {
-           this.server.emit('TEAM_BALANCER_PLAYER_MOVED', {
-             steamID: player.steamID,
-             eosID: player.eosID,
-             targetTeamID: moveData.targetTeamID
-           });
-         }
+        if (!player) {
+          verified.disconnected++; // Player disconnected
+        } else if (String(player.teamID) === String(moveData.targetTeamID)) {
+          verified.moved++; // Successfully on correct team
+          // Emit per-player move event for SmartAssign attribution
+          if (player.steamID) {
+            this.server.emit('TEAM_BALANCER_PLAYER_MOVED', {
+              steamID: player.steamID,
+              eosID: player.eosID,
+              targetTeamID: moveData.targetTeamID,
+              source: 'Team-Balancer'
+            });
+          }
        } else {
          verified.failed++; // Still on wrong team
        }
