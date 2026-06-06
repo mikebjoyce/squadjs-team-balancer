@@ -208,7 +208,7 @@ import fs from 'fs';
 import path from 'path';
 
 export default class TeamBalancer extends BasePlugin {
-  static version = '3.2.0';
+  static version = '3.2.1';
 
   static get description() {
     return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';
@@ -1888,9 +1888,27 @@ export default class TeamBalancer extends BasePlugin {
             affectedPlayers
           });
 
-          for (const move of swapPlan) {            
+          for (const move of swapPlan) {
+            const player = this.server.players.find(p => p.eosID === move.eosID);
+            if (!player) {
+              Logger.verbose('TeamBalancer', 1, `[executeScramble] Player with eosID ${move.eosID} not found in server.players during move execution`);
+              continue;
+            }
+            
+            Logger.verbose('TeamBalancer', 1, `[Attribution] TEAM_BALANCER emitting PLAYER_MOVED_BY_PLUGIN: player=${player.name} (${player.steamID}), sourceTeam=${player.teamID}, targetTeam=${move.targetTeamID}, source='Team-Balancer'`);
+            
+            this.server.emit('PLAYER_MOVED_BY_PLUGIN', {
+              eosID: move.eosID,
+              steamID: player.steamID,
+              name: player.name,
+              sourceTeamID: player.teamID,
+              targetTeamID: move.targetTeamID,
+              source: 'Team-Balancer',
+              timestamp: Date.now()
+            });
+            
             await this.reliablePlayerMove(move.eosID, move.targetTeamID, isSimulated);
-          }          
+          }
           await this.waitForScrambleToFinish(this.options.maxScrambleCompletionTime);
 
           const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`;

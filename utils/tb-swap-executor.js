@@ -182,11 +182,11 @@ export default class SwapExecutor {
     }
   }
 
-  /**
-   * Verifies that players actually ended up on their intended teams.
-   * This fetches the live player list from the server after RCON moves are complete,
-   * tallying successes/failures, and producing a report to ensure no silent failures.
-   */
+   /**
+    * Verifies that players actually ended up on their intended teams.
+    * This fetches the live player list from the server after RCON moves are complete,
+    * tallying successes/failures, and producing a report to ensure no silent failures.
+    */
    async verifyMoves() {
      try {
        await this.server.updatePlayerList();
@@ -210,15 +210,6 @@ export default class SwapExecutor {
           verified.disconnected++; // Player disconnected
         } else if (String(player.teamID) === String(moveData.targetTeamID)) {
           verified.moved++; // Successfully on correct team
-          // Emit per-player move event for SmartAssign attribution
-          if (player.steamID) {
-            this.server.emit('TEAM_BALANCER_PLAYER_MOVED', {
-              steamID: player.steamID,
-              eosID: player.eosID,
-              targetTeamID: moveData.targetTeamID,
-              source: 'Team-Balancer'
-            });
-          }
        } else {
          verified.failed++; // Still on wrong team
        }
