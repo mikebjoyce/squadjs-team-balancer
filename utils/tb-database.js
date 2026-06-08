@@ -37,9 +37,8 @@
  * - All operations go through _executeWithRetry() — retries up to 5×
  *   on lock timeouts (SQLITE_BUSY, SequelizeTimeoutError, etc.) with
  *   200ms + random jitter backoff.
- * - A promise-chain mutex is attached to SQLite connectors to serialise
- *   concurrent writes and prevent lock contention. Other DBs use native
- *   connection pooling.
+ * - A promise-chain mutex serialises all concurrent writes regardless of
+ *   dialect, preventing lost-update races in the read-modify-write cycle.
  * - SQLite-only: WAL mode enforced at initDB() for multi-writer safety.
  *   MySQL/Postgres use their native concurrency controls instead.
  * - State is considered stale if lastSyncTimestamp is older than
@@ -99,13 +98,9 @@ export default class TBDatabase {
        }
      };
 
-    if (this.sequelize && typeof this.sequelize.getDialect === 'function' && this.sequelize.getDialect() === 'sqlite') {
-      const resultPromise = this._mutex.then(() => runAttempt());
-      this._mutex = resultPromise.catch(() => {});
-      return resultPromise;
-    }
-
-    return runAttempt();
+    const resultPromise = this._mutex.then(() => runAttempt());
+    this._mutex = resultPromise.catch(() => {});
+    return resultPromise;
   }
 
   async initDB() {
