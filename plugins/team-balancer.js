@@ -1883,7 +1883,9 @@ export default class TeamBalancer extends BasePlugin {
         Logger.verbose('TeamBalancer', 2, `Dry run: Scrambler returned ${swapPlan.length} player moves (Calculation: ${swapPlan.calculationTime}ms).`);
 
         if (!isSimulated) {          
-          const affectedPlayers = this.server.players.map(p => ({ steamID: p.steamID, name: p.name }));
+           const affectedPlayers = this.server.players
+  .filter(p => p.eosID)
+  .map(p => ({ eosID: p.eosID, steamID: p.steamID ?? null, name: p.name }));
           this.server.emit('TEAM_BALANCER_SCRAMBLE_EXECUTED', {
             affectedPlayers
           });
