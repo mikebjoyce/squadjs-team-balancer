@@ -198,7 +198,6 @@
 import BasePlugin from './base-plugin.js';
 import { DiscordHelpers } from '../utils/tb-discord-helpers.js';
 import Scrambler from '../utils/tb-scrambler.js';
-import { extractClanGroups } from '../utils/tb-clan-grouping.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
 import CommandHandlers from '../utils/tb-commands.js';
 import TBDatabase from '../utils/tb-database.js';
@@ -458,6 +457,7 @@ export default class TeamBalancer extends BasePlugin {
 
     this._scrambleInProgress = false;
     this.lastKnownGoodLayer = null;
+    this._s3 = null;  // Runtime discovery of SlackersSquadServices
     this.listeners = {};
     this.listeners.onRoundEnded = this.onRoundEnded.bind(this);
     this.listeners.onNewGame = this.onNewGame.bind(this);
@@ -565,17 +565,56 @@ export default class TeamBalancer extends BasePlugin {
     this.server.on('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.on('CHAT_MESSAGE', this.listeners.onChatMessage);
 
-    const currentLayer = this.server.currentLayer;
-    if (currentLayer?.gamemode) {
-      this.gameModeCached = currentLayer.gamemode;
-      this.layerNameCached = currentLayer.name;
-      this.lastKnownGoodLayer = { gamemode: currentLayer.gamemode, name: currentLayer.name };
-      Logger.verbose('TeamBalancer', 4, `[mount] Found existing layer, setting cached layer info: ${currentLayer.gamemode} / ${currentLayer.name}`);
+    // S³ runtime discovery (same pattern as Switch/Elo Phase A wiring)
+    const s3 = this.server.plugins?.find(p => p.constructor.name === 'SlackersSquadServices');
+    if (s3) {
+      this._s3 = s3;
+      Logger.verbose('TeamBalancer', 2, '[S3] Discovered SlackersSquadServices for TeamBalancer.');
+      const svc = this._s3?.services || {};
+      Logger.verbose('TeamBalancer', 2, `[S3] Available: gameState=${!!svc.gameState} factions=${!!svc.factions} clans=${!!svc.clans} db=${!!svc.db} players=${!!svc.players}`);
     } else {
-      this.startPollingGameInfo();
+      this._s3 = null;
+      Logger.verbose('TeamBalancer', 2, '[S3] SlackersSquadServices not found — using fallback implementations.');
     }
-    
-    this.startPollingTeamAbbreviations();
+
+    // Layer resolution: prefer S³ gameState, fall back to TB's own polling
+    if (this._s3?.services?.gameState) {
+      try {
+        await this._s3.services.gameState.resolveLayerInfo(this.server.currentLayer, 'TB');
+        this.gameModeCached = this._s3.services.gameState.getGamemode();
+        this.layerNameCached = this._s3.services.gameState.getLayerName();
+        this.lastKnownGoodLayer = { gamemode: this.gameModeCached, name: this.layerNameCached };
+        Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState resolved layer: ${this.gameModeCached} / ${this.layerNameCached}`);
+      } catch (err) {
+        Logger.verbose('TeamBalancer', 1, `[mount] S³ gameState layer resolution failed, falling back: ${err.message}`);
+        const currentLayer = this.server.currentLayer;
+        if (currentLayer?.gamemode) {
+          this.gameModeCached = currentLayer.gamemode;
+          this.layerNameCached = currentLayer.name;
+          this.lastKnownGoodLayer = { gamemode: currentLayer.gamemode, name: currentLayer.name };
+        } else {
+          this.startPollingGameInfo();
+        }
+      }
+    } else {
+      const currentLayer = this.server.currentLayer;
+      if (currentLayer?.gamemode) {
+        this.gameModeCached = currentLayer.gamemode;
+        this.layerNameCached = currentLayer.name;
+        this.lastKnownGoodLayer = { gamemode: currentLayer.gamemode, name: currentLayer.name };
+        Logger.verbose('TeamBalancer', 4, `[mount] Found existing layer, setting cached layer info: ${currentLayer.gamemode} / ${currentLayer.name}`);
+      } else {
+        this.startPollingGameInfo();
+      }
+    }
+
+    // Faction abbreviations: prefer S³ factions, fall back to TB's own polling
+    if (this._s3?.services?.factions?.isEnabled()) {
+      Logger.verbose('TeamBalancer', 2, '[S3] Using S³ factions for team names (skipping TB abbreviation polling).');
+    } else {
+      this.startPollingTeamAbbreviations();
+    }
+
     this._isMounted = true;
     this.ready = true;
 
@@ -754,6 +793,10 @@ export default class TeamBalancer extends BasePlugin {
   getTeamName(teamID) {
     if (this.options.useGenericTeamNamesInBroadcasts) {
       return `Team ${teamID}`;
+    }
+    // Prefer S³ factions service, fall back to TB's own cached abbreviations
+    if (this._s3?.services?.factions?.isEnabled()) {
+      return this._s3.services.factions.getTeamName(teamID);
     }
     return this.cachedAbbreviations[teamID] || `Team ${teamID}`;
   }
@@ -1757,6 +1800,18 @@ export default class TeamBalancer extends BasePlugin {
       return false;
     }
 
+    // Acquire S³ global lock before scramble (prevents SA from acting during TB scramble)
+    let globalLockAcquired = false;
+    if (this._s3?.services?.players && !isSimulated) {
+      if (this._s3.services.players.isGloballyLockedBy()) {
+        Logger.verbose('TeamBalancer', 1, '[S3] Global lock held — another scramble may be in progress.');
+        return false;
+      }
+      this._s3.services.players.lockGlobal('TeamBalancer', this.options.maxScrambleCompletionTime + 5000);
+      globalLockAcquired = true;
+      Logger.verbose('TeamBalancer', 4, '[S3] Global lock acquired for scramble.');
+    }
+
     this._scrambleInProgress = true;    
     const adminName = player?.name || (steamID ? `admin ${steamID}` : 'system');
     Logger.verbose('TeamBalancer', 4, `Scramble started by ${adminName}`);
@@ -1839,13 +1894,29 @@ export default class TeamBalancer extends BasePlugin {
       let clanGroups = null;
       if (this.options.enableClanTagGrouping) {
         try {
-          clanGroups = extractClanGroups(this.server.players, {
-            minSize: this.options.minClanGroupSize,
-            maxSize: this.options.maxClanGroupSize,
-            maxEditDistance: this.options.clanTagMaxEditDistance,
-            caseSensitive: this.options.clanTagCaseSensitive,
-            ignoreList: this.options.clanTagIgnoreList
-          });
+          // Prefer S³ clans service, fall back to TB's own extractClanGroups
+          if (this._s3?.services?.clans?.isEnabled()) {
+            const playersForClans = this._s3?.services?.players?.getAllPlayers
+              ? this._s3.services.players.getAllPlayers()
+              : this.server.players;
+            clanGroups = this._s3.services.clans.extractClanGroups(playersForClans, {
+              minSize: this.options.minClanGroupSize,
+              maxSize: this.options.maxClanGroupSize,
+              maxEditDistance: this.options.clanTagMaxEditDistance,
+              caseSensitive: this.options.clanTagCaseSensitive,
+              ignoreList: this.options.clanTagIgnoreList
+            });
+          } else {
+            // Fallback to standalone TB implementation
+            const { extractClanGroups: tbExtractClanGroups } = await import('../utils/tb-clan-grouping.js');
+            clanGroups = tbExtractClanGroups(this.server.players, {
+              minSize: this.options.minClanGroupSize,
+              maxSize: this.options.maxClanGroupSize,
+              maxEditDistance: this.options.clanTagMaxEditDistance,
+              caseSensitive: this.options.clanTagCaseSensitive,
+              ignoreList: this.options.clanTagIgnoreList
+            });
+          }
           const tagCount = Object.keys(clanGroups).length;
           if (tagCount > 0) {
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Clan tag grouping: extracted ${tagCount} qualifying clan(s).`);
@@ -1977,6 +2048,14 @@ export default class TeamBalancer extends BasePlugin {
       await this.resetStreak('Scramble execution failed');
       return false;
     } finally {
+      if (globalLockAcquired) {
+        try {
+          this._s3.services.players.unlockGlobal('TeamBalancer');
+          Logger.verbose('TeamBalancer', 4, '[S3] Global lock released after scramble.');
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[S3] Failed to release global lock: ${err.message}`);
+        }
+      }
       this._scrambleInProgress = false;
       Logger.verbose('TeamBalancer', 4, 'Scramble finished');
     }
