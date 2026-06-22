@@ -1163,11 +1163,14 @@ export default class TeamBalancer extends BasePlugin {
     // Note: roundReport is initialized early to capture state, but will be silently 
     // abandoned (not logged to JSONL) if the match ends in a draw, is disabled, 
     // or is an ignored mode before reaching the end of the method.
+    const s3PlayersCount = this._s3?.services?.players?.getAllPlayers
+      ? this._s3.services.players.getAllPlayers().length
+      : (this.server.players ? this.server.players.length : 0);
     let roundReport = {
       ts: Date.now(),
       gameMode: this.gameModeCached || 'Unknown',
       layerName: this.layerNameCached || 'Unknown',
-      playerCount: this.server.players ? this.server.players.length : 0,
+      playerCount: s3PlayersCount,
       winner: data && data.winner ? `Team ${data.winner.team}` : 'Draw',
       scrambled: false,
       scrambleCondition: 'None'
@@ -1238,7 +1241,9 @@ export default class TeamBalancer extends BasePlugin {
         
         let shouldScramble = false;
         if (this.isSeedMatch() && this.options.enableSeedAutoScramble) {
-          const playerCount = this.server.players.length;
+          const playerCount = this._s3?.services?.players?.getAllPlayers
+            ? this._s3.services.players.getAllPlayers().length
+            : this.server.players.length;
           shouldScramble = true;
           roundReport.scrambled = true;
           roundReport.scrambleCondition = 'Seed Auto Scramble';
@@ -1836,9 +1841,17 @@ export default class TeamBalancer extends BasePlugin {
         this.mirrorRconToDiscord(broadcastMessage, 'scramble');
       }
 
+      // Scrambler input: prefer S³ players + squads, fall back to raw SquadJS data
+      const hasS3Players = !!(this._s3?.services?.players?.getAllPlayers);
+      const scrambleInputPlayers = hasS3Players
+        ? this._s3.services.players.getAllPlayers()
+        : this.server.players;
+      const scrambleInputSquads = hasS3Players
+        ? this._s3.services.players.getSquads()
+        : this.server.squads;
       const { squads: transformedSquads, players: transformedPlayers } = this.transformSquadJSData(
-        this.server.squads,
-        this.server.players
+        scrambleInputSquads,
+        scrambleInputPlayers
       );
 
       let eloMap = null;
