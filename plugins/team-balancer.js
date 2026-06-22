@@ -577,25 +577,13 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 2, '[S3] SlackersSquadServices not found — using fallback implementations.');
     }
 
-    // Layer resolution: prefer S³ gameState, fall back to TB's own polling
+    // Layer resolution: S³ gameState owns this lifecycle — resolveLayerInfo() was called in S³'s mount().
+    // TB loads its local cache from gameState (or falls back to standalone polling if S³ absent).
     if (this._s3?.services?.gameState) {
-      try {
-        await this._s3.services.gameState.resolveLayerInfo(this.server.currentLayer, 'TB');
-        this.gameModeCached = this._s3.services.gameState.getGamemode();
-        this.layerNameCached = this._s3.services.gameState.getLayerName();
-        this.lastKnownGoodLayer = { gamemode: this.gameModeCached, name: this.layerNameCached };
-        Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState resolved layer: ${this.gameModeCached} / ${this.layerNameCached}`);
-      } catch (err) {
-        Logger.verbose('TeamBalancer', 1, `[mount] S³ gameState layer resolution failed, falling back: ${err.message}`);
-        const currentLayer = this.server.currentLayer;
-        if (currentLayer?.gamemode) {
-          this.gameModeCached = currentLayer.gamemode;
-          this.layerNameCached = currentLayer.name;
-          this.lastKnownGoodLayer = { gamemode: currentLayer.gamemode, name: currentLayer.name };
-        } else {
-          this.startPollingGameInfo();
-        }
-      }
+      this.gameModeCached = this._s3.services.gameState.getGamemode();
+      this.layerNameCached = this._s3.services.gameState.getLayerName();
+      this.lastKnownGoodLayer = { gamemode: this.gameModeCached, name: this.layerNameCached };
+      Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState layer: ${this.gameModeCached} / ${this.layerNameCached}`);
     } else {
       const currentLayer = this.server.currentLayer;
       if (currentLayer?.gamemode) {
