@@ -54,16 +54,16 @@ const CommandHandlers = {
   register(tb) {
     tb.respond = async function (player, msg) {
       const playerName = player?.name || 'Unknown Player';
-      const steamID = player?.steamID;
+      const warnIdentifier = player?.name || player?.steamID;
       let logMessage = `[TeamBalancer][Response to ${playerName}`;
-      logMessage += ` (${steamID || 'Unknown'})]\n${msg}`;
+      logMessage += ` (${warnIdentifier || 'Unknown'})]\n${msg}`;
       Logger.verbose('TeamBalancer', 2, logMessage);
 
-      if (steamID) {
+      if (warnIdentifier) {
         try {
-          await this.server.rcon.warn(steamID, msg);
+          await this.server.rcon.warn(warnIdentifier, msg);
         } catch (err) {
-          Logger.verbose('TeamBalancer', 1, `Failed to send RCON warn to ${steamID}: ${err.message}`);
+          Logger.verbose('TeamBalancer', 1, `Failed to send RCON warn to ${warnIdentifier}: ${err.message}`);
         }
       }
       return msg;
@@ -180,10 +180,10 @@ const CommandHandlers = {
       Logger.verbose('TeamBalancer', 4, `[TeamBalancer] !teambalancer response sent to ${playerName} (${steamID}):\n${infoMsg}`);
 
       try {
-        // This is what gets sent in-game via RCON warn
-        await this.server.rcon.warn(steamID, infoMsg);
+        // Use player name (always present for connected players) for the RCON warn
+        await this.server.rcon.warn(playerName, infoMsg);
       } catch (err) {
-        Logger.verbose('TeamBalancer', 1, `Failed to send info message to ${steamID}: ${err.message || err}`);
+        Logger.verbose('TeamBalancer', 1, `Failed to send info message to ${playerName}: ${err.message || err}`);
       }
       return await this.respond(info.player || { steamID: info.steamID, name: playerName }, infoMsg);
     };
@@ -359,7 +359,7 @@ const CommandHandlers = {
           }
           case 'diag': {
             Logger.verbose('TeamBalancer', 4, 'Diagnostics command received.');
-            await this.server.rcon.warn(steamID, 'Running diagnostics... please wait.');
+            await this.server.rcon.warn(player?.name || steamID, 'Running diagnostics... please wait.');
 
             const diagnostics = new TBDiagnostics(this);
             const results = await diagnostics.runAll();

@@ -30,8 +30,9 @@
  *   A separate setTimeout enforces the maxScrambleCompletionTime hard cap.
  * - Move is considered complete when the player is observed on the
  *   correct team, or when they disconnect (counted separately).
- * - RCON identifier prefers steamID, falls back to player name with a
- *   warning log. Max 5 RCON attempts per player before marking failed.
+ * - RCON identifier prefers player name (always present for connected
+ *   players), falls back to eosID then steamID. Max 5 RCON attempts per
+ *   player before marking failed.
  * - verifyMoves() calls server.updatePlayerList() before checking final
  *   team positions. Falls back to session counters if the update fails.
  * - cleanup() is safe to call at any time; idempotent.
@@ -143,8 +144,8 @@ export default class SwapExecutor {
 
           if (moveData.attempts <= maxRconAttempts) {
             try {
-              // Prefer eosID (stable primary identifier). RCON accepts eosID or steamID.
-              const rconIdentifier = player?.eosID || player?.steamID || player?.name;
+              // Prefer player name (universally accepted by RCON). eosID/steamID are fallbacks.
+              const rconIdentifier = player?.name || player?.eosID || player?.steamID;
               await this.server.rcon.switchTeam(rconIdentifier, moveData.targetTeamID);
               this.activeSession.movesSent++;
               playersToRemove.push(eosID);
