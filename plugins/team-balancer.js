@@ -526,24 +526,35 @@ export default class TeamBalancer extends BasePlugin {
     }
 
     if (this.options.discordClient) {
+      Logger.verbose('TeamBalancer', 2, '[Discord] discordClient available, registering message listener (before channel fetch).');
+
+      // Register listener BEFORE channel fetch (fix: if fetch fails, listener is still active)
+      this.options.discordClient.on('message', this.listeners.onDiscordMessage);
+      Logger.verbose('TeamBalancer', 4, '[Discord] Discord message listener registered.');
+
       if (this.options.discordAdminChannelID) {
         try {
           this.discordChannel = await this.options.discordClient.channels.fetch(this.options.discordAdminChannelID);
-          Logger.verbose('TeamBalancer', 2, `Discord admin channel connected: ${this.discordChannel.name}`);
-          this.options.discordClient.on('message', this.listeners.onDiscordMessage);
+          Logger.verbose('TeamBalancer', 2, `[Discord] Admin channel fetched: ${this.discordChannel?.name ?? 'unknown'} (${this.options.discordAdminChannelID})`);
         } catch (err) {
-          Logger.verbose('TeamBalancer', 1, `Failed to fetch Discord admin channel: ${err.message}`);
+          Logger.verbose('TeamBalancer', 1, `[Discord] Failed to fetch admin channel (${this.options.discordAdminChannelID}): ${err.message}. Listener IS registered — messages received but replies may fail.`);
         }
+      } else {
+        Logger.verbose('TeamBalancer', 2, `[Discord] discordAdminChannelID not set — listener registered but all messages filtered. Use "discordChannelID" in config to populate this.`);
       }
-      
+
       if (this.options.discordReportChannelID) {
         try {
           this.discordReportChannel = await this.options.discordClient.channels.fetch(this.options.discordReportChannelID);
-          Logger.verbose('TeamBalancer', 2, `Discord report channel connected: ${this.discordReportChannel.name}`);
+          Logger.verbose('TeamBalancer', 2, `[Discord] Report channel fetched: ${this.discordReportChannel?.name ?? 'unknown'}`);
         } catch (err) {
-          Logger.verbose('TeamBalancer', 1, `Failed to fetch Discord report channel: ${err.message}`);
+          Logger.verbose('TeamBalancer', 1, `[Discord] Failed to fetch report channel: ${err.message}`);
         }
+      } else {
+        Logger.verbose('TeamBalancer', 2, '[Discord] No discordReportChannelID set — reports will use admin channel.');
       }
+    } else {
+      Logger.verbose('TeamBalancer', 2, '[Discord] No discordClient configured — Discord commands disabled.');
     }
 
     const listenerCounts = {
@@ -858,12 +869,26 @@ export default class TeamBalancer extends BasePlugin {
   // ╚═══════════════════════════════════════╝
 
   async onDiscordMessage(message) {
-    if (!this.ready) return;
-    if (message.author.bot) return;
-    if (message.channel.id !== this.options.discordAdminChannelID) return;
+    if (!this.ready) {
+      Logger.verbose('TeamBalancer', 2, `[Discord] Received message but plugin not ready yet. Dropping.`);
+      return;
+    }
+    if (message.author.bot) {
+      Logger.verbose('TeamBalancer', 4, `[Discord] Ignored bot message from ${message.author.id}.`);
+      return;
+    }
+    if (message.channel.id !== this.options.discordAdminChannelID) {
+      Logger.verbose('TeamBalancer', 4, `[Discord] Message from wrong channel (got ${message.channel.id}, expected ${this.options.discordAdminChannelID}). Dropping.`);
+      return;
+    }
 
     const content = message.content.trim();
-    if (!content.startsWith('!teambalancer') && !content.startsWith('!scramble')) return;
+    if (!content.startsWith('!teambalancer') && !content.startsWith('!scramble')) {
+      Logger.verbose('TeamBalancer', 4, `[Discord] Message "${content.substring(0, 40)}..." does not match TB commands. Dropping.`);
+      return;
+    }
+
+    Logger.verbose('TeamBalancer', 2, `[Discord] Received valid command: "${content.substring(0, 80)}" from ${message.author.tag} (${message.author.id}).`);
 
     if (!this.checkDiscordAdminPermission(message.member)) {
       await message.reply('❌ You do not have permission to use this command.');
