@@ -186,23 +186,23 @@ export default class SwapExecutor {
     * tallying successes/failures, and producing a report to ensure no silent failures.
     */
    async verifyMoves() {
-     try {
-       await this.server.updatePlayerList();
-     } catch (err) {
-       Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Failed to update player list for verification: ${err?.message || err}`);
-       // Fall back to current counts if update fails
-       return {
-         totalMoves: this.activeSession.totalMoves,
-         movedSuccessfully: this.activeSession.movesSent,
-         failedToMove: this.activeSession.failedMoves,
-         disconnected: 0
-       };
-     }
+      try {
+        await this._s3?.services?.players?.refreshNow('TeamBalancer');
+      } catch (err) {
+        Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Failed to refresh player list for verification: ${err?.message || err}`);
+        // Fall back to current counts if update fails
+        return {
+          totalMoves: this.activeSession.totalMoves,
+          movedSuccessfully: this.activeSession.movesSent,
+          failedToMove: this.activeSession.failedMoves,
+          disconnected: 0
+        };
+      }
 
-     const verified = { moved: 0, failed: 0, disconnected: 0 };
+      const verified = { moved: 0, failed: 0, disconnected: 0 };
 
-     for (const [eosID, moveData] of this.sessionMoves.entries()) {
-       const player = this.server.players.find(p => p.eosID === eosID);
+      for (const [eosID, moveData] of this.sessionMoves.entries()) {
+        const player = (this._s3?.services?.players?.getPlayer(eosID)) || this.server.players.find(p => p.eosID === eosID);
 
         if (!player) {
           verified.disconnected++; // Player disconnected

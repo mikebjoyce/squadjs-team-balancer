@@ -229,11 +229,6 @@ export default class TeamBalancer extends BasePlugin {
         default: true,
         type: 'boolean'
       },
-      ignoredGameModes: {
-        default: ['Seed', 'Jensen'],
-        type: 'array',
-        description: 'Game modes or map names to ignore for win streak tracking.'
-      },
       enableSeedAutoScramble: {
         default: true,
         type: 'boolean',
@@ -276,41 +271,6 @@ export default class TeamBalancer extends BasePlugin {
         default: 0.5,
         type: 'number'
       },
-      enableClanTagGrouping: {
-        default: false,
-        type: 'boolean',
-        description: 'Keep players sharing a clan tag (e.g. [ABC]) together when they are on the same team during a scramble. Forms per-team "virtual squads" so Phase 1 swaps clan members atomically and Phase 3 only breaks them as a last resort. Cross-team clan splits are NOT consolidated by design.'
-      },
-      minClanGroupSize: {
-        default: 2,
-        type: 'number',
-        description: 'Minimum total members of a clan tag to be considered for grouping. Smaller clans are ignored.'
-      },
-      maxClanGroupSize: {
-        default: 18,
-        type: 'number',
-        description: 'Maximum total members of a clan tag to be considered for grouping. Larger clans are ignored to avoid distorting balance.'
-      },
-      clanTagMaxEditDistance: {
-        default: 1,
-        type: 'number',
-        description: 'Max Levenshtein edit distance to merge similar clan tags into one group (e.g. [CLAN] and [CLAM] at distance 1). Set 0 for exact match only.'
-      },
-      clanTagCaseSensitive: {
-        default: false,
-        type: 'boolean',
-        description: 'When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + a gamer-character lookalike map (λ→a, я→r, ø→o, ß→ss, etc.) + non-alphanumeric strip + uppercase, so case variants and decorative Unicode collapse into one group ([Café]/[CAFE]/[CΛFE] all merge).'
-      },
-       clanGroupingPullEntireSquads: {
-         default: false,
-         type: 'boolean',
-         description: 'When true, contributing squads merge wholesale into the virtual clan squad — non-clan teammates travel with their clan members. When false (default), only clan members are pulled into the anchor squad and non-clan teammates stay where they are. Only relevant when enableClanTagGrouping is true.'
-       },
-       clanTagIgnoreList: {
-         default: [],
-         type: 'array',
-         description: 'Clan tags to exclude from clan grouping entirely. Tags are matched after the same normalization used by clanTagCaseSensitive (raw match when true, normalized when false). Example: ["NL", "ADMIN"] to prevent those clans from being kept together during scrambles.'
-       },
         changeTeamRetryInterval: {
          default: 50,
          type: 'number'
@@ -456,13 +416,10 @@ export default class TeamBalancer extends BasePlugin {
     this.lastScrambleTime = null;
 
     this._scrambleInProgress = false;
-    this.lastKnownGoodLayer = null;
     this._s3 = null;  // Runtime discovery of SlackersSquadServices
     this.listeners = {};
     this.listeners.onRoundEnded = this.onRoundEnded.bind(this);
     this.listeners.onNewGame = this.onNewGame.bind(this);
-    this.listeners.onLayerInfoUpdated = this.onLayerInfoUpdated.bind(this);
-    this.listeners.onServerInfoUpdated = this.onServerInfoUpdated.bind(this);
     this.listeners.onChatCommand = this.onChatCommand.bind(this);
     this.listeners.onScrambleCommand = this.onScrambleCommand.bind(this);
     this.listeners.onChatMessage = this.onChatMessage.bind(this);
@@ -470,25 +427,17 @@ export default class TeamBalancer extends BasePlugin {
     this.discordChannel = null;
     this.discordReportChannel = null;
     
-     this._gameInfoPollingInterval = null;
-     this._abbreviationPollStartTimeout = null;
-     this.gameModeCached = null;
-     this.layerNameCached = null;
-     this.cachedAbbreviations = {};
   }
 
   isIgnoredMatch() {
-    const gameMode = this.gameModeCached?.toLowerCase() || '';
-    const layerName = this.layerNameCached?.toLowerCase() || '';
-    return this.options.ignoredGameModes.some(m => {
-      const mode = m.toLowerCase();
-      return gameMode.includes(mode) || layerName.includes(mode);
-    });
+    const gs = this._s3?.services?.gameState;
+    return gs?.isIgnoredMode?.() || false;
   }
 
   isSeedMatch() {
-    const gameMode = this.gameModeCached?.toLowerCase() || '';
-    const layerName = this.layerNameCached?.toLowerCase() || '';
+    const gs = this._s3?.services?.gameState;
+    const gameMode = gs?.getGamemode?.()?.toLowerCase() || '';
+    const layerName = gs?.getLayerName?.()?.toLowerCase() || '';
     return gameMode.includes('seed') || layerName.includes('seed');
   }
   async mount() {
@@ -570,8 +519,6 @@ export default class TeamBalancer extends BasePlugin {
 
     this.server.on('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.on('NEW_GAME', this.listeners.onNewGame);
-    this.server.on('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
-    this.server.on('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.on('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
     this.server.on('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.on('CHAT_MESSAGE', this.listeners.onChatMessage);
@@ -588,30 +535,9 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 2, '[S3] SlackersSquadServices not found — using fallback implementations.');
     }
 
-    // Layer resolution: S³ gameState owns this lifecycle — resolveLayerInfo() was called in S³'s mount().
-    // TB loads its local cache from gameState (or falls back to standalone polling if S³ absent).
+    // Layer info always served from S³ gameState
     if (this._s3?.services?.gameState) {
-      this.gameModeCached = this._s3.services.gameState.getGamemode();
-      this.layerNameCached = this._s3.services.gameState.getLayerName();
-      this.lastKnownGoodLayer = { gamemode: this.gameModeCached, name: this.layerNameCached };
-      Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState layer: ${this.gameModeCached} / ${this.layerNameCached}`);
-    } else {
-      const currentLayer = this.server.currentLayer;
-      if (currentLayer?.gamemode) {
-        this.gameModeCached = currentLayer.gamemode;
-        this.layerNameCached = currentLayer.name;
-        this.lastKnownGoodLayer = { gamemode: currentLayer.gamemode, name: currentLayer.name };
-        Logger.verbose('TeamBalancer', 4, `[mount] Found existing layer, setting cached layer info: ${currentLayer.gamemode} / ${currentLayer.name}`);
-      } else {
-        this.startPollingGameInfo();
-      }
-    }
-
-    // Faction abbreviations: prefer S³ factions, fall back to TB's own polling
-    if (this._s3?.services?.factions?.isEnabled()) {
-      Logger.verbose('TeamBalancer', 2, '[S3] Using S³ factions for team names (skipping TB abbreviation polling).');
-    } else {
-      this.startPollingTeamAbbreviations();
+      Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState available: ${this._s3.services.gameState.getGamemode()} / ${this._s3.services.gameState.getLayerName()}`);
     }
 
     this._isMounted = true;
@@ -634,8 +560,6 @@ export default class TeamBalancer extends BasePlugin {
     Logger.verbose('TeamBalancer', 4, 'Unmounting plugin and removing listeners.');
     this.server.removeListener('ROUND_ENDED', this.listeners.onRoundEnded);
     this.server.removeListener('NEW_GAME', this.listeners.onNewGame);
-    this.server.removeListener('UPDATED_LAYER_INFORMATION', this.listeners.onLayerInfoUpdated);
-    this.server.removeListener('UPDATED_SERVER_INFORMATION', this.listeners.onServerInfoUpdated);
     this.server.removeListener('CHAT_COMMAND:teambalancer', this.listeners.onChatCommand);
     this.server.removeListener('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.removeListener('CHAT_MESSAGE', this.listeners.onChatMessage);
@@ -797,70 +721,7 @@ export default class TeamBalancer extends BasePlugin {
     if (this._s3?.services?.factions?.isEnabled()) {
       return this._s3.services.factions.getTeamName(teamID);
     }
-    return this.cachedAbbreviations[teamID] || `Team ${teamID}`;
-  }
-
-  startPollingTeamAbbreviations() {
-    Logger.verbose('TeamBalancer', 4, 'Starting team abbreviation polling.');
-    this.stopPollingTeamAbbreviations();
-    this._teamAbbreviationPollingInterval = setInterval(() => this.pollTeamAbbreviations(), 5000);
-  }
-
-  stopPollingTeamAbbreviations() {
-    if (this._teamAbbreviationPollingInterval) {
-      Logger.verbose('TeamBalancer', 4, 'Stopping team abbreviation polling.');
-      clearInterval(this._teamAbbreviationPollingInterval);
-      this._teamAbbreviationPollingInterval = null;
-    }
-  }
-
-  pollTeamAbbreviations() {
-    Logger.verbose('TeamBalancer', 4, 'Running periodic team abbreviation poll.');
-    const newAbbreviations = this.extractTeamAbbreviationsFromRoles();
-
-    if (Object.keys(newAbbreviations).length > 0) {
-      this.cachedAbbreviations = Object.assign({}, this.cachedAbbreviations, newAbbreviations);
-      Logger.verbose('TeamBalancer', 4, `Updated cached abbreviations: ${JSON.stringify(this.cachedAbbreviations)}`);
-    }
-
-    const hasBothTeams = Object.keys(this.cachedAbbreviations).length === 2;
-
-    if (hasBothTeams) {
-      Logger.verbose('TeamBalancer', 4, `Polling successful! Cached abbreviations: ${JSON.stringify(this.cachedAbbreviations)}`);
-      this.stopPollingTeamAbbreviations();
-    }
-  }
-
-  extractTeamAbbreviationsFromRoles() {
-    Logger.verbose('TeamBalancer', 4, 'extractTeamAbbreviationsFromRoles: Starting extraction from player roles.');
-    const abbreviations = {};
-    for (const player of this.server.players) {
-      const teamID = player.teamID;
-      if (!teamID) {
-        Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Skipping player ${player.name} with no teamID.`);
-        continue;
-      }
-
-      if (abbreviations[teamID]) {
-        Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Skipping player ${player.name}, abbreviation for Team ${teamID} already found.`);
-        continue;
-      }
-
-      const role = player.roles?.[0] || player.role; // Check for player.role as fallback
-      if (role) {        
-        const match = role.match(/^([A-Z]{2,6})_/);
-        if (match) {
-          Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Found abbreviation ${match[1]} for Team ${teamID} from role ${role}.`);
-          abbreviations[teamID] = match[1];
-        } else {
-          Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: No abbreviation found in role ${role} for player ${player.name}.`);
-        }
-      } else {
-        Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: No role found for player ${player.name}.`);
-      }
-    }
-    Logger.verbose('TeamBalancer', 4, `extractTeamAbbreviationsFromRoles: Finished extraction. Result: ${JSON.stringify(abbreviations)}`);
-    return abbreviations;
+    return this._s3.services.factions.getTeamName(teamID);
   }
 
   
@@ -1109,27 +970,7 @@ export default class TeamBalancer extends BasePlugin {
     try {
       Logger.verbose('TeamBalancer', 4, `[onNewGame] Event triggered with data: ${JSON.stringify(data)}`);
       
-      this.gameModeCached = null;
-      this.layerNameCached = null;
-      this.cachedAbbreviations = {};
-
-      let layerResolved = false;
-      if (data && data.layer) {
-         layerResolved = await this.resolveLayerInfo(data.layer, 'onNewGame');
-      }
-      
-      if (!layerResolved) {
-         this.startPollingGameInfo();
-      }
-
-      // Delay abbreviation polling by 5 minutes to allow RCON player data to stabilize for the new round.
-      // If polling started immediately, it might capture stale role data from the previous round,
-      // causing faction names to be "one match behind".
-      clearTimeout(this._abbreviationPollStartTimeout);
-      this._abbreviationPollStartTimeout = setTimeout(() => {
-        if (this._isMounted) this.startPollingTeamAbbreviations();
-      }, 5 * 60 * 1000); // 5 minutes
-
+      // Layer info always served from S³ gameState; standalone polling removed in Stage 4.
       this._scrambleInProgress = false;
       this._scramblePending = false;      
       try {
@@ -1176,13 +1017,13 @@ export default class TeamBalancer extends BasePlugin {
     // Note: roundReport is initialized early to capture state, but will be silently 
     // abandoned (not logged to JSONL) if the match ends in a draw, is disabled, 
     // or is an ignored mode before reaching the end of the method.
-    const s3PlayersCount = this._s3?.services?.players?.getAllPlayers
-      ? this._s3.services.players.getAllPlayers().length
-      : (this.server.players ? this.server.players.length : 0);
+    const s3Players = this._s3?.services?.players?.getAllPlayers?.();
+    const s3PlayersCount = s3Players ? s3Players.length : 0;
+    const gs = this._s3?.services?.gameState;
     let roundReport = {
       ts: Date.now(),
-      gameMode: this.gameModeCached || 'Unknown',
-      layerName: this.layerNameCached || 'Unknown',
+      gameMode: gs?.getGamemode?.() || 'Unknown',
+      layerName: gs?.getLayerName?.() || 'Unknown',
       playerCount: s3PlayersCount,
       winner: data && data.winner ? `Team ${data.winner.team}` : 'Draw',
       scrambled: false,
@@ -1201,17 +1042,7 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
-      this.stopPollingGameInfo();
-      this.stopPollingTeamAbbreviations();
-      if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
-
-      if (this.gameModeCached === null && this.layerNameCached === null && this.lastKnownGoodLayer !== null) {
-        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Warning: Layer info missing at round end. Using fallback lastKnownGoodLayer (${this.lastKnownGoodLayer.gamemode} / ${this.lastKnownGoodLayer.name})`);
-        this.gameModeCached = this.lastKnownGoodLayer.gamemode;
-        this.layerNameCached = this.lastKnownGoodLayer.name;
-        roundReport.gameMode = this.gameModeCached;
-        roundReport.layerName = this.layerNameCached;
-      }
+      // Layer reads are served from S³ gameState (standalone polling removed in Stage 4)
 
       // Check for Draw (Winner is null)
       if (!data || !data.winner) {
@@ -1247,7 +1078,7 @@ export default class TeamBalancer extends BasePlugin {
 
       Logger.verbose('TeamBalancer', 4, `Parsed winnerID=${winnerID}, winnerTickets=${winnerTickets}, loserTickets=${loserTickets}, margin=${margin}`);
 
-      const gameMode = this.gameModeCached?.toLowerCase() || '';
+      const gameMode = this._s3?.services?.gameState?.getGamemode?.()?.toLowerCase() || '';
 
       if (this.isIgnoredMatch()) {
         Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Ignored match ended (${this.gameModeCached} / ${this.layerNameCached}). Resetting streak metrics.`);
@@ -1631,14 +1462,10 @@ export default class TeamBalancer extends BasePlugin {
 
       // Log to database
       if (this.options.enableDatabaseLogging) {
-        // Compute matchId and roundStartTime from server.matchStartTime
-        const roundStartTime = this.server.matchStartTime?.getTime() ?? null;
-        let matchId = null;
-        if (roundStartTime !== null) {
-          matchId = Math.floor(roundStartTime / 1000).toString(36).slice(-8);
-        } else {
-          Logger.verbose('TeamBalancer', 2, '[DB] Warning: server.matchStartTime is null — matchId will be null. Cross-plugin joins will not be possible for this round.');
-        }
+        // Read matchId and roundStartTime from S³ GameStateService
+        const gs = this._s3?.services?.gameState;
+        const roundStartTime = gs?.getRoundStartTime?.() ?? null;
+        const matchId = gs?.getMatchId?.();
 
         this.db.insertRoundReport({
           ts: roundReport.ts,
@@ -1918,31 +1745,13 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       let clanGroups = null;
-      if (this.options.enableClanTagGrouping) {
+      if (this._s3?.services?.clans?.isEnabled?.()) {
         try {
-          // Prefer S³ clans service, fall back to TB's own extractClanGroups
-          if (this._s3?.services?.clans?.isEnabled()) {
-            const playersForClans = this._s3?.services?.players?.getAllPlayers
-              ? this._s3.services.players.getAllPlayers()
-              : this.server.players;
-            clanGroups = this._s3.services.clans.extractClanGroups(playersForClans, {
-              minSize: this.options.minClanGroupSize,
-              maxSize: this.options.maxClanGroupSize,
-              maxEditDistance: this.options.clanTagMaxEditDistance,
-              caseSensitive: this.options.clanTagCaseSensitive,
-              ignoreList: this.options.clanTagIgnoreList
-            });
-          } else {
-            // Fallback to standalone TB implementation
-            const { extractClanGroups: tbExtractClanGroups } = await import('../utils/tb-clan-grouping.js');
-            clanGroups = tbExtractClanGroups(this.server.players, {
-              minSize: this.options.minClanGroupSize,
-              maxSize: this.options.maxClanGroupSize,
-              maxEditDistance: this.options.clanTagMaxEditDistance,
-              caseSensitive: this.options.clanTagCaseSensitive,
-              ignoreList: this.options.clanTagIgnoreList
-            });
-          }
+          const playersForClans = this._s3?.services?.players?.getAllPlayers
+            ? this._s3.services.players.getAllPlayers()
+            : this.server.players;
+          clanGroups = this._s3.services.clans.extractClanGroups(playersForClans);
+          // extractClanGroups uses getGroupingOptions() internally — no overrides needed
           const tagCount = Object.keys(clanGroups).length;
           if (tagCount > 0) {
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Clan tag grouping: extracted ${tagCount} qualifying clan(s).`);
@@ -1967,7 +1776,7 @@ export default class TeamBalancer extends BasePlugin {
         minPlayersToMove,
         maxPlayersToMove,
         clanGroups,
-        pullEntireSquads: this.options.clanGroupingPullEntireSquads
+        pullEntireSquads: this._s3?.services?.clans?.options?.pullEntireSquads || false
       });
 
       const targetReportChannel = this.discordReportChannel || this.discordChannel;
