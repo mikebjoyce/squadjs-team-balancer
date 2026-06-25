@@ -68,11 +68,16 @@ Prevents players from changing teams immediately after a scramble. When TeamBala
 
 **[squadjs-slackers-squad-services](https://github.com/mikebjoyce/squadjs-slackers-squad-services)**
 
-S³ is the centralised service container for shared state across Slacker's Squad plugins. TeamBalancer uses it as the primary data source for player state, squad data, faction names, clan grouping, and game-state metadata.
+S³ is the centralised service container for shared state across Slacker's Squad plugins. TeamBalancer uses it as the primary data source for player state, squad data, faction names, clan grouping, game-mode detection (including ignored modes), and game-state metadata.
 
-**Why this matters**: Rather than maintaining its own duplicate caches, TeamBalancer reads ground-truth data from S³ — player/squad snapshots via `players.getAllPlayers()` / `players.getSquads()`, faction names via `factions.getTeamName()`, game-mode/layer detection via `gameState.getGamemode()` / `gameState.getLayerName()`, and clan grouping via `clans.extractClanGroups()`. During scrambles, S³'s global-lock mechanism (`players.lockGlobal()` / `players.unlockGlobal()`) prevents concurrent scrambles from conflicting.
+**Why this matters**: Rather than maintaining its own duplicate caches, TeamBalancer reads ground-truth data from S³ — player/squad snapshots via `players.getAllPlayers()` / `players.getSquads()`, faction names via `factions.getTeamName()`, game-mode/layer detection via `gameState.getGamemode()` / `gameState.getLayerName()`, ignored-mode checks via `gameState.isIgnoredMode()`, and clan grouping via `clans.extractClanGroups()`. During scrambles, S³'s global-lock mechanism (`players.lockGlobal()` / `players.unlockGlobal()`) prevents concurrent scrambles from conflicting.
 
 **Setup**: Install S³ alongside TeamBalancer. S³ is auto-discovered at runtime via `this.server.plugins`. If S³ is absent, TeamBalancer falls back to raw SquadJS data for all services.
+
+**Important**: The following settings have been **delegated to S³'s configuration** and are no longer read from the TeamBalancer plugin config:
+
+- `ignoredGameModes` — configure on S³, which exposes them via `gameState.setIgnoredGameModes()`
+- `enableClanTagGrouping`, `minClanGroupSize`, `maxClanGroupSize`, `clanTagMaxEditDistance`, `clanTagCaseSensitive`, `clanGroupingPullEntireSquads` — configure on S³'s clans service; TeamBalancer reads grouping options from `clans.extractClanGroups()` which internally calls S³'s `getGroupingOptions()`
 
 ---
 
@@ -89,7 +94,7 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
   * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments.
   * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues.
   * **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to achieve maximum numerical balance. Runs for the last 5 iterations.
-  * **With Clan Tag Grouping enabled**: same-team clan members are folded into "virtual squads" anchored on the squad with the most clan members; Phase 1 swaps them as one unit, and Phases 2/3 only shatter a virtual squad when no non-clan squad is eligible.
+  * **With Clan Tag Grouping enabled**: same-team clan members are folded into "virtual squads" anchored on the squad with the most clan members; Phase 1 swaps them as one unit, and Phases 2/3 only shatter a virtual squad when no non-clan squad is eligible. Clan grouping configuration is managed by S³.
 
 * **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (composite Mean/Top-15 ELO diff + veteran parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
 
@@ -102,9 +107,9 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 * **Balance Success**: 99.9% rate of achieving a team differential of ≤ 2 players.
 * **Cohesion**: Locked squads are preserved during Phases 1–2. Phase 3 may split one locked squad as a late-stage fallback. Phase 4 decomposes all squads.
 
-### Clan Tag Grouping (Optional)
+### Clan Tag Grouping (Managed by S³)
 
-When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan tag (e.g. `[ABC]`) and are already on the same team together when shuffling. The grouping implementation is provided by S³'s clans service (`clans.extractClanGroups()`) rather than a standalone local utility.
+When clan tag grouping is enabled on S³, the scrambler keeps players who share a clan tag (e.g. `[ABC]`) and are already on the same team together when shuffling. The grouping implementation is provided entirely by S³'s clans service (`clans.extractClanGroups()`) — configuration options such as `enableClanTagGrouping`, `minClanGroupSize`, `maxClanGroupSize`, `clanTagMaxEditDistance`, `clanTagCaseSensitive`, and `clanGroupingPullEntireSquads` are set on S³, not on TeamBalancer.
 
 **How it works**:
 
@@ -115,42 +120,18 @@ When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan
 
 **Cross-team clans are intentionally not consolidated** — if a clan starts split across teams, each side is treated independently.
 
+---
+
+## Configuration
+
 Add to your `config.json`:
 
 ```json
-"connectors": {
-  "sqlite": {
-    "dialect": "sqlite",
-    "storage": "squad-server.sqlite"
-  },
-  //"mysql": {
-  //  "dialect": "mysql",
-  //  "host": "localhost",
-  //  "port": 3306,
-  //  "username": "squad",
-  //  "password": "password",
-  //  "database": "squad_db"
-  //},
-  //"postgres": {
-  //  "dialect": "postgres",
-  //  "host": "localhost",
-  //  "port": 5432,
-  //  "username": "squad",
-  //  "password": "password",
-  //  "database": "squad_db"
-  //},
-  "discord": {
-    "connector": "discord",
-    "token": "YOUR_BOT_TOKEN"
-  }
-},
-
 {
   "plugin": "TeamBalancer",
   "enabled": true,
   "database": "sqlite",
   "enableWinStreakTracking": true,
-  "ignoredGameModes": ["Seed", "Jensen"],
   "enableSeedAutoScramble": true,
   "maxWinStreak": 2,
   "maxConsecutiveWinsWithoutThreshold": 0,
@@ -159,15 +140,9 @@ Add to your `config.json`:
   "minTicketsToCountAsDominantWin": 150,
   "invasionAttackTeamThreshold": 300,
   "invasionDefenceTeamThreshold": 650,
-   "scrambleAnnouncementDelay": 12,
-   "scramblePercentage": 0.5,
-   "enableClanTagGrouping": false,
-   "minClanGroupSize": 2,
-   "maxClanGroupSize": 18,
-   "clanTagMaxEditDistance": 1,
-   "clanTagCaseSensitive": true,
-   "clanGroupingPullEntireSquads": false,
-   "changeTeamRetryInterval": 50,
+  "scrambleAnnouncementDelay": 12,
+  "scramblePercentage": 0.5,
+  "changeTeamRetryInterval": 50,
   "maxScrambleCompletionTime": 15000,
   "showWinStreakMessages": true,
   "warnOnSwap": true,
@@ -182,12 +157,14 @@ Add to your `config.json`:
   "postScrambleDetails": true,
   "useEloForBalance": false,
   "devMode": false,
-   "reportLogPath": "team-balancer-reports.jsonl",
-   "enableDatabaseLogging": false
+  "reportLogPath": "team-balancer-reports.jsonl",
+  "enableDatabaseLogging": false
 }
 ```
 
-**Database Options:** The `"database"` option should match a connector name from above. Use `"sqlite"` for file-based storage (default), `"mysql"` for MySQL, or `"postgres"` for PostgreSQL. Any Sequelize-compatible backend is supported.
+> **Note**: Clan tag grouping options (`enableClanTagGrouping`, `minClanGroupSize`, `maxClanGroupSize`, `clanTagMaxEditDistance`, `clanTagCaseSensitive`, `clanGroupingPullEntireSquads`) and `ignoredGameModes` are no longer configured on TeamBalancer — they are managed by S³. See the [S³ section](#s%C2%B3-slackers-squad-services) above.
+
+**Database Options:** The `"database"` option should match a connector name from your SquadJS connectors config. Use `"sqlite"` for file-based storage (default), `"mysql"` for MySQL, or `"postgres"` for PostgreSQL. Any Sequelize-compatible backend is supported.
 
 **File Placement**: Move the project files into your SquadJS directory's squad-server folder.
 
@@ -242,8 +219,7 @@ Admin Commands:
 ```text
 Core Settings:
 database                            - Sequelize database connector (SQLite, MySQL, PostgreSQL, etc.). Defaults to 'sqlite' if unspecified.
-enableWinStreakTracking              - Enable/disable automatic win streak tracking.
-ignoredGameModes                    - Game modes or map names excluded from win streak tracking (default: ["Seed", "Jensen"]).
+enableWinStreakTracking             - Enable/disable automatic win streak tracking.
 enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round (default: true).
 
 Win Streak:
@@ -265,7 +241,7 @@ requireScrambleConfirmation         - Require !scramble confirm before executing
 scrambleConfirmationTimeout         - Seconds to wait for confirmation (default: 60).
 
 Messaging & Display:
-showWinStreakMessages                - Broadcast win streak updates after each round.
+showWinStreakMessages               - Broadcast win streak updates after each round.
 useGenericTeamNamesInBroadcasts     - Use "Team 1"/"Team 2" instead of faction names.
 
 Discord Integration:
@@ -276,15 +252,6 @@ discordAdminRoleIDs                 - Array of Role IDs required for Discord adm
 mirrorRconBroadcasts                - Mirror RCON broadcasts to Discord.
 postScrambleDetails                 - Post detailed swap plan to Discord after scramble.
 
-Clan Tag Grouping:
-enableClanTagGrouping               - Keep players sharing a clan tag (e.g. [ABC]) together when they are on the same team during a scramble (default: false).
-minClanGroupSize                    - Min total members of a clan tag to be considered for grouping (default: 2).
-maxClanGroupSize                    - Max total members of a clan tag to be considered for grouping; larger clans are ignored (default: 18).
-clanTagMaxEditDistance              - Max Levenshtein edit distance to merge similar clan tags (e.g. [CLAN]+[CLAM] at distance 1). 0 = exact match only (default: 1).
-clanTagCaseSensitive                - When true (default), tags are grouped by the raw extracted prefix verbatim ([CLAN] and [clan] are different). When false, tags are normalized via NFD + gamer-character map (λ→a, я→r, etc.) + non-alphanumeric strip + uppercase, so [Café]/[CAFE]/[CΛFE] all collapse into one group.
-clanGroupingPullEntireSquads        - When true, contributing squads merge wholesale into the virtual clan squad (non-clan teammates travel with their clan members). When false (default), only clan members are pulled into the anchor squad.
-clanTagIgnoreList                   - Clan tags to exclude from clan grouping entirely (default: []).
-
 Advanced:
 useEloForBalance                    - Weight scrambles by EloTracker mu ratings. Requires EloTracker plugin. Falls back to numerical balance if EloTracker is absent.
 
@@ -294,6 +261,11 @@ reportLogPath                       - Path to the JSONL log file for round repor
 enableDatabaseLogging               - If true, round reports are also written to the database in addition to the JSONL log (default: false).
 ```
 
+> **S³-Managed Options**: The following settings are no longer configured on the TeamBalancer plugin. They are now managed by S³:
+>
+> - **`ignoredGameModes`** — Configured on S³'s GameState service via `setIgnoredGameModes()`. TeamBalancer reads the result via `gameState.isIgnoredMode()`.
+> - **`enableClanTagGrouping`**, **`minClanGroupSize`**, **`maxClanGroupSize`**, **`clanTagMaxEditDistance`**, **`clanTagCaseSensitive`**, **`clanGroupingPullEntireSquads`**, **`clanTagIgnoreList`** — Configured on S³'s clans service. TeamBalancer reads grouping options via `clans.extractClanGroups()` which internally calls S³'s `getGroupingOptions()`.
+
 ---
 
 ## Game Mode Support
@@ -301,7 +273,7 @@ enableDatabaseLogging               - If true, round reports are also written to
 - **RAAS / AAS**: Uses `minTicketsToCountAsDominantWin` threshold.
 - **Invasion**: Uses separate thresholds for attackers (`invasionAttackTeamThreshold`) and defenders (`invasionDefenceTeamThreshold`).
 - **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`.
-- Other modes and map names can be excluded via `ignoredGameModes`.
+- Other modes and map names can be excluded via `ignoredGameModes` (configured on S³).
 
 ---
 
