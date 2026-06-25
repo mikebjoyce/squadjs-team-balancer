@@ -1,6 +1,6 @@
 /**
  * ╔═══════════════════════════════════════════════════════════════╗
- * ║                     TEAM BALANCER PLUGIN                      ║
+ * ║                   TEAM BALANCER PLUGIN v4.0.0                 ║
  * ╚═══════════════════════════════════════════════════════════════╝
  *
  * ─── PURPOSE ─────────────────────────────────────────────────────
@@ -39,6 +39,31 @@
  *   Embed builders and Discord send helper.
  * TBDiagnostics (../utils/tb-diagnostics.js)
  *   Self-diagnostics: DB integrity check and live scramble simulation.
+ *
+ * <!-- TO REVIEW ── S³ INTEGRATION ───────────────────────────────────
+ *
+ * TeamBalancer requires SlackersSquadServices as a supporting plugin.
+ * It performs runtime discovery of the S³ instance on mount.
+ *
+ * Consumed Services:
+ *   - gameState: isIgnoredMode(), getGamemode(), getLayerName(),
+ *               getRoundStartTime() — match/mode/round identification.
+ *   - factions:  isEnabled(), getTeamName(teamID) — faction name lookup.
+ *   - players:   getAllPlayers(), getSquads(), lockGlobal(),
+ *               unlockGlobal(), isGloballyLockedBy() — player data
+ *               and concurrency control during scrambles.
+ *   - clans:     isEnabled(), extractClanGroups(),
+ *               options.pullEntireSquads — clan tag grouping for scrambles.
+ *
+ * Emitted Events:
+ *   - TEAM_BALANCER_SCRAMBLE_EXECUTED — Fired before RCON moves execute.
+ *     Payload: { affectedPlayers: Array<{ eosID, steamID, name }> }.
+ *     The Switch plugin listens for this to lock team-switching post-scramble.
+ *
+ * Listened Events:
+ *   - None.
+ *
+ *   TO REVIEW — END S³ INTEGRATION -->
  *
  * ─── NOTES ───────────────────────────────────────────────────────
  *
@@ -188,8 +213,11 @@
  *   "enableDatabaseLogging": false
  * }
  *
- * Author:
+ * ─── AUTHOR ──────────────────────────────────────────────────────
+ *
+ * Slacker
  * Discord: `real_slacker`
+ * GitHub:  https://github.com/mikebjoyce/squadjs-team-balancer
  *
  * ═══════════════════════════════════════════════════════════════
  */
@@ -430,12 +458,12 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   isIgnoredMatch() {
-    const gs = this._s3?.services?.gameState;
+    const gs = this._s3?.gameState;
     return gs?.isIgnoredMode?.() || false;
   }
 
   isSeedMatch() {
-    const gs = this._s3?.services?.gameState;
+    const gs = this._s3?.gameState;
     const gameMode = gs?.getGamemode?.()?.toLowerCase() || '';
     const layerName = gs?.getLayerName?.()?.toLowerCase() || '';
     return gameMode.includes('seed') || layerName.includes('seed');
@@ -536,8 +564,8 @@ export default class TeamBalancer extends BasePlugin {
     }
 
     // Layer info always served from S³ gameState
-    if (this._s3?.services?.gameState) {
-      Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState available: ${this._s3.services.gameState.getGamemode()} / ${this._s3.services.gameState.getLayerName()}`);
+    if (this._s3?.gameState) {
+      Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState available: ${this._s3?.gameState.getGamemode()} / ${this._s3?.gameState.getLayerName()}`);
     }
 
     this._isMounted = true;
@@ -718,10 +746,10 @@ export default class TeamBalancer extends BasePlugin {
       return `Team ${teamID}`;
     }
     // Prefer S³ factions service, fall back to TB's own cached abbreviations
-    if (this._s3?.services?.factions?.isEnabled()) {
-      return this._s3.services.factions.getTeamName(teamID);
+    if (this._s3?.factions?.isEnabled()) {
+      return this._s3?.factions.getTeamName(teamID);
     }
-    return this._s3.services.factions.getTeamName(teamID);
+    return this._s3?.factions.getTeamName(teamID);
   }
 
   
@@ -1017,9 +1045,9 @@ export default class TeamBalancer extends BasePlugin {
     // Note: roundReport is initialized early to capture state, but will be silently 
     // abandoned (not logged to JSONL) if the match ends in a draw, is disabled, 
     // or is an ignored mode before reaching the end of the method.
-    const s3Players = this._s3?.services?.players?.getAllPlayers?.();
+    const s3Players = this._s3?.players?.getAllPlayers?.();
     const s3PlayersCount = s3Players ? s3Players.length : 0;
-    const gs = this._s3?.services?.gameState;
+    const gs = this._s3?.gameState;
     let roundReport = {
       ts: Date.now(),
       gameMode: gs?.getGamemode?.() || 'Unknown',
@@ -1078,15 +1106,15 @@ export default class TeamBalancer extends BasePlugin {
 
       Logger.verbose('TeamBalancer', 4, `Parsed winnerID=${winnerID}, winnerTickets=${winnerTickets}, loserTickets=${loserTickets}, margin=${margin}`);
 
-      const gameMode = this._s3?.services?.gameState?.getGamemode?.()?.toLowerCase() || '';
+      const gameMode = this._s3?.gameState?.getGamemode?.()?.toLowerCase() || '';
 
       if (this.isIgnoredMatch()) {
         Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Ignored match ended (${this.gameModeCached} / ${this.layerNameCached}). Resetting streak metrics.`);
         
         let shouldScramble = false;
         if (this.isSeedMatch() && this.options.enableSeedAutoScramble) {
-          const playerCount = this._s3?.services?.players?.getAllPlayers
-            ? this._s3.services.players.getAllPlayers().length
+          const playerCount = this._s3?.players?.getAllPlayers
+            ? this._s3?.players.getAllPlayers().length
             : this.server.players.length;
           shouldScramble = true;
           roundReport.scrambled = true;
@@ -1463,7 +1491,7 @@ export default class TeamBalancer extends BasePlugin {
       // Log to database
       if (this.options.enableDatabaseLogging) {
         // Read matchId and roundStartTime from S³ GameStateService
-        const gs = this._s3?.services?.gameState;
+        const gs = this._s3?.gameState;
         const roundStartTime = gs?.getRoundStartTime?.() ?? null;
         const matchId = gs?.getMatchId?.();
 
@@ -1647,12 +1675,12 @@ export default class TeamBalancer extends BasePlugin {
 
     // Acquire S³ global lock before scramble (prevents SA from acting during TB scramble)
     let globalLockAcquired = false;
-    if (this._s3?.services?.players && !isSimulated) {
-      if (this._s3.services.players.isGloballyLockedBy()) {
+    if (this._s3?.players && !isSimulated) {
+      if (this._s3?.players.isGloballyLockedBy()) {
         Logger.verbose('TeamBalancer', 1, '[S3] Global lock held — another scramble may be in progress.');
         return false;
       }
-      this._s3.services.players.lockGlobal('TeamBalancer', this.options.maxScrambleCompletionTime + 5000);
+      this._s3?.players.lockGlobal('TeamBalancer', this.options.maxScrambleCompletionTime + 5000);
       globalLockAcquired = true;
       Logger.verbose('TeamBalancer', 4, '[S3] Global lock acquired for scramble.');
     }
@@ -1682,12 +1710,12 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       // Scrambler input: prefer S³ players + squads, fall back to raw SquadJS data
-      const hasS3Players = !!(this._s3?.services?.players?.getAllPlayers);
+      const hasS3Players = !!(this._s3?.players?.getAllPlayers);
       const scrambleInputPlayers = hasS3Players
-        ? this._s3.services.players.getAllPlayers()
+        ? this._s3?.players.getAllPlayers()
         : this.server.players;
       const scrambleInputSquads = hasS3Players
-        ? this._s3.services.players.getSquads()
+        ? this._s3?.players.getSquads()
         : this.server.squads;
       const { squads: transformedSquads, players: transformedPlayers } = this.transformSquadJSData(
         scrambleInputSquads,
@@ -1745,12 +1773,12 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       let clanGroups = null;
-      if (this._s3?.services?.clans?.isEnabled?.()) {
+      if (this._s3?.clans?.isEnabled?.()) {
         try {
-          const playersForClans = this._s3?.services?.players?.getAllPlayers
-            ? this._s3.services.players.getAllPlayers()
+          const playersForClans = this._s3?.players?.getAllPlayers
+            ? this._s3?.players.getAllPlayers()
             : this.server.players;
-          clanGroups = this._s3.services.clans.extractClanGroups(playersForClans);
+          clanGroups = this._s3?.clans.extractClanGroups(playersForClans);
           // extractClanGroups uses getGroupingOptions() internally — no overrides needed
           const tagCount = Object.keys(clanGroups).length;
           if (tagCount > 0) {
@@ -1776,7 +1804,7 @@ export default class TeamBalancer extends BasePlugin {
         minPlayersToMove,
         maxPlayersToMove,
         clanGroups,
-        pullEntireSquads: this._s3?.services?.clans?.options?.pullEntireSquads || false
+        pullEntireSquads: this._s3?.clans?.options?.pullEntireSquads || false
       });
 
       const targetReportChannel = this.discordReportChannel || this.discordChannel;
@@ -1885,7 +1913,7 @@ export default class TeamBalancer extends BasePlugin {
     } finally {
       if (globalLockAcquired) {
         try {
-          this._s3.services.players.unlockGlobal('TeamBalancer');
+          this._s3?.players.unlockGlobal('TeamBalancer');
           Logger.verbose('TeamBalancer', 4, '[S3] Global lock released after scramble.');
         } catch (err) {
           Logger.verbose('TeamBalancer', 1, `[S3] Failed to release global lock: ${err.message}`);

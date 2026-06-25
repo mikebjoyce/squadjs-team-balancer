@@ -1,4 +1,4 @@
-# Team Balancer Plugin v3.2.0
+# Team Balancer Plugin v4.0.0
 
 **SquadJS Plugin for Fair Match Enforcement**
 
@@ -379,10 +379,8 @@ TimeBeforeVote=45
 ## Author
 
 **Slacker**
-```
-Discord: `real_slacker`
-GitHub:  https://github.com/mikebjoyce
-```
+- **Discord:** `real_slacker`
+- **GitHub:** https://github.com/mikebjoyce/squadjs-team-balancer
 
 ---
 

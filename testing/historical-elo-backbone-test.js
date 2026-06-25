@@ -1,8 +1,25 @@
 /**
- * Historical Backbone ELO Test
- * Proves that the "Top 15" Backbone ELO balancing logic correctly balances
- * the high-end tier of players using the historical EloTracker dataset.
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║          HISTORICAL ELO BACKBONE TEST                        ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * ─── PURPOSE ─────────────────────────────────────────────────────
+ *
+ * Tests historical ELO backbone calculations by replaying
+ * recorded match data through the TrueSkill rating pipeline.
+ * Validates rating convergence, round-over-round stability,
+ * and correctness of the backbone (top-15) ELO differential.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────
+ *
+ *   node testing/historical-elo-backbone-test.js
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Requires historical match data files in the expected format.
+ *
  */
+
 
 import { readFileSync } from 'fs';
 import { Scrambler } from '../utils/tb-scrambler.js';

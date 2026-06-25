@@ -1,3 +1,24 @@
+/**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║          PLUGIN LOGIC TEST RUNNER                            ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * ─── PURPOSE ─────────────────────────────────────────────────────
+ *
+ * Tests core plugin logic independent of the scramble algorithm:
+ * streak tracking, scramble trigger conditions, mode detection,
+ * and configuration option validation.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────
+ *
+ *   node testing/plugin-logic-test-runner.js
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Requires a running SquadJS server with TeamBalancer loaded.
+ *
+ */
+
 import TeamBalancer from '../plugins/team-balancer.js';
 import Logger from '../../core/logger.js'; // The plugin uses this, so we need a mock.
 

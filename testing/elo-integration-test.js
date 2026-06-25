@@ -1,3 +1,25 @@
+/**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║          ELO INTEGRATION TEST                                ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * ─── PURPOSE ─────────────────────────────────────────────────────
+ *
+ * Validates ELO-weighted scramble integration by testing the
+ * algorithm's ability to detect and break up skill stacks using
+ * TrueSkill mu ratings. Verifies that high-ELO players are
+ * distributed evenly when useEloForBalance is enabled.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────
+ *
+ *   node testing/elo-integration-test.js
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Requires mock ELO data; no running server needed.
+ *
+ */
+
 import { Scrambler } from '../utils/tb-scrambler.js';
 import Logger from '../core/logger.js';
 

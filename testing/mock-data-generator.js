@@ -1,9 +1,26 @@
 /**
- * Generates mock player data for testing the TeamBalancer.
- * @param {number} count - Total number of players to generate.
- * @param {number} team1Ratio - Ratio of players on Team 1 (0.0 to 1.0). Default 0.5.
- * @returns {Array} Array of player objects.
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║          MOCK DATA GENERATOR                                 ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * ─── PURPOSE ─────────────────────────────────────────────────────
+ *
+ * Provides in-memory test fixtures: generates randomized player
+ * rosters, squad assignments, and scenario-specific setups (locked
+ * squads, clan tags, ELO distributions, real-world name patterns).
+ * Used by all other test runners as their data source.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────
+ *
+ *   node testing/mock-data-generator.js
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - No external dependencies; generates in-memory test fixtures.
+ * - Imported by other test files rather than run standalone.
+ *
  */
+
 export function generateMockPlayers(count = 50, team1Ratio = 0.5, unassignedRatio) {
   const players = [];
   const team1Count = Math.floor(count * team1Ratio);

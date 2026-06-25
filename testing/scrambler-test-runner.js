@@ -1,3 +1,25 @@
+/**
+ * ╔═══════════════════════════════════════════════════════════════╗
+ * ║          SCRAMBLER TEST RUNNER                               ║
+ * ╚═══════════════════════════════════════════════════════════════╝
+ *
+ * ─── PURPOSE ─────────────────────────────────────────────────────
+ *
+ * Tests the scramble algorithm across many scenarios: varied player
+ * counts, clan groupings, ELO distributions, and iteration limits.
+ * Validates player counts, team assignment ratio, and per-team ELO
+ * parity with a configurable tolerance.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────
+ *
+ *   node testing/scrambler-test-runner.js
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Requires no running server; uses mock data.
+ *
+ */
+
 import { Scrambler } from '../utils/tb-scrambler.js';
 import { extractClanGroups } from '../utils/tb-clan-grouping.js';
 import {

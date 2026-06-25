@@ -1,12 +1,25 @@
 /**
  * ╔═══════════════════════════════════════════════════════════════╗
- * ║           SCRAMBLER REAL DATA TEST SUITE                      ║
+ * ║          HISTORICAL SCRAMBLE TEST                            ║
  * ╚═══════════════════════════════════════════════════════════════╝
- * 
- * Evaluates the Scrambler's performance using real ELO distribution
- * data, evaluating numerical balance, Mean ELO parity, and Top-15
- * ELO parity over 2000 iteration search spaces.
+ *
+ * ─── PURPOSE ─────────────────────────────────────────────────────
+ *
+ * Replays the scramble algorithm against historical match data
+ * snapshots to verify that balance decisions would have been
+ * correct and squad cohesion would have been preserved under
+ * real-world conditions.
+ *
+ * ─── USAGE ───────────────────────────────────────────────────────
+ *
+ *   node testing/historical-scramble-test.js
+ *
+ * ─── NOTES ───────────────────────────────────────────────────────
+ *
+ * - Requires historical match data files in the expected format.
+ *
  */
+
 
 import { readFileSync } from 'fs';
 import { Scrambler } from '../utils/tb-scrambler.js';
