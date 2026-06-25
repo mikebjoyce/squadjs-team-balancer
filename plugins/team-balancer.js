@@ -40,10 +40,17 @@
  * TBDiagnostics (../utils/tb-diagnostics.js)
  *   Self-diagnostics: DB integrity check and live scramble simulation.
  *
- * <!-- TO REVIEW ── S³ INTEGRATION ───────────────────────────────────
+ * ─── S³ INTEGRATION ──────────────────────────────────────────────
  *
- * TeamBalancer requires SlackersSquadServices as a supporting plugin.
- * It performs runtime discovery of the S³ instance on mount.
+ * S³ (Slacker's Squad Services) is the centralised service container
+ * for shared state across Slacker's Squad plugins.  It owns the
+ * ground truth for server configuration, game-state lifecycle,
+ * player state, faction metadata, clan grouping, database access,
+ * and cross-plugin event routing.  Consumer plugins discover S³ at
+ * runtime via this.server.plugins and access services through flat
+ * getters (e.g. this._s3?.gameState) guarded by isReady() checks.
+ *
+ * GitHub: https://github.com/mikebjoyce/squadjs-slackers-squad-services
  *
  * Consumed Services:
  *   - gameState: isIgnoredMode(), getGamemode(), getLayerName(),
@@ -62,8 +69,6 @@
  *
  * Listened Events:
  *   - None.
- *
- *   TO REVIEW — END S³ INTEGRATION -->
  *
  * ─── NOTES ───────────────────────────────────────────────────────
  *
@@ -459,15 +464,12 @@ export default class TeamBalancer extends BasePlugin {
 
   isIgnoredMatch() {
     const gs = this._s3?.gameState;
-    return gs?.isIgnoredMode?.() || false;
+    if (!gs?.isReady()) return false;
+    return gs.isIgnoredMode?.() || false;
   }
 
-  isSeedMatch() {
-    const gs = this._s3?.gameState;
-    const gameMode = gs?.getGamemode?.()?.toLowerCase() || '';
-    const layerName = gs?.getLayerName?.()?.toLowerCase() || '';
-    return gameMode.includes('seed') || layerName.includes('seed');
-  }
+  // isSeedMatch() removed in Stage 6.4b — seed detection delegated to S³ GameStateService.isSeedMode()
+  // Training/Jensen detection also available via S³ GameStateService.isTrainingMode()
   async mount() {
     if (this._isMounted) {
       Logger.verbose('TeamBalancer', 1, 'Plugin already mounted, skipping duplicate mount attempt.');
@@ -556,8 +558,7 @@ export default class TeamBalancer extends BasePlugin {
     if (s3) {
       this._s3 = s3;
       Logger.verbose('TeamBalancer', 2, '[S3] Discovered SlackersSquadServices for TeamBalancer.');
-      const svc = this._s3?.services || {};
-      Logger.verbose('TeamBalancer', 2, `[S3] Available: gameState=${!!svc.gameState} factions=${!!svc.factions} clans=${!!svc.clans} db=${!!svc.db} players=${!!svc.players}`);
+      Logger.verbose('TeamBalancer', 2, `[S3] Available: gameState=${!!this._s3?.gameState} factions=${!!this._s3?.factions} clans=${!!this._s3?.clans} db=${!!this._s3?.db} players=${!!this._s3?.players}`);
     } else {
       this._s3 = null;
       Logger.verbose('TeamBalancer', 2, '[S3] SlackersSquadServices not found — using fallback implementations.');
@@ -745,11 +746,11 @@ export default class TeamBalancer extends BasePlugin {
     if (this.options.useGenericTeamNamesInBroadcasts) {
       return `Team ${teamID}`;
     }
-    // Prefer S³ factions service, fall back to TB's own cached abbreviations
-    if (this._s3?.factions?.isEnabled()) {
-      return this._s3?.factions.getTeamName(teamID);
+    // Prefer S³ factions service, fall back to generic name
+    if (this._s3?.factions?.isReady()) {
+      return this._s3.factions.getTeamName(teamID);
     }
-    return this._s3?.factions.getTeamName(teamID);
+    return `Team ${teamID}`;
   }
 
   
@@ -1112,7 +1113,9 @@ export default class TeamBalancer extends BasePlugin {
         Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Ignored match ended (${this.gameModeCached} / ${this.layerNameCached}). Resetting streak metrics.`);
         
         let shouldScramble = false;
-        if (this.isSeedMatch() && this.options.enableSeedAutoScramble) {
+        // S³ GameStateService.isSeedMode() distinguishes Seed from Jensen — auto-scramble
+        // on Seed only, not on Training/Jensen's Range rounds.
+        if (this._s3?.gameState?.isSeedMode?.() && this.options.enableSeedAutoScramble) {
           const playerCount = this._s3?.players?.getAllPlayers
             ? this._s3?.players.getAllPlayers().length
             : this.server.players.length;
@@ -1492,8 +1495,8 @@ export default class TeamBalancer extends BasePlugin {
       if (this.options.enableDatabaseLogging) {
         // Read matchId and roundStartTime from S³ GameStateService
         const gs = this._s3?.gameState;
-        const roundStartTime = gs?.getRoundStartTime?.() ?? null;
-        const matchId = gs?.getMatchId?.();
+        const roundStartTime = gs?.isReady() ? (gs.getRoundStartTime?.() ?? null) : null;
+        const matchId = gs?.isReady() ? gs.getMatchId?.() : undefined;
 
         this.db.insertRoundReport({
           ts: roundReport.ts,
@@ -1675,12 +1678,12 @@ export default class TeamBalancer extends BasePlugin {
 
     // Acquire S³ global lock before scramble (prevents SA from acting during TB scramble)
     let globalLockAcquired = false;
-    if (this._s3?.players && !isSimulated) {
-      if (this._s3?.players.isGloballyLockedBy()) {
+    if (this._s3?.players?.isReady() && !isSimulated) {
+      if (this._s3.players.isGloballyLockedBy()) {
         Logger.verbose('TeamBalancer', 1, '[S3] Global lock held — another scramble may be in progress.');
         return false;
       }
-      this._s3?.players.lockGlobal('TeamBalancer', this.options.maxScrambleCompletionTime + 5000);
+      this._s3.players.lockGlobal('TeamBalancer', this.options.maxScrambleCompletionTime + 5000);
       globalLockAcquired = true;
       Logger.verbose('TeamBalancer', 4, '[S3] Global lock acquired for scramble.');
     }

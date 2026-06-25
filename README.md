@@ -64,6 +64,18 @@ Prevents players from changing teams immediately after a scramble. When TeamBala
 
 ---
 
+### S³ (Slacker's Squad Services)
+
+**[squadjs-slackers-squad-services](https://github.com/mikebjoyce/squadjs-slackers-squad-services)**
+
+S³ is the centralised service container for shared state across Slacker's Squad plugins. TeamBalancer uses it as the primary data source for player state, squad data, faction names, clan grouping, and game-state metadata.
+
+**Why this matters**: Rather than maintaining its own duplicate caches, TeamBalancer reads ground-truth data from S³ — player/squad snapshots via `players.getAllPlayers()` / `players.getSquads()`, faction names via `factions.getTeamName()`, game-mode/layer detection via `gameState.getGamemode()` / `gameState.getLayerName()`, and clan grouping via `clans.extractClanGroups()`. During scrambles, S³'s global-lock mechanism (`players.lockGlobal()` / `players.unlockGlobal()`) prevents concurrent scrambles from conflicting.
+
+**Setup**: Install S³ alongside TeamBalancer. S³ is auto-discovered at runtime via `this.server.plugins`. If S³ is absent, TeamBalancer falls back to raw SquadJS data for all services.
+
+---
+
 ## Scramble Algorithm (Optimal Exhaustive Search)
 
 Operates using a four-phase dynamic escalation system to ensure perfect numerical parity while protecting the core identity and cohesion of existing teams.
@@ -92,7 +104,7 @@ Operates using a four-phase dynamic escalation system to ensure perfect numerica
 
 ### Clan Tag Grouping (Optional)
 
-When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan tag (e.g. `[ABC]`) and are already on the same team together when shuffling.
+When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan tag (e.g. `[ABC]`) and are already on the same team together when shuffling. The grouping implementation is provided by S³'s clans service (`clans.extractClanGroups()`) rather than a standalone local utility.
 
 **How it works**:
 
@@ -185,7 +197,6 @@ squad-server/
 │   └── team-balancer.js
 ├── utils/
 │   ├── tb-scrambler.js
-│   ├── tb-clan-grouping.js
 │   ├── tb-database.js
 │   ├── tb-commands.js
 │   ├── tb-diagnostics.js
