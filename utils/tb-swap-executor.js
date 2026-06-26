@@ -187,7 +187,7 @@ export default class SwapExecutor {
     */
    async verifyMoves() {
       try {
-        await this._s3?.services?.players?.refreshNow('TeamBalancer');
+        await this.teamBalancer?._s3?.players?.refreshNowImmediate('TeamBalancer');
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Failed to refresh player list for verification: ${err?.message || err}`);
         // Fall back to current counts if update fails
@@ -202,7 +202,7 @@ export default class SwapExecutor {
       const verified = { moved: 0, failed: 0, disconnected: 0 };
 
       for (const [eosID, moveData] of this.sessionMoves.entries()) {
-        const player = (this._s3?.services?.players?.getPlayer(eosID)) || this.server.players.find(p => p.eosID === eosID);
+        const player = (this.teamBalancer?._s3?.players?.getPlayer(eosID)) || this.server.players.find(p => p.eosID === eosID);
 
         if (!player) {
           verified.disconnected++; // Player disconnected

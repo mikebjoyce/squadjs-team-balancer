@@ -1834,17 +1834,8 @@ export default class TeamBalancer extends BasePlugin {
               continue;
             }
             
-            Logger.verbose('TeamBalancer', 1, `[Attribution] TEAM_BALANCER emitting PLAYER_MOVED_BY_PLUGIN: player=${player.name} (${player.steamID}), sourceTeam=${player.teamID}, targetTeam=${move.targetTeamID}, source='Team-Balancer'`);
-            
-            this.server.emit('PLAYER_MOVED_BY_PLUGIN', {
-              eosID: move.eosID,
-              steamID: player.steamID,
-              name: player.name,
-              sourceTeamID: player.teamID,
-              targetTeamID: move.targetTeamID,
-              source: 'Team-Balancer',
-              timestamp: Date.now()
-            });
+            Logger.verbose('TeamBalancer', 1, `[Attribution] TEAM_BALANCER recording move via S³: player=${player.name} (${player.steamID}), sourceTeam=${player.teamID}, targetTeam=${move.targetTeamID}`);
+            this._s3?.players?.recordMove(move.eosID, move.targetTeamID, 'Team-Balancer');
             
             await this.reliablePlayerMove(move.eosID, move.targetTeamID, isSimulated);
           }
