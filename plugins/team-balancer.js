@@ -27,8 +27,9 @@
  *   SquadJS base class providing server, options, and connectors.
  * Logger (../../core/logger.js)
  *   Verbose logging throughout all event handlers.
- * TBDatabase (../utils/tb-database.js)
- *   SQLite persistence for win streak state and last scramble timestamp.
+ * S³ DBService (via _buildS3DbWrapper() compatibility layer)
+ *   Sequelize persistence for win streak state and last scramble timestamp, accessed
+ *   through S³'s version-tracked migration engine and withTransactionWithRetry().
  * Scrambler (../utils/tb-scrambler.js)
  *   Squad-preserving scramble algorithm. Returns a swap plan.
  * SwapExecutor (../utils/tb-swap-executor.js)
@@ -233,7 +234,6 @@ import { DiscordHelpers } from '../utils/tb-discord-helpers.js';
 import Scrambler from '../utils/tb-scrambler.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
 import CommandHandlers from '../utils/tb-commands.js';
-import TBDatabase from '../utils/tb-database.js';
 import Logger from '../../core/logger.js';
 import { TBDiagnostics } from '../utils/tb-diagnostics.js';
 import fs from 'fs';
@@ -431,7 +431,8 @@ export default class TeamBalancer extends BasePlugin {
 
     // Initialize executor immediately so commands (like status) can access pendingPlayerMoves without crashing
     this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages, this);
-    this.db = new TBDatabase(this.server, this.options, connectors);
+    this.db = null;  // 7.4m: Set in mount() via S³ MigrationEngine, or stays null if S³ unavailable
+    this._s3db = null; // 7.4m: S³ DB service reference
     this.winStreakTeam = null;
     this.winStreakCount = 0;
     this.consecutiveWinsTeam = null;
@@ -468,6 +469,206 @@ export default class TeamBalancer extends BasePlugin {
     return gs.isIgnoredMode?.() || false;
   }
 
+  // 7.4m: Build a compatibility wrapper around S³ DB that matches TBDatabase's API surface.
+  // Used by call sites throughout team-balancer.js and tb-commands.js.
+  _buildS3DbWrapper(s3db) {
+    if (!s3db || !s3db.isReady()) {
+      Logger.verbose('TeamBalancer', 2, '[7.4m] S³ DB not ready — DB operations will be no-ops.');
+      return null;
+    }
+
+    // DBService stores models in this.models[name] — no getModel() method exists
+    const TeamBalancerStateModel = s3db.models?.['TeamBalancerState'];
+    const TBRoundReportModel = s3db.models?.['TB_RoundReport'];
+
+    if (!TeamBalancerStateModel) {
+      Logger.verbose('TeamBalancer', 1, '[7.4m] TeamBalancerState model not found on S³ DB — cannot build wrapper.');
+      return null;
+    }
+
+    const STALE_CUTOFF_MS = 2.5 * 60 * 60 * 1000;
+
+    return {
+      // TBDatabase-compatible initDB() — returns { winStreakTeam, winStreakCount, ... isStale }
+      initDB: async () => {
+        try {
+          return await s3db.withTransactionWithRetry(async () => {
+            const [record] = await TeamBalancerStateModel.findOrCreate({
+              where: { id: 1 },
+              defaults: {
+                winStreakTeam: null,
+                winStreakCount: 0,
+                lastSyncTimestamp: Date.now(),
+                lastScrambleTime: null,
+                consecutiveWinsTeam: null,
+                consecutiveWinsCount: 0,
+                manuallyDisabled: false
+              }
+            });
+
+            const isStale = !record.lastSyncTimestamp || Date.now() - record.lastSyncTimestamp > STALE_CUTOFF_MS;
+
+            if (!isStale) {
+              Logger.verbose('TeamBalancer', 4, `[7.4m] Restored state: team=${record.winStreakTeam}, count=${record.winStreakCount}`);
+            } else {
+              Logger.verbose('TeamBalancer', 4, '[7.4m] State stale; resetting.');
+              record.winStreakTeam = null;
+              record.winStreakCount = 0;
+              record.lastSyncTimestamp = Date.now();
+              record.consecutiveWinsTeam = null;
+              record.consecutiveWinsCount = 0;
+              await record.save();
+            }
+
+            return {
+              winStreakTeam: record.winStreakTeam,
+              winStreakCount: record.winStreakCount,
+              lastSyncTimestamp: record.lastSyncTimestamp,
+              lastScrambleTime: record.lastScrambleTime,
+              isStale,
+              consecutiveWinsTeam: record.consecutiveWinsTeam,
+              consecutiveWinsCount: record.consecutiveWinsCount,
+              manuallyDisabled: record.manuallyDisabled || false
+            };
+          });
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[7.4m] initDB failed: ${err.message}`);
+          return {
+            winStreakTeam: null, winStreakCount: 0, lastSyncTimestamp: null,
+            lastScrambleTime: null, isStale: true,
+            consecutiveWinsTeam: null, consecutiveWinsCount: 0, manuallyDisabled: false
+          };
+        }
+      },
+
+      saveState: async (team, count, conTeam, conCount) => {
+        try {
+          return await s3db.withTransactionWithRetry(async () => {
+            const record = await TeamBalancerStateModel.findByPk(1);
+            if (!record) return null;
+            record.winStreakTeam = team;
+            record.winStreakCount = count;
+            record.lastSyncTimestamp = Date.now();
+            record.consecutiveWinsTeam = conTeam ?? null;
+            record.consecutiveWinsCount = conCount ?? 0;
+            await record.save();
+            return {
+              winStreakTeam: record.winStreakTeam,
+              winStreakCount: record.winStreakCount,
+              lastSyncTimestamp: record.lastSyncTimestamp,
+              lastScrambleTime: record.lastScrambleTime,
+              consecutiveWinsTeam: record.consecutiveWinsTeam,
+              consecutiveWinsCount: record.consecutiveWinsCount
+            };
+          });
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[7.4m] saveState failed: ${err.message}`);
+          return null;
+        }
+      },
+
+      incrementStreak: async (winnerID, conTeam, conCount) => {
+        try {
+          return await s3db.withTransactionWithRetry(async () => {
+            const record = await TeamBalancerStateModel.findByPk(1);
+            if (!record) return null;
+            if (record.winStreakTeam === winnerID) {
+              record.winStreakCount += 1;
+            } else {
+              record.winStreakTeam = winnerID;
+              record.winStreakCount = 1;
+            }
+            record.lastSyncTimestamp = Date.now();
+            record.consecutiveWinsTeam = conTeam ?? null;
+            record.consecutiveWinsCount = conCount ?? 0;
+            await record.save();
+            return {
+              winStreakTeam: record.winStreakTeam,
+              winStreakCount: record.winStreakCount,
+              lastSyncTimestamp: record.lastSyncTimestamp,
+              consecutiveWinsTeam: record.consecutiveWinsTeam,
+              consecutiveWinsCount: record.consecutiveWinsCount
+            };
+          });
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[7.4m] incrementStreak failed: ${err.message}`);
+          return null;
+        }
+      },
+
+      saveScrambleTime: async (timestamp) => {
+        try {
+          return await s3db.withTransactionWithRetry(async () => {
+            const record = await TeamBalancerStateModel.findByPk(1);
+            if (!record) return null;
+            record.lastScrambleTime = timestamp;
+            await record.save();
+            return { lastScrambleTime: record.lastScrambleTime };
+          });
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[7.4m] saveScrambleTime failed: ${err.message}`);
+          return null;
+        }
+      },
+
+      saveManuallyDisabledState: async (disabled) => {
+        try {
+          return await s3db.withTransactionWithRetry(async () => {
+            const record = await TeamBalancerStateModel.findByPk(1);
+            if (!record) return null;
+            record.manuallyDisabled = disabled;
+            await record.save();
+            return { manuallyDisabled: record.manuallyDisabled };
+          });
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[7.4m] saveManuallyDisabledState failed: ${err.message}`);
+          return null;
+        }
+      },
+
+      insertRoundReport: async (data) => {
+        if (!TBRoundReportModel) return null;
+        try {
+          return await s3db.withTransactionWithRetry(async () => {
+            const record = await TBRoundReportModel.create({
+              matchId: data.matchId || null,
+              roundStartTime: data.roundStartTime || null,
+              ts: data.ts,
+              layerName: data.layerName,
+              gameMode: data.gameMode,
+              playerCount: data.playerCount,
+              winningTeamID: data.winningTeamID,
+              winnerName: data.winnerName,
+              loserName: data.loserName,
+              winnerTickets: data.winnerTickets,
+              loserTickets: data.loserTickets,
+              ticketMargin: data.ticketMargin,
+              isDominantWin: data.isDominantWin,
+              winStreakTeam: data.winStreakTeam,
+              winStreakCount: data.winStreakCount,
+              consecutiveWinsTeam: data.consecutiveWinsTeam,
+              consecutiveWinsCount: data.consecutiveWinsCount,
+              scrambled: data.scrambled,
+              scrambleCondition: data.scrambleCondition,
+              scrambleType: data.scrambleType
+            });
+            return record.toJSON();
+          });
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[7.4m] insertRoundReport failed: ${err.message}`);
+          return null;
+        }
+      },
+
+      runConcurrencyTest: async () => {
+        // TBDatabase.runConcurrencyTest() was a diagnostic for the old custom mutex.
+        // S³'s withTransactionWithRetry handles serialization natively.
+        Logger.verbose('TeamBalancer', 1, '[7.4m] runConcurrencyTest not available — S³ transactions handle this natively.');
+        return { success: true, message: 'SKIP (S³ handles concurrency)' };
+      }
+    };
+  }
+
   // isSeedMatch() removed in Stage 6.4b — seed detection delegated to S³ GameStateService.isSeedMode()
   // Training/Jensen detection also available via S³ GameStateService.isTrainingMode()
   async mount() {
@@ -483,25 +684,155 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 1, '⚠️ CRITICAL SECURITY WARNING: devMode is enabled in configuration! This allows ANY player to execute admin commands. This should never be enabled in a production environment.');
     }
 
-    try {
-      const dbState = await this.db.initDB();
-      if (dbState && !dbState.isStale) {
-        this.winStreakTeam = dbState.winStreakTeam;
-        this.winStreakCount = dbState.winStreakCount;
-        this.consecutiveWinsTeam = dbState.consecutiveWinsTeam;
-        this.consecutiveWinsCount = dbState.consecutiveWinsCount;
-        this.lastSyncTimestamp = dbState.lastSyncTimestamp;
-        this.lastScrambleTime = dbState.lastScrambleTime;
-        this.manuallyDisabled = dbState.manuallyDisabled || false;
-        Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}, manuallyDisabled=${this.manuallyDisabled}`);
-      } else if (dbState) {
-        Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
-        this.lastScrambleTime = dbState.lastScrambleTime;
-        this.manuallyDisabled = dbState.manuallyDisabled || false;
-        await this.db.saveState(null, 0);
+    // ─────────────────────────────────────────────────────────────────
+    // 7.4m: SCHEMA MIGRATION — Define models + register team-balancer v1
+    // ─────────────────────────────────────────────────────────────────
+    // S³ runtime discovery (same pattern as Switch/Elo)
+    const s3 = this.server.plugins?.find(p => p.constructor.name === 'SlackersSquadServices');
+    if (s3) {
+      this._s3 = s3;
+      Logger.verbose('TeamBalancer', 2, '[S3] Discovered SlackersSquadServices for TeamBalancer.');
+      await this._s3.ready();
+      Logger.verbose('TeamBalancer', 2, '[S3] S³ is fully mounted — proceeding.');
+
+      const s3db = this._s3.db;
+      if (s3db?.isReady() && s3db.migrationEngine) {
+        this._s3db = s3db;
+
+        // Define models on S³ connector
+        s3db.defineModel('TeamBalancerState', {
+          id: { type: s3db.getDataTypes().INTEGER, primaryKey: true, autoIncrement: false, defaultValue: 1 },
+          winStreakTeam: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          winStreakCount: { type: s3db.getDataTypes().INTEGER, allowNull: false, defaultValue: 0 },
+          lastSyncTimestamp: { type: s3db.getDataTypes().BIGINT, allowNull: true },
+          lastScrambleTime: { type: s3db.getDataTypes().BIGINT, allowNull: true },
+          consecutiveWinsTeam: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          consecutiveWinsCount: { type: s3db.getDataTypes().INTEGER, allowNull: false, defaultValue: 0 },
+          manuallyDisabled: { type: s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false }
+        }, { timestamps: false, tableName: 'TeamBalancerState' });
+
+        s3db.defineModel('TB_RoundReport', {
+          id: { type: s3db.getDataTypes().INTEGER, primaryKey: true, autoIncrement: true },
+          matchId: { type: s3db.getDataTypes().STRING(20), allowNull: true },
+          roundStartTime: { type: s3db.getDataTypes().BIGINT, allowNull: true },
+          ts: { type: s3db.getDataTypes().BIGINT, allowNull: false },
+          layerName: { type: s3db.getDataTypes().STRING(255), allowNull: true },
+          gameMode: { type: s3db.getDataTypes().STRING(100), allowNull: true },
+          playerCount: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          winningTeamID: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          winnerName: { type: s3db.getDataTypes().STRING(255), allowNull: true },
+          loserName: { type: s3db.getDataTypes().STRING(255), allowNull: true },
+          winnerTickets: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          loserTickets: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          ticketMargin: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          isDominantWin: { type: s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false },
+          winStreakTeam: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          winStreakCount: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          consecutiveWinsTeam: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          consecutiveWinsCount: { type: s3db.getDataTypes().INTEGER, allowNull: true },
+          scrambled: { type: s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false },
+          scrambleCondition: { type: s3db.getDataTypes().STRING(100), allowNull: true },
+          scrambleType: { type: s3db.getDataTypes().STRING(100), allowNull: true }
+        }, { timestamps: false, tableName: 'TB_RoundReport' });
+
+        // Register expected version + v1 migration
+        s3db.registerExpectedVersion('team-balancer', 1);
+        s3db.migrationEngine.registerMigrations('team-balancer', [
+          {
+            version: 1,
+            description: 'Create TeamBalancerState and TB_RoundReport',
+            up: async (qi) => {
+              const existingRaw = await qi.rawQuery("SELECT name FROM sqlite_master WHERE type='table'");
+              const existing = (Array.isArray(existingRaw) ? existingRaw : []).map(r => r.name);
+
+              if (!existing.includes('TeamBalancerState')) {
+                await qi.createTable('TeamBalancerState', {
+                  id: { type: qi.DataTypes.INTEGER, primaryKey: true, autoIncrement: false, defaultValue: 1 },
+                  winStreakTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  winStreakCount: { type: qi.DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+                  lastSyncTimestamp: { type: qi.DataTypes.BIGINT, allowNull: true },
+                  lastScrambleTime: { type: qi.DataTypes.BIGINT, allowNull: true },
+                  consecutiveWinsTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  consecutiveWinsCount: { type: qi.DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+                  manuallyDisabled: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false }
+                });
+              }
+
+              if (!existing.includes('TB_RoundReport')) {
+                await qi.createTable('TB_RoundReport', {
+                  id: { type: qi.DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+                  matchId: { type: qi.DataTypes.STRING(20), allowNull: true },
+                  roundStartTime: { type: qi.DataTypes.BIGINT, allowNull: true },
+                  ts: { type: qi.DataTypes.BIGINT, allowNull: false },
+                  layerName: { type: qi.DataTypes.STRING(255), allowNull: true },
+                  gameMode: { type: qi.DataTypes.STRING(100), allowNull: true },
+                  playerCount: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  winningTeamID: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  winnerName: { type: qi.DataTypes.STRING(255), allowNull: true },
+                  loserName: { type: qi.DataTypes.STRING(255), allowNull: true },
+                  winnerTickets: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  loserTickets: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  ticketMargin: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  isDominantWin: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+                  winStreakTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  winStreakCount: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  consecutiveWinsTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  consecutiveWinsCount: { type: qi.DataTypes.INTEGER, allowNull: true },
+                  scrambled: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+                  scrambleCondition: { type: qi.DataTypes.STRING(100), allowNull: true },
+                  scrambleType: { type: qi.DataTypes.STRING(100), allowNull: true }
+                });
+              }
+            },
+            down: async (qi) => {
+              await qi.dropTable('TeamBalancerState');
+              await qi.dropTable('TB_RoundReport');
+            }
+          }
+        ]);
+
+        // Run pending migrations
+        const recheck = await s3db.verifySchemaVersions();
+        if (!recheck.upToDate) {
+          Logger.verbose('TeamBalancer', 1, `[7.4m] TeamBalancer has ${recheck.pending.length} pending migration(s) — applying now.`);
+          const result = await s3db.migrationEngine.runMigrations('team-balancer');
+          Logger.verbose('TeamBalancer', 1, `[7.4m] TeamBalancer v1 migration complete: applied=${result.applied}, skipped=${result.skipped}.`);
+          const postCheck = await s3db.verifySchemaVersions();
+          if (!postCheck.upToDate) {
+            Logger.verbose('TeamBalancer', 1, `[7.4m] WARNING: ${postCheck.pending.length} migration(s) still pending after run.`);
+          }
+        } else {
+          Logger.verbose('TeamBalancer', 2, '[7.4m] TeamBalancer schema already up to date.');
+        }
+
+        // Build compatibility wrapper and load initial state
+        this.db = this._buildS3DbWrapper(s3db);
+        try {
+          const dbState = await this.db.initDB();
+          if (dbState && !dbState.isStale) {
+            this.winStreakTeam = dbState.winStreakTeam;
+            this.winStreakCount = dbState.winStreakCount;
+            this.consecutiveWinsTeam = dbState.consecutiveWinsTeam;
+            this.consecutiveWinsCount = dbState.consecutiveWinsCount;
+            this.lastSyncTimestamp = dbState.lastSyncTimestamp;
+            this.lastScrambleTime = dbState.lastScrambleTime;
+            this.manuallyDisabled = dbState.manuallyDisabled || false;
+            Logger.verbose('TeamBalancer', 4, `[7.4m] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}, manuallyDisabled=${this.manuallyDisabled}`);
+          } else if (dbState) {
+            Logger.verbose('TeamBalancer', 4, '[7.4m] State stale; resetting.');
+            this.lastScrambleTime = dbState.lastScrambleTime;
+            this.manuallyDisabled = dbState.manuallyDisabled || false;
+            await this.db.saveState(null, 0);
+          }
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[7.4m] DB init failed: ${err.message}`);
+        }
+      } else {
+        Logger.verbose('TeamBalancer', 2, '[7.4m] S³ DB or migrationEngine not available — TB mounts without DB persistence.');
+        this.db = null;
       }
-    } catch (err) {
-      Logger.verbose('TeamBalancer', 1, `[DB] mount/initDB failed: ${err.message}`);
+    } else {
+      Logger.verbose('TeamBalancer', 2, '[S3] SlackersSquadServices not found — TB mounts without S³ services and without DB persistence.');
     }
 
     if (this.options.discordClient) {
@@ -553,20 +884,10 @@ export default class TeamBalancer extends BasePlugin {
     this.server.on('CHAT_COMMAND:scramble', this.listeners.onScrambleCommand);
     this.server.on('CHAT_MESSAGE', this.listeners.onChatMessage);
 
-    // S³ runtime discovery (same pattern as Switch/Elo Phase A wiring)
-    const s3 = this.server.plugins?.find(p => p.constructor.name === 'SlackersSquadServices');
-    if (s3) {
-      this._s3 = s3;
-      Logger.verbose('TeamBalancer', 2, '[S3] Discovered SlackersSquadServices for TeamBalancer.');
-      Logger.verbose('TeamBalancer', 2, `[S3] Available: gameState=${!!this._s3?.gameState} factions=${!!this._s3?.factions} clans=${!!this._s3?.clans} db=${!!this._s3?.db} players=${!!this._s3?.players}`);
-    } else {
-      this._s3 = null;
-      Logger.verbose('TeamBalancer', 2, '[S3] SlackersSquadServices not found — using fallback implementations.');
-    }
-
+    // S³ gameState and service availability is already checked in the 7.4m block above.
     // Layer info always served from S³ gameState
-    if (this._s3?.gameState) {
-      Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState available: ${this._s3?.gameState.getGamemode()} / ${this._s3?.gameState.getLayerName()}`);
+    if (this._s3?.gameState?.isReady()) {
+      Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState available: ${this._s3.gameState.getGamemode()} / ${this._s3.gameState.getLayerName()}`);
     }
 
     this._isMounted = true;
@@ -961,10 +1282,12 @@ export default class TeamBalancer extends BasePlugin {
     if (state === 'on') {
       if (!this.manuallyDisabled) return message.reply('✅ Win streak tracking is already enabled.');
       this.manuallyDisabled = false;
-      try {
-        await this.db.saveManuallyDisabledState(false);
-      } catch (err) {
-        Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist enabled state: ${err.message}`);
+      if (this.db) {
+        try {
+          await this.db.saveManuallyDisabledState(false);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist enabled state: ${err.message}`);
+        }
       }
       await message.reply('✅ Win streak tracking enabled.');
       await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingEnabled}`);
@@ -972,10 +1295,12 @@ export default class TeamBalancer extends BasePlugin {
     } else {
       if (this.manuallyDisabled) return message.reply('✅ Win streak tracking is already disabled.');
       this.manuallyDisabled = true;
-      try {
-        await this.db.saveManuallyDisabledState(true);
-      } catch (err) {
-        Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist disabled state: ${err.message}`);
+      if (this.db) {
+        try {
+          await this.db.saveManuallyDisabledState(true);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist disabled state: ${err.message}`);
+        }
       }
       await message.reply('✅ Win streak tracking disabled.');
       await this.resetStreak('Manual disable via Discord');
