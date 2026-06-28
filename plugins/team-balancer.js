@@ -742,8 +742,7 @@ export default class TeamBalancer extends BasePlugin {
             version: 1,
             description: 'Create TeamBalancerState and TB_RoundReport',
             up: async (qi) => {
-              const existingRaw = await qi.rawQuery("SELECT name FROM sqlite_master WHERE type='table'");
-              const existing = (Array.isArray(existingRaw) ? existingRaw : []).map(r => r.name);
+              const existing = await qi.showAllTables();
 
               if (!existing.includes('TeamBalancerState')) {
                 await qi.createTable('TeamBalancerState', {
