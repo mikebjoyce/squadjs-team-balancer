@@ -6,8 +6,9 @@
  * ─── PURPOSE ─────────────────────────────────────────────────────
  *
  * Executes team scramble swap plans via RCON. Manages a pending-move
- * queue with retry logic, timeout protection, and post-execution
- * verification. Supports both live and dry-run (simulation) modes.
+ * queue, delegating retry/verification to S3PluginBase._requestTeamChange,
+ * with session lifecycle, timeout protection, and post-execution
+ * batch verification. Supports both live and dry-run (simulation) modes.
  *
  * ─── EXPORTS ─────────────────────────────────────────────────────
  *
@@ -28,13 +29,11 @@
  *
  * - Queue is processed on a setInterval at changeTeamRetryInterval ms.
  *   A separate setTimeout enforces the maxScrambleCompletionTime hard cap.
- * - Move is considered complete when the player is observed on the
- *   correct team, or when they disconnect (counted separately).
- * - RCON identifier prefers player name (always present for connected
- *   players), falls back to eosID then steamID. Max 5 RCON attempts per
- *   player before marking failed.
- * - verifyMoves() calls server.updatePlayerList() before checking final
- *   team positions. Falls back to session counters if the update fails.
+ * - Move is considered complete when _requestTeamChange returns success,
+ *   or the player disconnects.
+ * - verifyMoves() performs a post-session batch check that is independent
+ *   of the per-move verification inside _requestTeamChange — double-
+ *   verification is harmless and provides a final cross-check.
  * - cleanup() is safe to call at any time; idempotent.
  *
  * Author:
@@ -47,11 +46,12 @@ import Logger from '../../core/logger.js';
 import { DiscordHelpers } from './tb-discord-helpers.js';
 
 export default class SwapExecutor {
-  constructor(server, options = {}, RconMessages = {}, teamBalancer = null) {
+  constructor(server, options = {}, RconMessages = {}, teamBalancer = null, requestTeamChange = null) {
     this.server = server;
     this.options = options;
     this.RconMessages = RconMessages;
     this.teamBalancer = teamBalancer;
+    this._requestTeamChange = requestTeamChange || null;  // Bound S3PluginBase._requestTeamChange
 
     this.pendingPlayerMoves = new Map();
     this.scrambleRetryTimer = null;
@@ -70,7 +70,6 @@ export default class SwapExecutor {
 
     this.pendingPlayerMoves.set(eosID, {
       targetTeamID,
-      attempts: 0,
       startTime: Date.now()
     });
 
@@ -91,7 +90,7 @@ export default class SwapExecutor {
     this.activeSession = {
       startTime: Date.now(),
       totalMoves: this.pendingPlayerMoves.size,
-      movesSent: 0, // Counts RCON sends, used only as a fallback for verifyMoves
+      movesSent: 0, // Incremented on each successful _requestTeamChange
       failedMoves: 0
     };
 
@@ -114,55 +113,36 @@ export default class SwapExecutor {
     try {
       const now = Date.now();
       const playersToRemove = [];
-      const currentPlayers = this.server.players;
 
-      for (const [eosID, moveData] of this.pendingPlayerMoves.entries()) {
+      for (const [eosID] of this.pendingPlayerMoves.entries()) {
         try {
-          if (now - moveData.startTime > (this.options.maxScrambleCompletionTime || 15000)) {
-            Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Move timeout for ${eosID}`);
-            this.activeSession.failedMoves++;
-            playersToRemove.push(eosID);
-            continue;
-          }
+          // Delegate to the base class method which handles retry/verify/warn
+          if (this._requestTeamChange) {
+            const result = await this._requestTeamChange(eosID, {
+              maxAttempts: 5,
+              retryIntervalMs: this.options.changeTeamRetryInterval || 50,
+              timeoutMs: this.options.maxScrambleCompletionTime || 15000,
+              warnPlayer: !!this.options.warnOnSwap,
+              warnMessage: this.RconMessages?.playerScrambledWarning || 'You have been scrambled',
+              source: 'TeamBalancer'
+            });
 
-          const player = currentPlayers.find((p) => p.eosID === eosID);
-          if (!player) {
-            this.activeSession.movesSent++;
-            playersToRemove.push(eosID);
-            continue;
-          }
-
-          // Check if player is already on the target team to prevent RCON spam
-          if (String(player.teamID) === String(moveData.targetTeamID)) {
-            this.activeSession.movesSent++;
-            playersToRemove.push(eosID);
-            continue;
-          }
-
-          moveData.attempts++;
-          const maxRconAttempts = 5;
-
-          if (moveData.attempts <= maxRconAttempts) {
-            try {
-              // Prefer player name (universally accepted by RCON). eosID/steamID are fallbacks.
-              const rconIdentifier = player?.name || player?.eosID || player?.steamID;
-              await this.server.rcon.switchTeam(rconIdentifier, moveData.targetTeamID);
+            if (result && result.success) {
               this.activeSession.movesSent++;
-              playersToRemove.push(eosID);
-              if (this.options.warnOnSwap) {
-                try {
-                  await this.server.rcon.warn(rconIdentifier, this.RconMessages.playerScrambledWarning);
-                } catch (err) { Logger.verbose('TeamBalancer', 4, `[SwapExecutor] warn failed for ${eosID}: ${err}`); }
-              }
-            } catch (err) {
-              Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Move attempt ${moveData.attempts} failed for ${eosID}: ${err?.message || err}`);
-              if (moveData.attempts >= maxRconAttempts) {
-                this.activeSession.failedMoves++;
-                playersToRemove.push(eosID);
-              }
+              Logger.verbose('TeamBalancer', 4, `[SwapExecutor] Move succeeded for ${eosID}`);
+            } else if (result === null) {
+              // Player not found — disconnected
+              this.activeSession.movesSent++; // Count as "moved" since disconnected players don't need moves
+              Logger.verbose('TeamBalancer', 4, `[SwapExecutor] Player ${eosID} disconnected — removing from queue.`);
+            } else {
+              // Failed after all retries
+              this.activeSession.failedMoves++;
+              Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Move failed for ${eosID} after ${result.attempts} attempts.`);
             }
+
+            playersToRemove.push(eosID);
           } else {
-            this.activeSession.failedMoves++;
+            Logger.verbose('TeamBalancer', 2, `[SwapExecutor] No _requestTeamChange available — cannot process ${eosID}.`);
             playersToRemove.push(eosID);
           }
         } catch (err) {
@@ -258,7 +238,7 @@ export default class SwapExecutor {
     }
 
     this.pendingPlayerMoves.clear();
-    this.sessionMoves.clear(); 
+    this.sessionMoves.clear();
     this.activeSession = null;
     this._completing = false;
   }
@@ -284,7 +264,7 @@ export default class SwapExecutor {
       this.overallTimeout = null;
     }
     this.pendingPlayerMoves.clear();
-    this.sessionMoves.clear(); 
+    this.sessionMoves.clear();
     this.activeSession = null;
   }
 }

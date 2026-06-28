@@ -12,9 +12,9 @@
  * ─── EXPORTS ─────────────────────────────────────────────────────
  *
  * TeamBalancer (default)
- *   Extends BasePlugin. Key public methods:
- *     mount()                          — Initialises DB, listeners, and Discord channels.
- *     unmount()                        — Removes all listeners and clears state.
+ *   Extends S3PluginBase (via S³ Plugin Base Class). Key public methods:
+ *     mount()                          — Initialises DB, listeners, and Discord channels. (via _onS3Ready)
+ *     unmount()                        — Removes all listeners and clears state. (via _onUnmount)
  *     executeScramble(isSimulated)     — Runs the scramble algorithm and applies moves.
  *     cancelPendingScramble(...)       — Cancels a pending scramble countdown.
  *     resetStreak(reason)              — Resets win streak state and persists to DB.
@@ -23,8 +23,9 @@
  *
  * ─── DEPENDENCIES ────────────────────────────────────────────────
  *
- * BasePlugin (./base-plugin.js)
- *   SquadJS base class providing server, options, and connectors.
+ * S3PluginBase (./s3-plugin-base.js)
+ *   S³ plugin base class providing S³ discovery, readiness gating, DB convenience methods,
+ *   and flat service accessors. Extends SquadJS BasePlugin under the hood.
  * Logger (../../core/logger.js)
  *   Verbose logging throughout all event handlers.
  * S³ DBService (via _buildS3DbWrapper() compatibility layer)
@@ -229,7 +230,7 @@
  */
 
 
-import BasePlugin from './base-plugin.js';
+import S3PluginBase from './s3-plugin-base.js';
 import { DiscordHelpers } from '../utils/tb-discord-helpers.js';
 import Scrambler from '../utils/tb-scrambler.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
@@ -239,7 +240,7 @@ import { TBDiagnostics } from '../utils/tb-diagnostics.js';
 import fs from 'fs';
 import path from 'path';
 
-export default class TeamBalancer extends BasePlugin {
+export default class TeamBalancer extends S3PluginBase {
   static version = '3.2.1';
 
   static get description() {
@@ -252,12 +253,6 @@ export default class TeamBalancer extends BasePlugin {
 
   static get optionsSpecification() {
     return {
-      database: {
-        required: true,
-        connector: 'sequelize',
-        description: 'The Sequelize connector for persistent data storage.',
-        default: 'sqlite'
-      },
       enableWinStreakTracking: {
         default: true,
         type: 'boolean'
@@ -431,8 +426,7 @@ export default class TeamBalancer extends BasePlugin {
 
     // Initialize executor immediately so commands (like status) can access pendingPlayerMoves without crashing
     this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages, this);
-    this.db = null;  // 7.4m: Set in mount() via S³ MigrationEngine, or stays null if S³ unavailable
-    this._s3db = null; // 7.4m: S³ DB service reference
+    this.db = null;  // 7.4m: Set in _onS3Ready() via S³ MigrationEngine, or stays null if S³ unavailable
     this.winStreakTeam = null;
     this.winStreakCount = 0;
     this.consecutiveWinsTeam = null;
@@ -450,7 +444,6 @@ export default class TeamBalancer extends BasePlugin {
     this.lastScrambleTime = null;
 
     this._scrambleInProgress = false;
-    this._s3 = null;  // Runtime discovery of SlackersSquadServices
     this.listeners = {};
     this.listeners.onRoundEnded = this.onRoundEnded.bind(this);
     this.listeners.onNewGame = this.onNewGame.bind(this);
@@ -671,7 +664,9 @@ export default class TeamBalancer extends BasePlugin {
 
   // isSeedMatch() removed in Stage 6.4b — seed detection delegated to S³ GameStateService.isSeedMode()
   // Training/Jensen detection also available via S³ GameStateService.isTrainingMode()
-  async mount() {
+  /// S3PluginBase lifecycle hooks
+
+  async _onS3Ready() {
     if (this._isMounted) {
       Logger.verbose('TeamBalancer', 1, 'Plugin already mounted, skipping duplicate mount attempt.');
       return;
@@ -687,151 +682,128 @@ export default class TeamBalancer extends BasePlugin {
     // ─────────────────────────────────────────────────────────────────
     // 7.4m: SCHEMA MIGRATION — Define models + register team-balancer v1
     // ─────────────────────────────────────────────────────────────────
-    // S³ runtime discovery (same pattern as Switch/Elo)
-    const s3 = this.server.plugins?.find(p => p.constructor.name === 'SlackersSquadServices');
-    if (s3) {
-      this._s3 = s3;
-      Logger.verbose('TeamBalancer', 2, '[S3] Discovered SlackersSquadServices for TeamBalancer.');
-      await this._s3.ready();
-      Logger.verbose('TeamBalancer', 2, '[S3] S³ is fully mounted — proceeding.');
+    // S³ already discovered by base class — this._s3 and this._s3db are ready
 
-      const s3db = this._s3.db;
-      if (s3db?.isReady() && s3db.migrationEngine) {
-        this._s3db = s3db;
+    if (this.s3db?.isReady() && this.s3db.migrationEngine) {
+      // Define models on S³ connector
+      this.defineModel('TeamBalancerState', {
+        id: { type: this.s3db.getDataTypes().INTEGER, primaryKey: true, autoIncrement: false, defaultValue: 1 },
+        winStreakTeam: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        winStreakCount: { type: this.s3db.getDataTypes().INTEGER, allowNull: false, defaultValue: 0 },
+        lastSyncTimestamp: { type: this.s3db.getDataTypes().BIGINT, allowNull: true },
+        lastScrambleTime: { type: this.s3db.getDataTypes().BIGINT, allowNull: true },
+        consecutiveWinsTeam: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        consecutiveWinsCount: { type: this.s3db.getDataTypes().INTEGER, allowNull: false, defaultValue: 0 },
+        manuallyDisabled: { type: this.s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false }
+      }, { timestamps: false, tableName: 'TeamBalancerState' });
 
-        // Define models on S³ connector
-        s3db.defineModel('TeamBalancerState', {
-          id: { type: s3db.getDataTypes().INTEGER, primaryKey: true, autoIncrement: false, defaultValue: 1 },
-          winStreakTeam: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          winStreakCount: { type: s3db.getDataTypes().INTEGER, allowNull: false, defaultValue: 0 },
-          lastSyncTimestamp: { type: s3db.getDataTypes().BIGINT, allowNull: true },
-          lastScrambleTime: { type: s3db.getDataTypes().BIGINT, allowNull: true },
-          consecutiveWinsTeam: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          consecutiveWinsCount: { type: s3db.getDataTypes().INTEGER, allowNull: false, defaultValue: 0 },
-          manuallyDisabled: { type: s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false }
-        }, { timestamps: false, tableName: 'TeamBalancerState' });
+      this.defineModel('TB_RoundReport', {
+        id: { type: this.s3db.getDataTypes().INTEGER, primaryKey: true, autoIncrement: true },
+        matchId: { type: this.s3db.getDataTypes().STRING(20), allowNull: true },
+        roundStartTime: { type: this.s3db.getDataTypes().BIGINT, allowNull: true },
+        ts: { type: this.s3db.getDataTypes().BIGINT, allowNull: false },
+        layerName: { type: this.s3db.getDataTypes().STRING(255), allowNull: true },
+        gameMode: { type: this.s3db.getDataTypes().STRING(100), allowNull: true },
+        playerCount: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        winningTeamID: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        winnerName: { type: this.s3db.getDataTypes().STRING(255), allowNull: true },
+        loserName: { type: this.s3db.getDataTypes().STRING(255), allowNull: true },
+        winnerTickets: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        loserTickets: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        ticketMargin: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        isDominantWin: { type: this.s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false },
+        winStreakTeam: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        winStreakCount: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        consecutiveWinsTeam: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        consecutiveWinsCount: { type: this.s3db.getDataTypes().INTEGER, allowNull: true },
+        scrambled: { type: this.s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false },
+        scrambleCondition: { type: this.s3db.getDataTypes().STRING(100), allowNull: true },
+        scrambleType: { type: this.s3db.getDataTypes().STRING(100), allowNull: true }
+      }, { timestamps: false, tableName: 'TB_RoundReport' });
 
-        s3db.defineModel('TB_RoundReport', {
-          id: { type: s3db.getDataTypes().INTEGER, primaryKey: true, autoIncrement: true },
-          matchId: { type: s3db.getDataTypes().STRING(20), allowNull: true },
-          roundStartTime: { type: s3db.getDataTypes().BIGINT, allowNull: true },
-          ts: { type: s3db.getDataTypes().BIGINT, allowNull: false },
-          layerName: { type: s3db.getDataTypes().STRING(255), allowNull: true },
-          gameMode: { type: s3db.getDataTypes().STRING(100), allowNull: true },
-          playerCount: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          winningTeamID: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          winnerName: { type: s3db.getDataTypes().STRING(255), allowNull: true },
-          loserName: { type: s3db.getDataTypes().STRING(255), allowNull: true },
-          winnerTickets: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          loserTickets: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          ticketMargin: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          isDominantWin: { type: s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false },
-          winStreakTeam: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          winStreakCount: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          consecutiveWinsTeam: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          consecutiveWinsCount: { type: s3db.getDataTypes().INTEGER, allowNull: true },
-          scrambled: { type: s3db.getDataTypes().BOOLEAN, allowNull: false, defaultValue: false },
-          scrambleCondition: { type: s3db.getDataTypes().STRING(100), allowNull: true },
-          scrambleType: { type: s3db.getDataTypes().STRING(100), allowNull: true }
-        }, { timestamps: false, tableName: 'TB_RoundReport' });
+      // Register expected version + v1 migration
+      this.registerExpectedVersion('team-balancer', 1);
+      this.registerMigrations('team-balancer', [
+        {
+          version: 1,
+          description: 'Create TeamBalancerState and TB_RoundReport',
+          up: async (qi) => {
+            const existing = await qi.showAllTables();
 
-        // Register expected version + v1 migration
-        s3db.registerExpectedVersion('team-balancer', 1);
-        s3db.migrationEngine.registerMigrations('team-balancer', [
-          {
-            version: 1,
-            description: 'Create TeamBalancerState and TB_RoundReport',
-            up: async (qi) => {
-              const existing = await qi.showAllTables();
-
-              if (!existing.includes('TeamBalancerState')) {
-                await qi.createTable('TeamBalancerState', {
-                  id: { type: qi.DataTypes.INTEGER, primaryKey: true, autoIncrement: false, defaultValue: 1 },
-                  winStreakTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  winStreakCount: { type: qi.DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-                  lastSyncTimestamp: { type: qi.DataTypes.BIGINT, allowNull: true },
-                  lastScrambleTime: { type: qi.DataTypes.BIGINT, allowNull: true },
-                  consecutiveWinsTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  consecutiveWinsCount: { type: qi.DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-                  manuallyDisabled: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false }
-                });
-              }
-
-              if (!existing.includes('TB_RoundReport')) {
-                await qi.createTable('TB_RoundReport', {
-                  id: { type: qi.DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
-                  matchId: { type: qi.DataTypes.STRING(20), allowNull: true },
-                  roundStartTime: { type: qi.DataTypes.BIGINT, allowNull: true },
-                  ts: { type: qi.DataTypes.BIGINT, allowNull: false },
-                  layerName: { type: qi.DataTypes.STRING(255), allowNull: true },
-                  gameMode: { type: qi.DataTypes.STRING(100), allowNull: true },
-                  playerCount: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  winningTeamID: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  winnerName: { type: qi.DataTypes.STRING(255), allowNull: true },
-                  loserName: { type: qi.DataTypes.STRING(255), allowNull: true },
-                  winnerTickets: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  loserTickets: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  ticketMargin: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  isDominantWin: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-                  winStreakTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  winStreakCount: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  consecutiveWinsTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  consecutiveWinsCount: { type: qi.DataTypes.INTEGER, allowNull: true },
-                  scrambled: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
-                  scrambleCondition: { type: qi.DataTypes.STRING(100), allowNull: true },
-                  scrambleType: { type: qi.DataTypes.STRING(100), allowNull: true }
-                });
-              }
-            },
-            down: async (qi) => {
-              await qi.dropTable('TeamBalancerState');
-              await qi.dropTable('TB_RoundReport');
+            if (!existing.includes('TeamBalancerState')) {
+              await qi.createTable('TeamBalancerState', {
+                id: { type: qi.DataTypes.INTEGER, primaryKey: true, autoIncrement: false, defaultValue: 1 },
+                winStreakTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
+                winStreakCount: { type: qi.DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+                lastSyncTimestamp: { type: qi.DataTypes.BIGINT, allowNull: true },
+                lastScrambleTime: { type: qi.DataTypes.BIGINT, allowNull: true },
+                consecutiveWinsTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
+                consecutiveWinsCount: { type: qi.DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
+                manuallyDisabled: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false }
+              });
             }
-          }
-        ]);
 
-        // Run pending migrations
-        const recheck = await s3db.verifySchemaVersions();
-        if (!recheck.upToDate) {
-          Logger.verbose('TeamBalancer', 1, `[7.4m] TeamBalancer has ${recheck.pending.length} pending migration(s) — applying now.`);
-          const result = await s3db.migrationEngine.runMigrations('team-balancer');
-          Logger.verbose('TeamBalancer', 1, `[7.4m] TeamBalancer v1 migration complete: applied=${result.applied}, skipped=${result.skipped}.`);
-          const postCheck = await s3db.verifySchemaVersions();
-          if (!postCheck.upToDate) {
-            Logger.verbose('TeamBalancer', 1, `[7.4m] WARNING: ${postCheck.pending.length} migration(s) still pending after run.`);
+            if (!existing.includes('TB_RoundReport')) {
+              await qi.createTable('TB_RoundReport', {
+                id: { type: qi.DataTypes.INTEGER, primaryKey: true, autoIncrement: true },
+                matchId: { type: qi.DataTypes.STRING(20), allowNull: true },
+                roundStartTime: { type: qi.DataTypes.BIGINT, allowNull: true },
+                ts: { type: qi.DataTypes.BIGINT, allowNull: false },
+                layerName: { type: qi.DataTypes.STRING(255), allowNull: true },
+                gameMode: { type: qi.DataTypes.STRING(100), allowNull: true },
+                playerCount: { type: qi.DataTypes.INTEGER, allowNull: true },
+                winningTeamID: { type: qi.DataTypes.INTEGER, allowNull: true },
+                winnerName: { type: qi.DataTypes.STRING(255), allowNull: true },
+                loserName: { type: qi.DataTypes.STRING(255), allowNull: true },
+                winnerTickets: { type: qi.DataTypes.INTEGER, allowNull: true },
+                loserTickets: { type: qi.DataTypes.INTEGER, allowNull: true },
+                ticketMargin: { type: qi.DataTypes.INTEGER, allowNull: true },
+                isDominantWin: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+                winStreakTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
+                winStreakCount: { type: qi.DataTypes.INTEGER, allowNull: true },
+                consecutiveWinsTeam: { type: qi.DataTypes.INTEGER, allowNull: true },
+                consecutiveWinsCount: { type: qi.DataTypes.INTEGER, allowNull: true },
+                scrambled: { type: qi.DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+                scrambleCondition: { type: qi.DataTypes.STRING(100), allowNull: true },
+                scrambleType: { type: qi.DataTypes.STRING(100), allowNull: true }
+              });
+            }
+          },
+          down: async (qi) => {
+            await qi.dropTable('TeamBalancerState');
+            await qi.dropTable('TB_RoundReport');
           }
-        } else {
-          Logger.verbose('TeamBalancer', 2, '[7.4m] TeamBalancer schema already up to date.');
         }
+      ]);
 
-        // Build compatibility wrapper and load initial state
-        this.db = this._buildS3DbWrapper(s3db);
-        try {
-          const dbState = await this.db.initDB();
-          if (dbState && !dbState.isStale) {
-            this.winStreakTeam = dbState.winStreakTeam;
-            this.winStreakCount = dbState.winStreakCount;
-            this.consecutiveWinsTeam = dbState.consecutiveWinsTeam;
-            this.consecutiveWinsCount = dbState.consecutiveWinsCount;
-            this.lastSyncTimestamp = dbState.lastSyncTimestamp;
-            this.lastScrambleTime = dbState.lastScrambleTime;
-            this.manuallyDisabled = dbState.manuallyDisabled || false;
-            Logger.verbose('TeamBalancer', 4, `[7.4m] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}, manuallyDisabled=${this.manuallyDisabled}`);
-          } else if (dbState) {
-            Logger.verbose('TeamBalancer', 4, '[7.4m] State stale; resetting.');
-            this.lastScrambleTime = dbState.lastScrambleTime;
-            this.manuallyDisabled = dbState.manuallyDisabled || false;
-            await this.db.saveState(null, 0);
-          }
-        } catch (err) {
-          Logger.verbose('TeamBalancer', 1, `[7.4m] DB init failed: ${err.message}`);
+      // Run pending migrations
+      await this.verifyAndRunMigrations('team-balancer');
+
+      // Build compatibility wrapper and load initial state
+      this.db = this._buildS3DbWrapper(this.s3db);
+      try {
+        const dbState = await this.db.initDB();
+        if (dbState && !dbState.isStale) {
+          this.winStreakTeam = dbState.winStreakTeam;
+          this.winStreakCount = dbState.winStreakCount;
+          this.consecutiveWinsTeam = dbState.consecutiveWinsTeam;
+          this.consecutiveWinsCount = dbState.consecutiveWinsCount;
+          this.lastSyncTimestamp = dbState.lastSyncTimestamp;
+          this.lastScrambleTime = dbState.lastScrambleTime;
+          this.manuallyDisabled = dbState.manuallyDisabled || false;
+          Logger.verbose('TeamBalancer', 4, `[7.4m] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}, manuallyDisabled=${this.manuallyDisabled}`);
+        } else if (dbState) {
+          Logger.verbose('TeamBalancer', 4, '[7.4m] State stale; resetting.');
+          this.lastScrambleTime = dbState.lastScrambleTime;
+          this.manuallyDisabled = dbState.manuallyDisabled || false;
+          await this.db.saveState(null, 0);
         }
-      } else {
-        Logger.verbose('TeamBalancer', 2, '[7.4m] S³ DB or migrationEngine not available — TB mounts without DB persistence.');
-        this.db = null;
+      } catch (err) {
+        Logger.verbose('TeamBalancer', 1, `[7.4m] DB init failed: ${err.message}`);
       }
     } else {
-      Logger.verbose('TeamBalancer', 2, '[S3] SlackersSquadServices not found — TB mounts without S³ services and without DB persistence.');
+      Logger.verbose('TeamBalancer', 2, '[7.4m] S³ DB or migrationEngine not available — TB mounts without DB persistence.');
+      this.db = null;
     }
 
     if (this.options.discordClient) {
@@ -901,7 +873,7 @@ export default class TeamBalancer extends BasePlugin {
     Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Plugin is now fully ready.');
   }
 
-  async unmount() {
+  async _onUnmount() {
     if (!this._isMounted) {
       Logger.verbose('TeamBalancer', 1, 'Plugin not mounted, skipping unmount.');
       return;
