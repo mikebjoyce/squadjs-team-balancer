@@ -7,12 +7,15 @@
  *
  * Main SquadJS plugin entry point for TeamBalancer. Tracks dominant
  * and consecutive win streaks, triggers squad-preserving scrambles,
- * and coordinates all sub-modules across the round lifecycle.
+ * and coordinates all sub-modules across the round lifecycle. Extends
+ * S3PluginBase for S³ service discovery, DB convenience, and readiness
+ * gating. Schema versioning via MigrationEngine with TB_RoundReport
+ * and TeamBalancerState tables.
  *
  * ─── EXPORTS ─────────────────────────────────────────────────────
  *
  * TeamBalancer (default)
- *   Extends S3PluginBase (via S³ Plugin Base Class). Key public methods:
+ *   Extends S3PluginBase. Key public methods:
  *     mount()                          — Initialises DB, listeners, and Discord channels. (via _onS3Ready)
  *     unmount()                        — Removes all listeners and clears state. (via _onUnmount)
  *     executeScramble(isSimulated)     — Runs the scramble algorithm and applies moves.
