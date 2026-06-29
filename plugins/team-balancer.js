@@ -383,6 +383,12 @@ export default class TeamBalancer extends S3PluginBase {
          default: false,
          type: 'boolean',
          description: 'If true, round reports are also written to the database in addition to the JSONL log.'
+       },
+       scrambleReportPath: {
+         required: false,
+         default: 'TeamBalancerScrambleReports/',
+         type: 'string',
+         description: 'Directory for per-scramble JSON reports. Leave empty to disable. Relative to CWD.'
        }
      };
    }
@@ -428,7 +434,7 @@ export default class TeamBalancer extends S3PluginBase {
     CommandHandlers.register(this);
 
     // Initialize executor immediately so commands (like status) can access pendingPlayerMoves without crashing
-    this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages, this);
+    this.swapExecutor = new SwapExecutor(this.server, this.options, this.RconMessages, this, this._requestTeamChange?.bind(this));
     this.db = null;  // 7.4m: Set in _onS3Ready() via S³ MigrationEngine, or stays null if S³ unavailable
     this.winStreakTeam = null;
     this.winStreakCount = 0;
@@ -1991,6 +1997,7 @@ export default class TeamBalancer extends S3PluginBase {
     const adminName = player?.name || (steamID ? `admin ${steamID}` : 'system');
     Logger.verbose('TeamBalancer', 4, `Scramble started by ${adminName}`);
 
+    let swapPlan = null;
     try {
       let broadcastMessage;
       if (isSimulated) {
@@ -2096,7 +2103,7 @@ export default class TeamBalancer extends S3PluginBase {
 
       Logger.verbose('TeamBalancer', 4, `Calling scrambler with ${transformedSquads.length} squads and ${transformedPlayers.length} players`);
 
-      const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+      swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
         squads: transformedSquads,
         players: transformedPlayers,
         winStreakTeam: this.winStreakTeam,
@@ -2212,6 +2219,10 @@ export default class TeamBalancer extends S3PluginBase {
           Logger.verbose('TeamBalancer', 1, `[S3] Failed to release global lock: ${err.message}`);
         }
       }
+      // Write scramble report JSON (includes swap plan and execution results)
+      if (swapPlan) {
+        this._writeScrambleReport(swapPlan, swapPlan.calculationTime || 0, isSimulated);
+      }
       this._scrambleInProgress = false;
       Logger.verbose('TeamBalancer', 4, 'Scramble finished');
     }
@@ -2279,6 +2290,60 @@ export default class TeamBalancer extends S3PluginBase {
       this.swapExecutor.cleanup();
     }
     this._scrambleInProgress = false;
+  }
+
+  /**
+   * Writes a structured JSON scramble report to disk for post-scramble review.
+   * Captures swap plan metadata, execution results, timestamps, and team state.
+   * Written to the same directory as the round reports JSONL log.
+   */
+  async _writeScrambleReport(swapPlan, calculationTime, isSimulated) {
+    try {
+      const reportDirOpt = this.options.scrambleReportPath;
+      if (!reportDirOpt) {
+        Logger.verbose('TeamBalancer', 4, '[ScrambleReport] Disabled (scrambleReportPath empty)');
+        return;
+      }
+      const logDir = path.resolve(process.cwd(), reportDirOpt);
+      await fs.promises.mkdir(logDir, { recursive: true });
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      const reportPath = path.join(logDir, `scramble-report-${timestamp}.json`);
+
+      const gs = this._s3?.gameState;
+      const sessionReport = this.swapExecutor?.getLastSessionReport?.() || null;
+
+      const report = {
+        type: isSimulated ? 'dry-run' : 'live',
+        timestamp: Date.now(),
+        isoTimestamp: new Date().toISOString(),
+        matchId: gs?.isReady() ? (gs.getMatchId?.() ?? null) : null,
+        layerName: gs?.isReady() ? (gs.getLayerName?.() ?? 'Unknown') : 'Unknown',
+        gamemode: gs?.isReady() ? (gs.getGamemode?.() ?? 'Unknown') : 'Unknown',
+        calculationTime,
+        totalMovesInPlan: swapPlan?.length || 0,
+        plan: (swapPlan || []).map(m => ({
+          eosID: m.eosID,
+          targetTeamID: m.targetTeamID
+        })),
+        execution: sessionReport ? {
+          totalMoves: sessionReport.totalMoves,
+          movedSuccessfully: sessionReport.movedSuccessfully,
+          failedToMove: sessionReport.failedToMove,
+          disconnected: sessionReport.disconnected,
+          duration: sessionReport.duration,
+          successRate: sessionReport.successRate
+        } : null,
+        preScrambleState: {
+          winStreakTeam: this.winStreakTeam,
+          winStreakCount: this.winStreakCount
+        }
+      };
+
+      await fs.promises.writeFile(reportPath, JSON.stringify(report, null, 2));
+      Logger.verbose('TeamBalancer', 2, `[ScrambleReport] Written to ${reportPath}`);
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 1, `[ScrambleReport] Failed to write: ${err.message}`);
+    }
   }
 
   async mirrorRconToDiscord(message, type = 'info') {

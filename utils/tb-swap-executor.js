@@ -216,9 +216,20 @@ export default class SwapExecutor {
       this.overallTimeout = null;
     }
 
-    const { totalMoves, movedSuccessfully, failedToMove, disconnected } = await this.verifyMoves();
+    const results = await this.verifyMoves();
+    const { totalMoves, movedSuccessfully, failedToMove, disconnected } = results;
     const duration = Date.now() - this.activeSession.startTime;
     const successRate = totalMoves > 0 ? Math.round((movedSuccessfully / totalMoves) * 100) : 100;
+
+    // Store session report for post-scramble JSON log
+    this._lastSessionReport = {
+      totalMoves,
+      movedSuccessfully,
+      failedToMove,
+      disconnected,
+      duration,
+      successRate
+    };
 
     Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Session complete in ${duration}ms: ${movedSuccessfully} moved, ${disconnected} disconnected, ${failedToMove} failed (${totalMoves} total, ${successRate}%)`);
 
@@ -266,5 +277,13 @@ export default class SwapExecutor {
     this.pendingPlayerMoves.clear();
     this.sessionMoves.clear();
     this.activeSession = null;
+  }
+
+  /**
+   * Returns the last session report (verification results) after completeSession runs.
+   * Cleared on next queueMove. Returns null if no session has completed.
+   */
+  getLastSessionReport() {
+    return this._lastSessionReport || null;
   }
 }
