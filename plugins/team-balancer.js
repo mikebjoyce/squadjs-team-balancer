@@ -1111,18 +1111,6 @@ export default class TeamBalancer extends S3PluginBase {
         const diagnostics = new TBDiagnostics(this);
         const results = await diagnostics.runAll();
 
-        const dbTest = await this.db.runConcurrencyTest();
-        
-        // Insert concurrency result after connectivity result
-        const connIndex = results.findIndex(r => r.name === 'DB Connectivity');
-        const insertIndex = connIndex >= 0 ? connIndex + 1 : results.length;
-        
-        results.splice(insertIndex, 0, {
-          name: 'DB Concurrency',
-          pass: dbTest.success,
-          message: dbTest.message
-        });
-
         const embeds = DiscordHelpers.buildDiagEmbeds(this, results);
         for (const embed of embeds) {
           await DiscordHelpers.sendDiscordMessage(message.channel, { embeds: [embed] });

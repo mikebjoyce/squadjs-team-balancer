@@ -101,8 +101,6 @@ export const DiscordHelpers = {
     const squads = tb.server.squads;
     const t1Players = players.filter((p) => p.teamID === 1);
     const t2Players = players.filter((p) => p.teamID === 2);
-    const t1UnassignedPlayers = t1Players.filter((p) => p.squadID === null);
-    const t2UnassignedPlayers = t2Players.filter((p) => p.squadID === null);
     const t1Squads = squads.filter((s) => s.teamID === 1);
     const t2Squads = squads.filter((s) => s.teamID === 2);
 
@@ -110,58 +108,41 @@ export const DiscordHelpers = {
       ? `${tb.swapExecutor.pendingPlayerMoves.size} pending moves`
       : 'None';
 
-    const eloTrackerPlugin = tb.server.plugins?.find(p => p.constructor.name === 'EloTracker');
-    const eloStatus = tb.options?.useEloForBalance ? (eloTrackerPlugin ? '✅ Active' : '❌ Unavailable') : '⏹️ Disabled';
-
     // Determine color based on diagnostics if present
     let color = 0x3498db;
     if (diagnosticResults) {
       color = diagnosticResults.every((r) => r.pass) ? 0x2ecc71 : 0xe74c3c;
     }
 
+    // Embed 1: Consolidated runtime state + config (diag-specific fields only)
     const embed1 = {
       color: color,
-      title: '🩺 TeamBalancer Diagnostics - Live State',
+      title: '🩺 TeamBalancer Diagnostics',
       description: `**Plugin Status:** ${!tb.ready ? 'INITIALIZING' : tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`,
       fields: [
-        { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
-        { name: 'Elo Integration', value: eloStatus, inline: true },
-        { name: 'Game Mode', value: tb.gameModeCached || 'N/A', inline: true },
-        { name: 'Win Streak', value: tb.winStreakTeam ? `${tb.getTeamName(tb.winStreakTeam)}: ${tb.winStreakCount} win(s)` : 'None', inline: true },
-        { name: 'Consecutive', value: tb.consecutiveWinsTeam ? `${tb.getTeamName(tb.consecutiveWinsTeam)}: ${tb.consecutiveWinsCount}` : 'None', inline: true },
-        { name: 'Team Names', value: `${tb.getTeamName(1)} | ${tb.getTeamName(2)}`, inline: true },
+        // Runtime state (what diag tells you that status doesn't)
         { name: 'Scramble Pending', value: tb._scramblePending ? 'Yes' : 'No', inline: true },
         { name: 'Scramble Active', value: tb._scrambleInProgress ? 'Yes' : 'No', inline: true },
         { name: 'Pending Moves', value: scrambleInfo, inline: true },
-        { name: '\u200B', value: '\u200B', inline: true },
         { name: 'Total Players', value: `${players.length}`, inline: true },
         { name: 'Team 1 | Team 2', value: `${t1Players.length} | ${t2Players.length}`, inline: true },
-        { name: 'Unassigned', value: `T1: ${t1UnassignedPlayers.length} | T2: ${t2UnassignedPlayers.length}`, inline: true },
         { name: 'Total Squads', value: `${squads.length}`, inline: true },
         { name: 'Squad Split', value: `T1: ${t1Squads.length} | T2: ${t2Squads.length}`, inline: true },
+        // Key thresholds (what matters for debugging)
+        { name: 'Max Win Threshold', value: `${tb.options?.maxWinStreak || 2} wins`, inline: true },
+        { name: 'Dominant Threshold', value: `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, inline: true },
+        { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
+        { name: 'Scramble Delay / Max', value: `${tb.options?.scrambleAnnouncementDelay}s / ${tb.options?.maxScrambleCompletionTime}ms`, inline: false },
+        { name: 'Single Round Scramble', value: tb.options?.enableSingleRoundScramble ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` : 'OFF', inline: true },
+        { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
+        { name: 'Discord Options', value: `Mirror: ${tb.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${tb.options?.postScrambleDetails ? 'Yes' : 'No'}`, inline: false },
       ],
       timestamp: new Date().toISOString(),
     };
 
-    const embed2 = {
-      color: color,
-      title: '⚙️ TeamBalancer Diagnostics - Configuration',
-      fields: [
-        { name: 'Max Win Threshold', value: `${tb.options?.maxWinStreak || 2} wins`, inline: true },
-        { name: 'Max Consec. Wins', value: `${tb.options?.maxConsecutiveWinsWithoutThreshold || 0}`, inline: true },
-        { name: 'Dominant Threshold', value: `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, inline: true },
-        { name: 'Single Round Scramble', value: tb.options?.enableSingleRoundScramble ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` : 'OFF', inline: true },
-        { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
-        { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
-        { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s`, inline: true },
-        { name: 'Max Scramble Time', value: `${tb.options?.maxScrambleCompletionTime}ms`, inline: true },
-        { name: 'Discord Options', value: `Mirror: ${tb.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${tb.options?.postScrambleDetails ? 'Yes' : 'No'}`, inline: true },
-      ],
-      timestamp: new Date().toISOString()
-    };
+    const embeds = [embed1];
 
-    const embeds = [embed1, embed2];
-
+    // Embed 2: Diagnostic test results (if tests ran)
     if (diagnosticResults) {
       const resultsEmbeds = this.buildDiagnosticResultsEmbeds(diagnosticResults, color);
       embeds.push(...resultsEmbeds);

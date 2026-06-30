@@ -6,16 +6,17 @@
  * ─── PURPOSE ─────────────────────────────────────────────────────
  *
  * Runs integrity checks against the live plugin instance. Verifies
- * database read/write/restore cycles and performs a live dry-run
- * scramble simulation against the current server population.
+ * S³ database connectivity (reachability + table count) and performs
+ * a live dry-run scramble simulation against the current server
+ * population.
  *
  * ─── EXPORTS ─────────────────────────────────────────────────────
  * 
  * TBDiagnostics (named)
  *   Class. Instantiate with a TeamBalancer instance.
- *     runAll()         — Runs all tests; returns Array<{ name, pass, message }>.
- *     testDatabase()   — DB read/write/restore cycle test.
- *     testScrambler()  — Live scramble dry-run against current server state.
+ *     runAll()              — Runs all tests; returns Array<{ name, pass, message }>.
+ *     testS3Integration()   — S³ DB reachability + model count check.
+ *     testScrambler()       — Live scramble dry-run against current server state.
  *
  * ─── DEPENDENCIES ────────────────────────────────────────────────
  *
@@ -26,9 +27,9 @@
  *
  * ─── NOTES ───────────────────────────────────────────────────────
  *
- * - testDatabase() writes a dummy value (999), verifies it, then
- *   restores the original. Leaves the DB in its original state on
- *   both pass and fail paths.
+ * - testS3Integration() replaces the old testDatabase() (which tried
+ *   to access a non-existent model path on the S³ compatibility wrapper)
+ *   and the synthetic concurrency test (which was always skipped).
  * - testScrambler() is skipped (not failed) if server population
  *   is below 10 players. Result message reflects the skip reason.
  * - Triggered by !teambalancer diag in-game or via Discord.
@@ -49,48 +50,43 @@ export class TBDiagnostics {
   }
 
   async runAll() {
-    await this.testDatabase();
+    await this.testS3Integration();
     await this.testScrambler();
     return this.results;
   }
 
-  async testDatabase() {
-    const result = { name: 'DB Connectivity', pass: false, message: 'Test not run' };
+  async testS3Integration() {
+    const result = { name: 'S³ Integration', pass: false, message: 'Test not run' };
     try {
-      if (!this.tb.db || !this.tb.db.TeamBalancerStateModel) {
-        throw new Error('Database connector or model not initialized.');
+      const s3db = this.tb.s3db;
+      if (!s3db || !s3db.isReady()) {
+        throw new Error('S³ DB not reachable');
       }
 
-      // 1. Read current state
-      const initialState = await this.tb.db._executeWithRetry(() => this.tb.db.TeamBalancerStateModel.findByPk(1));
-      if (!initialState) {
-        throw new Error('Could not find state record in database.');
-      }
-      const originalCount = initialState.winStreakCount;
+      // Quick connectivity check — query the model count
+      const modelNames = Object.keys(s3db.models || {});
+      const tbModelNames = modelNames.filter(n => n.startsWith('TeamBalancer') || n.startsWith('TB_'));
 
-      // 2. Write a dummy value
-      const testValue = 999;
-      await this.tb.db.saveState(initialState.winStreakTeam, testValue, initialState.consecutiveWinsTeam, initialState.consecutiveWinsCount);
-
-      // 3. Read back and verify
-      const updatedState = await this.tb.db._executeWithRetry(() => this.tb.db.TeamBalancerStateModel.findByPk(1));
-      if (updatedState.winStreakCount !== testValue) {
-        throw new Error('Dummy data write could not be verified.');
+      // Verify at least one TB model exists
+      if (!tbModelNames.length) {
+        throw new Error('No TeamBalancer models found on S³ connector');
       }
 
-      // 4. Restore original value
-      await this.tb.db.saveState(initialState.winStreakTeam, originalCount, initialState.consecutiveWinsTeam, initialState.consecutiveWinsCount);
-      const restoredState = await this.tb.db._executeWithRetry(() => this.tb.db.TeamBalancerStateModel.findByPk(1));
-      if (restoredState.winStreakCount !== originalCount) {
-        throw new Error('Could not restore original database state.');
+      // Spot-check: query TeamBalancerState to confirm read works
+      const stateModel = s3db.models['TeamBalancerState'];
+      if (stateModel) {
+        const count = await s3db.withTransactionWithRetry(async () => {
+          return await stateModel.count();
+        });
       }
 
+      const tableCount = tbModelNames.length;
       result.pass = true;
-      result.message = 'PASS';
+      result.message = `PASS (S³ connected, ${tableCount} TB table${tableCount !== 1 ? 's' : ''})`;
     } catch (err) {
       result.pass = false;
       result.message = `FAIL: ${err.message}`;
-      Logger.verbose('TeamBalancer', 1, `[Diagnostics] Database test failed: ${err.message}`);
+      Logger.verbose('TeamBalancer', 1, `[Diagnostics] S³ Integration test failed: ${err.message}`);
     }
     this.results.push(result);
   }
@@ -105,7 +101,7 @@ export class TBDiagnostics {
 
       if (players.length < 10) {
         result.pass = true; // Not a failure, just not enough players
-        result.message = `SKIPPED (Low Pop: ${players.length} players)`;
+        result.message = `SKIPPED (${players.length} players — need ≥ 10)`;
         this.results.push(result);
         return;
       }

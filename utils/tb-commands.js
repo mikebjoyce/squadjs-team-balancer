@@ -364,88 +364,58 @@ const CommandHandlers = {
             const diagnostics = new TBDiagnostics(this);
             const results = await diagnostics.runAll();
 
-            const dbResult = results.find((r) => r.name === 'DB Connectivity');
+            const s3Result = results.find((r) => r.name === 'S³ Integration');
             const scrambleResult = results.find((r) => r.name === 'Live Scramble Test');
 
-            // Detailed stats calculation
+            const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+            // Page 1/3: Diagnostic results
+            await this.respond(player, [
+              `--- [TB Diag] ---`,
+              `S³: ${s3Result.pass ? 'PASS' : 'FAIL'}`,
+              `Scramble: ${scrambleResult.message}`,
+              `State: ${this.manuallyDisabled ? 'DISABLED' : 'ENABLED'}`
+            ].join('\n'));
+            await sleep(5500);
+
+            // Page 2/3: Runtime state + threshold highlights
             const players = this.server.players;
             const squads = this.server.squads;
             const t1Players = players.filter((p) => p.teamID === 1);
             const t2Players = players.filter((p) => p.teamID === 2);
-            const t1UnassignedPlayers = t1Players.filter((p) => p.squadID === null);
-            const t2UnassignedPlayers = t2Players.filter((p) => p.squadID === null);
             const t1Squads = squads.filter((s) => s.teamID === 1);
             const t2Squads = squads.filter((s) => s.teamID === 2);
-            
-            const scrambleInfo =
-              this.swapExecutor.pendingPlayerMoves.size > 0
-                ? `${this.swapExecutor.pendingPlayerMoves.size} pending player moves`
-                : 'No active scramble';
-
             const layer = await this.server.currentLayer;
             const layerName = layer?.name || 'Unknown';
             const gameMode = this.gameModeCached || 'N/A';
             const team1Name = this.getTeamName(1);
             const team2Name = this.getTeamName(2);
 
-            const diagMsg = [
-              `--- [TeamBalancer Diag] ---`,
-              `DB Connection: [${dbResult.message}]`,
-              `Live Scramble Test: [${scrambleResult.message}]`,
-              '',
-              '----- CORE STATUS -----',
-              `Version: ${this.constructor.version}`,
-              `Plugin Status: ${this.manuallyDisabled ? 'DISABLED (Manual override)' : 'ENABLED'}`,
-              `Win Streak: ${
-                this.winStreakTeam
-                  ? `${this.getTeamName(this.winStreakTeam)} with ${this.winStreakCount} win(s)`
-                  : 'N/A'
-              }`,
-              `Max Win Streak Threshold: ${this.options.maxWinStreak} wins`,
-              `Consecutive Win Streak: ${
-                this.consecutiveWinsTeam
-                  ? `${this.getTeamName(this.consecutiveWinsTeam)} with ${this.consecutiveWinsCount} win(s)`
-                  : 'N/A'
-              }`,
-              `Max Consecutive Threshold: ${this.options.maxConsecutiveWinsWithoutThreshold || 'Disabled'}`,
+            await this.respond(player, [
               `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
-              `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
-              `Scramble System: ${scrambleInfo}`,
-              '',
-              '----- ROUND/LAYER INFO -----',
-              `Layer: ${layerName}`,
-              `Game Mode: ${gameMode}`,
-              `Team 1 Name: ${team1Name}`,
-              `Team 2 Name: ${team2Name}`,
-              '',
-              '----- PLAYER/SQUAD INFO -----',
-              `Total Players: ${players.length}`,
-              `Team 1: ${t1Players.length} (Unassigned: ${t1UnassignedPlayers.length})`,
-              `Team 2: ${t2Players.length} (Unassigned: ${t2UnassignedPlayers.length})`,
-              `Total Squads: ${squads.length}`,
-              `Team 1 Squads: ${t1Squads.length}`,
-              `Team 2 Squads: ${t2Squads.length}`,
-              '',
-              '----- CONFIGURATION -----',
-              `Dominant Win Threshold: ${this.options?.minTicketsToCountAsDominantWin || 150} tickets`,
-              `Single Round Scramble: ${this.options?.enableSingleRoundScramble ? `ON (> ${this.options?.singleRoundScrambleThreshold} tix)` : 'OFF'}`,
-              `Invasion Thresholds: Atk: ${this.options?.invasionAttackTeamThreshold} | Def: ${this.options?.invasionDefenceTeamThreshold}`,
-              `Scramble %: ${(this.options?.scramblePercentage || 0.5) * 100}%`,
-              `Scramble Delay: ${this.options?.scrambleAnnouncementDelay}s`,
-              `Max Scramble Time: ${this.options?.maxScrambleCompletionTime}ms`,
-              `Discord Options: Mirror: ${this.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${this.options?.postScrambleDetails ? 'Yes' : 'No'}`,
-              `------------------------------------------`
-            ].join('\n');
-            const response = await this.respond(player, diagMsg);
+              `Scramble Active: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
+              `Plyrs: ${players.length} (T1: ${t1Players.length} | T2: ${t2Players.length})`,
+              `Squads: ${squads.length} (T1: ${t1Squads.length} | T2: ${t2Squads.length})`,
+              `Layer: ${layerName} / ${gameMode}`
+            ].join('\n'));
+            await sleep(5500);
+
+            // Page 3/3: Key config
+            await this.respond(player, [
+              `Thresholds: ${this.options.maxWinStreak} wins / ${this.options?.minTicketsToCountAsDominantWin || 150} tix`,
+              `Scramble: ${(this.options?.scramblePercentage || 0.5) * 100}% | ${this.options?.scrambleAnnouncementDelay}s | ${this.options?.maxScrambleCompletionTime}ms`,
+              `Teams: ${team1Name} | ${team2Name}`,
+              `1-Round: ${this.options?.enableSingleRoundScramble ? `ON (> ${this.options?.singleRoundScrambleThreshold} tix)` : 'OFF'}`,
+              `Invasion: Atk ${this.options?.invasionAttackTeamThreshold} | Def ${this.options?.invasionDefenceTeamThreshold}`
+            ].join('\n'));
 
             const targetReportChannel = this.discordReportChannel || this.discordChannel;
             if (targetReportChannel) {
               const embeds = DiscordHelpers.buildDiagEmbeds(this, results);
-              // Add context to the first embed description
               embeds[0].description = `Executed by **${adminName}** (In-Game)\n${embeds[0].description}`;
               await DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds });
             }
-            return response;
+            return;
           }
           default: {
             return await this.respond(
