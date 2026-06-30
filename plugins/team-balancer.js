@@ -1065,7 +1065,7 @@ export default class TeamBalancer extends S3PluginBase {
       return;
     }
     if (message.author.bot) {
-      Logger.verbose('TeamBalancer', 4, `[Discord] Ignored bot message from ${message.author.id}.`);
+      //Logger.verbose('TeamBalancer', 4, `[Discord] Ignored bot message from ${message.author.id}.`);
       return;
     }
     if (message.channel.id !== this.options.discordAdminChannelID) {
@@ -1075,7 +1075,7 @@ export default class TeamBalancer extends S3PluginBase {
 
     const content = message.content.trim();
     if (!content.startsWith('!teambalancer') && !content.startsWith('!scramble')) {
-      Logger.verbose('TeamBalancer', 4, `[Discord] Message "${content.substring(0, 40)}..." does not match TB commands. Dropping.`);
+      //Logger.verbose('TeamBalancer', 4, `[Discord] Message "${content.substring(0, 40)}..." does not match TB commands. Dropping.`);
       return;
     }
 
