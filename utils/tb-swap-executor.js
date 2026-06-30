@@ -167,7 +167,7 @@ export default class SwapExecutor {
     */
    async verifyMoves() {
       try {
-        await this.teamBalancer?._s3?.players?.refreshNowImmediate('TeamBalancer');
+        await this.teamBalancer?._s3?.players?.refreshNow('TeamBalancer');
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Failed to refresh player list for verification: ${err?.message || err}`);
         // Fall back to current counts if update fails
