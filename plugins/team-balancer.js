@@ -871,6 +871,16 @@ export default class TeamBalancer extends S3PluginBase {
       Logger.verbose('TeamBalancer', 4, `[mount] S³ gameState available: ${this._s3.gameState.getGamemode()} / ${this._s3.gameState.getLayerName()}`);
     }
 
+    // Subscribe to S³ layer change callbacks to keep gameModeCached/layerNameCached in sync.
+    // S³ fires this after handleNewGame/handleLayerInfoUpdated/handleServerInfoUpdated has
+    // resolved and committed new layer state — no polling or SquadJS listener required.
+    this._unsubscribeLayerChange = this._s3?.gameState?.onLayerGameModeChange?.(({ layerName, gameMode }) => {
+      this.gameModeCached = gameMode;
+      this.layerNameCached = layerName;
+      this.lastKnownGoodLayer = { gamemode: gameMode, name: layerName };
+      Logger.verbose('TeamBalancer', 4, `[S³ callback] Layer updated: ${gameMode} / ${layerName}`);
+    }) || null;
+
     this._isMounted = true;
     this.ready = true;
 
@@ -899,6 +909,10 @@ export default class TeamBalancer extends S3PluginBase {
       this.options.discordClient.removeListener('message', this.listeners.onDiscordMessage);
     }
 
+    if (this._unsubscribeLayerChange) {
+      this._unsubscribeLayerChange();
+      this._unsubscribeLayerChange = null;
+    }
     if (this._scrambleTimeout) clearTimeout(this._scrambleTimeout);
     if (this._scrambleCountdownTimeout) clearTimeout(this._scrambleCountdownTimeout);
     if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
@@ -1294,6 +1308,9 @@ export default class TeamBalancer extends S3PluginBase {
       Logger.verbose('TeamBalancer', 4, `[onNewGame] Event triggered with data: ${JSON.stringify(data)}`);
       
       // Layer info always served from S³ gameState; standalone polling removed in Stage 4.
+      // Reset cached mode/layer so a stale value doesn't bleed into the next round's isInvasion check.
+      this.gameModeCached = null;
+      this.layerNameCached = null;
       this._scrambleInProgress = false;
       this._scramblePending = false;      
       try {
@@ -1485,7 +1502,7 @@ export default class TeamBalancer extends S3PluginBase {
         return;
       }
 
-      const isInvasion = this.gameModeCached?.toLowerCase().includes('invasion') ?? false;
+      const isInvasion = gameMode.includes('invasion');
 
       if (this.options.enableSingleRoundScramble && !isInvasion && margin >= this.options.singleRoundScrambleThreshold) {
         roundReport.scrambled = true;
