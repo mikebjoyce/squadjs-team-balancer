@@ -21,7 +21,7 @@
  */
 
 import { Scrambler } from '../utils/tb-scrambler.js';
-import { extractClanGroups } from '../utils/tb-clan-grouping.js';
+import { extractClanGroups } from '../../squadjs-elo-tracker/tools/elo-clan-grouping.js';
 import {
   generateMockPlayers,
   generateMockSquads,

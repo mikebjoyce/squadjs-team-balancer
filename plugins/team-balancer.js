@@ -23,6 +23,7 @@
  *     resetStreak(reason)              — Resets win streak state and persists to DB.
  *     transformSquadJSData(squads, players) — Normalises SquadJS data for the Scrambler.
  *     buildRoundStartData()            — Snapshot of current teams (unused by TB directly).
+ *     formatMessage(template, values)    — Replaces {key} placeholders in templates.
  *
  * ─── DEPENDENCIES ────────────────────────────────────────────────
  *
@@ -235,7 +236,7 @@
 
 import S3PluginBase from './s3-plugin-base.js';
 import { DiscordHelpers } from '../utils/tb-discord-helpers.js';
-import Scrambler from '../utils/tb-scrambler.js';
+import Scrambler, { scrambleAttempts } from '../utils/tb-scrambler.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
 import CommandHandlers from '../utils/tb-commands.js';
 import Logger from '../../core/logger.js';
@@ -244,7 +245,7 @@ import fs from 'fs';
 import path from 'path';
 
 export default class TeamBalancer extends S3PluginBase {
-  static version = '3.2.1';
+  static version = '4.0.0';
 
   static get description() {
     return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';
@@ -1986,6 +1987,7 @@ export default class TeamBalancer extends S3PluginBase {
     Logger.verbose('TeamBalancer', 4, `Scramble started by ${adminName}`);
 
     let swapPlan = null;
+    let preScrambleState = null;
     try {
       let broadcastMessage;
       if (isSimulated) {
@@ -2018,6 +2020,44 @@ export default class TeamBalancer extends S3PluginBase {
         scrambleInputSquads,
         scrambleInputPlayers
       );
+
+      // Helper to build player info object
+      const buildPlayerInfo = (eosID) => {
+        const p = this.server.players.find(pl => pl.eosID === eosID);
+        return {
+          eosID,
+          name: p?.name ?? 'Unknown',
+          steamID: p?.steamID ?? null
+        };
+      };
+
+      // Capture pre-scramble state for JSON report (includes player names + eosIDs per squad)
+      preScrambleState = {
+        t1Squads: (scrambleInputSquads || [])
+          .filter(s => String(s.teamID) === '1')
+          .map(squad => ({
+            squadID: squad.squadID,
+            locked: squad.locked === 'True' || squad.locked === true,
+            players: (squad.players || []).map(buildPlayerInfo)
+          })),
+        t2Squads: (scrambleInputSquads || [])
+          .filter(s => String(s.teamID) === '2')
+          .map(squad => ({
+            squadID: squad.squadID,
+            locked: squad.locked === 'True' || squad.locked === true,
+            players: (squad.players || []).map(buildPlayerInfo)
+          })),
+        // Include players not in any squad (unassigned)
+        t1Unassigned: (scrambleInputPlayers || [])
+          .filter(p => String(p.teamID) === '1' && !p.squadID)
+          .map(p => buildPlayerInfo(p.eosID)),
+        t2Unassigned: (scrambleInputPlayers || [])
+          .filter(p => String(p.teamID) === '2' && !p.squadID)
+          .map(p => buildPlayerInfo(p.eosID)),
+        unassigned: (scrambleInputPlayers || [])
+          .filter(p => p.teamID === null || p.teamID === undefined)
+          .map(p => buildPlayerInfo(p.eosID))
+      };
 
       let eloMap = null;
       let minPlayersToMove = 0;
@@ -2209,7 +2249,7 @@ export default class TeamBalancer extends S3PluginBase {
       }
       // Write scramble report JSON (includes swap plan and execution results)
       if (swapPlan) {
-        this._writeScrambleReport(swapPlan, swapPlan.calculationTime || 0, isSimulated);
+        this._writeScrambleReport(swapPlan, swapPlan.calculationTime || 0, isSimulated, preScrambleState, scrambleAttempts);
       }
       this._scrambleInProgress = false;
       Logger.verbose('TeamBalancer', 4, 'Scramble finished');
@@ -2282,10 +2322,11 @@ export default class TeamBalancer extends S3PluginBase {
 
   /**
    * Writes a structured JSON scramble report to disk for post-scramble review.
-   * Captures swap plan metadata, execution results, timestamps, and team state.
-   * Written to the same directory as the round reports JSONL log.
+   * Captures swap plan metadata, execution results, timestamps, team state,
+   * and all scramble attempts with their scores.
+   * Written to the scrambleReportPath directory (default: TeamBalancerScrambleReports/).
    */
-  async _writeScrambleReport(swapPlan, calculationTime, isSimulated) {
+  async _writeScrambleReport(swapPlan, calculationTime, isSimulated, preScrambleState, attempts) {
     try {
       const reportDirOpt = this.options.scrambleReportPath;
       if (!reportDirOpt) {
@@ -2321,10 +2362,11 @@ export default class TeamBalancer extends S3PluginBase {
           duration: sessionReport.duration,
           successRate: sessionReport.successRate
         } : null,
-        preScrambleState: {
+        preScrambleState: preScrambleState || {
           winStreakTeam: this.winStreakTeam,
           winStreakCount: this.winStreakCount
-        }
+        },
+        scrambleAttempts: attempts || scrambleAttempts || []
       };
 
       await fs.promises.writeFile(reportPath, JSON.stringify(report, null, 2));

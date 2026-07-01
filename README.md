@@ -174,7 +174,6 @@ squad-server/
 │   └── team-balancer.js
 ├── utils/
 │   ├── tb-scrambler.js
-│   ├── tb-database.js
 │   ├── tb-commands.js
 │   ├── tb-diagnostics.js
 │   ├── tb-discord-helpers.js

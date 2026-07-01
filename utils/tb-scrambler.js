@@ -59,18 +59,23 @@
 
 import Logger from '../../core/logger.js';
 
+// Reset attempt log for this scramble run
+export const scrambleAttempts = [];
+
 export const Scrambler = {
-  async scrambleTeamsPreservingSquads({
-    squads,
-    players,
-    winStreakTeam,
-    scramblePercentage = 0.5,
-    eloMap = null,
-    minPlayersToMove = 0,
-    maxPlayersToMove = 0,
-    clanGroups = null,
-    pullEntireSquads = false
-  }) {
+   async scrambleTeamsPreservingSquads({
+     squads,
+     players,
+     winStreakTeam,
+     scramblePercentage = 0.5,
+     eloMap = null,
+     minPlayersToMove = 0,
+     maxPlayersToMove = 0,
+     clanGroups = null,
+     pullEntireSquads = false
+   }) {
+     // Reset attempt log for this run
+     scrambleAttempts.length = 0;
     const startTime = Date.now();
     const totalPlayers = players.length;
     const maxTeamSize = Math.max(50, Math.ceil(totalPlayers / 2));
@@ -642,18 +647,24 @@ export const Scrambler = {
         targetPlayersToMove
       );
 
-      if (Logger.verboseness && Logger.verboseness['TeamBalancer'] >= 4) {
+      // Collect attempt data for JSON log output (replaces verbose console logging)
+      {
         const selT1Players = selT1.reduce((n, s) => n + s.players.length, 0);
         const selT2Players = selT2.reduce((n, s) => n + s.players.length, 0);
         const hypoT1 = initialCounts.team1Count - selT1Players + selT2Players;
         const hypoT2 = initialCounts.team2Count - selT2Players + selT1Players;
-        Logger.verbose(
-          'TeamBalancer',
-          4,
-          `Attempt ${i + 1}: Score = ${currentScore.toFixed(2)}, Move T1->T2 = ${selT1Players}, Move T2->T1 = ${selT2Players}, Hypo T1 = ${hypoT1}, Hypo T2 = ${hypoT2} | Churn: ${selT1Players + selT2Players}/${targetPlayersToMove}`
-        );
-        Logger.verbose('TeamBalancer', 4, `Team1 selected squads IDs: ${selT1.map((s) => s.id).join(', ')}`);
-        Logger.verbose('TeamBalancer', 4, `Team2 selected squads IDs: ${selT2.map((s) => s.id).join(', ')}`);
+        
+        scrambleAttempts.push({
+          attemptNumber: i + 1,
+          score: currentScore.toFixed(2),
+          moveT1toT2: selT1Players,
+          moveT2toT1: selT2Players,
+          hypoT1,
+          hypoT2,
+          churn: `${selT1Players + selT2Players}/${targetPlayersToMove}`,
+          t1SquadIds: selT1.map((s) => s.id),
+          t2SquadIds: selT2.map((s) => s.id)
+        });
       }
 
       const t1Ids = new Set(selT1.map((s) => s.id));
