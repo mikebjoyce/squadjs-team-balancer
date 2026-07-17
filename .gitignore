@@ -12,6 +12,10 @@ yarn-error.log*
 *.jsonl
 SQUADJS_EVENT_ARCHITECTURE.md
 
-# Docker / local env
+# Docker / local env (kept on disk, untracked)
 /.env
+/.env.dist
+/Dockerfile
+/docker-compose.yml
+/testing/entrypoint.sh
 /testing/data/
