@@ -107,7 +107,7 @@ export default class TBDatabase {
     try {
       if (!this.sequelize) {
         Logger.verbose('TeamBalancer', 1, '[DB] No sequelize connector available.');
-        return { winStreakTeam: null, winStreakCount: 0, lastSyncTimestamp: null, lastScrambleTime: null, isStale: true };
+        return { winStreakTeam: null, winStreakCount: 0, lastSyncTimestamp: null, lastScrambleTime: null, isStale: true, scrambleOnRoundEndBy: null };
       }
 
       this.TeamBalancerStateModel = this.sequelize.define(
@@ -120,7 +120,10 @@ export default class TBDatabase {
           lastScrambleTime: { type: DataTypes.BIGINT, allowNull: true },
           consecutiveWinsTeam: { type: DataTypes.INTEGER, allowNull: true },
           consecutiveWinsCount: { type: DataTypes.INTEGER, allowNull: false, defaultValue: 0 },
-          manuallyDisabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false }
+          manuallyDisabled: { type: DataTypes.BOOLEAN, allowNull: false, defaultValue: false },
+          // Armed "!scramble matchend" state, so it survives a SquadJS restart mid-round.
+          // TEXT holding JSON { steamID, name } of the arming admin; null = not armed.
+          scrambleOnRoundEndBy: { type: DataTypes.TEXT, allowNull: true, defaultValue: null }
         },
         { timestamps: false, tableName: 'TeamBalancerState' }
       );
@@ -176,7 +179,8 @@ export default class TBDatabase {
             lastScrambleTime: null,
             consecutiveWinsTeam: null,
             consecutiveWinsCount: 0,
-            manuallyDisabled: false
+            manuallyDisabled: false,
+            scrambleOnRoundEndBy: null
           },
           transaction: t
         });
@@ -193,7 +197,8 @@ export default class TBDatabase {
             isStale: false,
             consecutiveWinsTeam: record.consecutiveWinsTeam,
             consecutiveWinsCount: record.consecutiveWinsCount,
-            manuallyDisabled: record.manuallyDisabled
+            manuallyDisabled: record.manuallyDisabled,
+            scrambleOnRoundEndBy: this._parseArm(record.scrambleOnRoundEndBy)
           };
         }
 
@@ -204,6 +209,7 @@ export default class TBDatabase {
         record.lastSyncTimestamp = Date.now();
         record.consecutiveWinsTeam = null;
         record.consecutiveWinsCount = 0;
+        record.scrambleOnRoundEndBy = null;
         await record.save({ transaction: t });
 
         return {
@@ -214,7 +220,8 @@ export default class TBDatabase {
           isStale: true,
           consecutiveWinsTeam: null,
           consecutiveWinsCount: 0,
-          manuallyDisabled: false
+          manuallyDisabled: false,
+          scrambleOnRoundEndBy: null
         };
       });
       });
@@ -228,7 +235,8 @@ export default class TBDatabase {
         isStale: true,
         consecutiveWinsTeam: null,
         consecutiveWinsCount: 0,
-        manuallyDisabled: false
+        manuallyDisabled: false,
+        scrambleOnRoundEndBy: null
       };
     }
   }
@@ -379,6 +387,42 @@ export default class TBDatabase {
       });
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] saveScrambleTime failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  _parseArm(raw) {
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  // Persist (or clear) the armed "!scramble matchend" state so it survives a restart.
+  // Pass the { steamID, name } of the arming admin to arm, or null to disarm.
+  async saveScrambleArm(armedBy) {
+    if (!this.TeamBalancerStateModel) {
+      Logger.verbose('TeamBalancer', 1, '[DB] saveScrambleArm called before initDB.');
+      return null;
+    }
+
+    try {
+      return await this._executeWithRetry(async () => {
+        return await this.sequelize.transaction(async (t) => {
+          const record = await this.TeamBalancerStateModel.findByPk(1, {
+            transaction: t
+          });
+          if (!record) return null;
+          record.scrambleOnRoundEndBy = armedBy ? JSON.stringify(armedBy) : null;
+          await record.save({ transaction: t });
+          Logger.verbose('TeamBalancer', 4, `[DB] Updated scrambleOnRoundEndBy: ${record.scrambleOnRoundEndBy}`);
+          return { scrambleOnRoundEndBy: this._parseArm(record.scrambleOnRoundEndBy) };
+        });
+      });
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 1, `[DB] saveScrambleArm failed: ${err.message}`);
       return null;
     }
   }

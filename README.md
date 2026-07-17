@@ -217,11 +217,12 @@ Admin Commands:
 !teambalancer clear            → Clear the round reports log file.
 !teambalancer help             → List available commands.
 
-!scramble                      → Manually trigger scramble with countdown.
-!scramble now                  → Immediate scramble (no countdown).
+!scramble                      → Manually trigger scramble with countdown (mid-round).
+!scramble now                  → Immediate scramble (no countdown, mid-round).
+!scramble matchend             → Trigger scramble at the end of the current round.
 !scramble dry                  → Dry-run scramble (simulation only).
 !scramble confirm              → Confirm a pending scramble request.
-!scramble cancel               → Cancel pending scramble countdown.
+!scramble cancel               → Cancel a pending or scheduled scramble.
 ```
 
 ---
