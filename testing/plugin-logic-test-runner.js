@@ -141,6 +141,7 @@ async function runPluginLogicTests() {
     immediateManualScramble: 'Scrambling now!',
     scrambleAnnouncement: 'Scramble in {delay}s after {count} dominant wins',
     singleRoundScramble: 'Single round scramble triggered.',
+    matchEndScrambleAnnouncement: 'Match-end scramble in {delay}s',
     system: { trackingEnabled: 'Tracking enabled', trackingDisabled: 'Tracking disabled' },
     dominant: { stomped: 'Stomp', steamrolled: 'Steamrolled', invasionAttackStomp: 'Atk Stomp', invasionDefendStomp: 'Def Stomp' },
     nonDominant: { streakBroken: 'Streak Broken', invasionAttackWin: 'Atk Win', invasionDefendWin: 'Def Win', narrowVictory: 'Narrow', marginalVictory: 'Marginal', tacticalAdvantage: 'Tactical', operationalSuperiority: 'Operational' }
@@ -270,6 +271,38 @@ async function runPluginLogicTests() {
   await tb.executeScramble(false); // isSimulated = false
   assert(tb.winStreakCount === 0, 'executeScramble resets the win streak count to 0.');
   assert(tb._scrambleInProgress === false, 'Scramble is no longer in progress after execution.');
+
+  // --- Phase 3.5: !scramble matchend (deferred round-end scramble) ---
+  console.log('\n[Phase 3.5: !scramble matchend]');
+
+  // Armed flag is consumed at round end and initiates the (countdown) scramble + announcement.
+  await tb.resetStreak();
+  tb.manuallyDisabled = false;
+  tb.options.enableWinStreakTracking = true;
+  tb.gameModeCached = 'RAAS';
+  capturedBroadcasts.length = 0;
+  tb._scrambleOnRoundEnd = true;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } }); // non-dominant: no auto-scramble
+  assert(tb._scrambleOnRoundEnd === false, 'matchend: armed flag is consumed at round end.');
+  assert(tb._scramblePending === true, 'matchend: a scramble is initiated at round end.');
+  assert(!!capturedBroadcasts.find((m) => m.includes('Match-end scramble in')), 'matchend: round-end announcement is broadcast.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // Fires even when win-streak tracking is disabled (it's an explicit admin command).
+  await tb.resetStreak();
+  tb.manuallyDisabled = true;
+  tb._scrambleOnRoundEnd = true;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'matchend: fires at round end even when tracking is disabled.');
+  await tb.cancelPendingScramble(null, null, true);
+  tb.manuallyDisabled = false;
+
+  // Command layer: arm via "!scramble matchend", then abort via "!scramble cancel".
+  tb._scrambleOnRoundEnd = false;
+  await tb.onScrambleCommand({ message: 'matchend', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(tb._scrambleOnRoundEnd === true, 'matchend: command arms the round-end flag.');
+  await tb.onScrambleCommand({ message: 'cancel', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(tb._scrambleOnRoundEnd === false, 'matchend: "!scramble cancel" clears the armed flag.');
 
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);
