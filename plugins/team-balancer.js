@@ -452,7 +452,10 @@ export default class TeamBalancer extends BasePlugin {
 
     this._isMounted = false;
     this._scramblePending = false;
-    // ponytail: in-memory arm for "!scramble matchend"; a SquadJS restart before round end drops it — re-arm. Persist via db.saveState only if this proves annoying.
+    // "!scramble matchend" arm. Persisted to the DB (see _setScrambleArm) so it survives a SquadJS
+    // restart mid-round; restored in mount() and consumed in onRoundEnded.
+    // ponytail: restore is gated only on the 2.5h staleness window, not on a match id — a restart that
+    // spans a full round boundary could fire the arm on the wrong round. Tie to matchId if that bites.
     this._scrambleOnRoundEnd = false;
     this._scrambleOnRoundEndBy = null; // { steamID, name } of the arming admin, for discard notifications
     this._scrambleTimeout = null;
@@ -479,6 +482,20 @@ export default class TeamBalancer extends BasePlugin {
      this.gameModeCached = null;
      this.layerNameCached = null;
      this.cachedAbbreviations = {};
+  }
+
+  // Single funnel for arming/disarming the "!scramble matchend" state: updates the in-memory
+  // flags AND persists to the DB so the arm survives a restart. Pass the { steamID, name } of the
+  // arming admin to arm, or null to disarm. Persistence is best-effort (a DB failure is logged,
+  // not thrown) so the in-memory behaviour is never blocked by the database.
+  async _setScrambleArm(armedBy) {
+    this._scrambleOnRoundEnd = !!armedBy;
+    this._scrambleOnRoundEndBy = armedBy;
+    try {
+      await this.db.saveScrambleArm(armedBy);
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist scramble arm: ${err.message}`);
+    }
   }
 
   isIgnoredMatch() {
@@ -518,6 +535,11 @@ export default class TeamBalancer extends BasePlugin {
         this.lastSyncTimestamp = dbState.lastSyncTimestamp;
         this.lastScrambleTime = dbState.lastScrambleTime;
         this.manuallyDisabled = dbState.manuallyDisabled || false;
+        if (dbState.scrambleOnRoundEndBy) {
+          this._scrambleOnRoundEnd = true;
+          this._scrambleOnRoundEndBy = dbState.scrambleOnRoundEndBy;
+          Logger.verbose('TeamBalancer', 2, `[DB] Restored armed match-end scramble (by ${this._scrambleOnRoundEndBy.name || 'unknown'}).`);
+        }
         Logger.verbose('TeamBalancer', 4, `[DB] Restored state: team=${this.winStreakTeam}, count=${this.winStreakCount}, manuallyDisabled=${this.manuallyDisabled}`);
       } else if (dbState) {
         Logger.verbose('TeamBalancer', 4, '[DB] State stale; resetting.');
@@ -975,7 +997,7 @@ export default class TeamBalancer extends BasePlugin {
     if (isCancel) {
       this.scrambleConfirmation = null;
       const wasArmed = this._scrambleOnRoundEnd;
-      this._scrambleOnRoundEnd = false;
+      await this._setScrambleArm(null);
       const cancelled = await this.cancelPendingScramble(null, null, false);
       if (cancelled || wasArmed) await message.reply('✅ Pending scramble cancelled.');
       else if (this._scrambleInProgress) await message.reply('⚠️ Cannot cancel scramble - it is already executing.');
@@ -1008,8 +1030,7 @@ export default class TeamBalancer extends BasePlugin {
           await message.reply('⚠️ A scramble is already scheduled for the end of this round. Use `!scramble cancel` to abort.');
           return;
         }
-        this._scrambleOnRoundEnd = true;
-        this._scrambleOnRoundEndBy = { steamID: null, name: message.author?.username || 'Discord admin' };
+        await this._setScrambleArm({ steamID: null, name: message.author?.username || 'Discord admin' });
         await message.reply('🕒 Scramble scheduled for the END of this round. Use `!scramble cancel` to abort.');
         return;
       }
@@ -1039,7 +1060,7 @@ export default class TeamBalancer extends BasePlugin {
       await message.reply(replyMsg);
       // A LIVE immediate/countdown scramble supersedes any armed end-of-round scramble.
       // Dry runs are simulations only and must not disarm a scheduled scramble.
-      if (!hasDry) this._scrambleOnRoundEnd = false;
+      if (!hasDry) await this._setScrambleArm(null);
       const success = await this.initiateScramble(hasDry, hasDry || hasNow, null, null);
       if (!success) await message.reply('❌ Failed to initiate scramble.');
     }
@@ -1112,10 +1133,9 @@ export default class TeamBalancer extends BasePlugin {
       this._scramblePending = false;
       if (this._scrambleOnRoundEnd) {
         Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Discarding armed match-end scramble (new game started without consuming it).');
-        this._scrambleOnRoundEnd = false;
         // Don't drop an admin's command silently: tell them (and Discord) the arm was discarded.
         const armedBy = this._scrambleOnRoundEndBy;
-        this._scrambleOnRoundEndBy = null;
+        await this._setScrambleArm(null);
         const discardMsg = 'Your scheduled end-of-round scramble was discarded because a new round started. Re-issue "!scramble matchend" during the round if still needed.';
         if (armedBy?.steamID) {
           try {
@@ -1160,7 +1180,7 @@ export default class TeamBalancer extends BasePlugin {
       }
       this._scrambleInProgress = false;
       this._scramblePending = false;
-      this._scrambleOnRoundEnd = false;
+      await this._setScrambleArm(null);
       this.cleanupScrambleTracking();
     }
   }
@@ -1197,9 +1217,8 @@ export default class TeamBalancer extends BasePlugin {
       // tracking, match outcome (incl. draws), or ignored/seed modes. Mirrors the automatic
       // round-end scramble path (broadcast -> countdown -> execute in the post-round window).
       if (this._scrambleOnRoundEnd) {
-        this._scrambleOnRoundEnd = false;
         const armedBy = this._scrambleOnRoundEndBy;
-        this._scrambleOnRoundEndBy = null;
+        await this._setScrambleArm(null);
 
         // The early return below skips the main-path parsing, but the finally block still
         // logs this round — populate the report's layer fallback and outcome fields here.

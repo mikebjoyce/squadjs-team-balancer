@@ -502,7 +502,7 @@ const CommandHandlers = {
         if (isCancel) {
           this.scrambleConfirmation = null;
           const wasArmed = this._scrambleOnRoundEnd;
-          this._scrambleOnRoundEnd = false;
+          await this._setScrambleArm(null);
           const cancelled = await this.cancelPendingScramble(steamID, player, false);
           if (cancelled || wasArmed) {
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Scramble cancelled by ${adminName}`);
@@ -554,8 +554,7 @@ const CommandHandlers = {
           if (this._scrambleOnRoundEnd) {
             return await this.respond(player, 'A scramble is already scheduled for the end of this round. Use "!scramble cancel" to abort.');
           }
-          this._scrambleOnRoundEnd = true;
-          this._scrambleOnRoundEndBy = { steamID, name: adminName };
+          await this._setScrambleArm({ steamID, name: adminName });
           const responseMsg = 'Scramble scheduled for the END of this round. Use "!scramble cancel" to abort.';
           Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ${adminName} scheduled an end-of-round scramble`);
           if (this.discordChannel) {
@@ -620,7 +619,7 @@ const CommandHandlers = {
 
         // A LIVE immediate/countdown scramble supersedes any armed end-of-round scramble.
         // Dry runs are simulations only and must not disarm a scheduled scramble.
-        if (!isSimulated) this._scrambleOnRoundEnd = false;
+        if (!isSimulated) await this._setScrambleArm(null);
 
         // Execute
         const success = await this.initiateScramble(

@@ -41,6 +41,7 @@ const mockDbState = {
   winStreakCount: 0,
   lastSyncTimestamp: Date.now(),
   lastScrambleTime: null,
+  scrambleOnRoundEndBy: null,
 };
 
 const mockModel = {
@@ -53,6 +54,7 @@ const mockModel = {
         mockDbState.winStreakCount = this.winStreakCount;
         mockDbState.lastSyncTimestamp = this.lastSyncTimestamp;
         mockDbState.lastScrambleTime = this.lastScrambleTime;
+        mockDbState.scrambleOnRoundEndBy = this.scrambleOnRoundEndBy;
       },
     };
     return [instance, true];
@@ -65,6 +67,7 @@ const mockModel = {
         mockDbState.winStreakCount = this.winStreakCount;
         mockDbState.lastSyncTimestamp = this.lastSyncTimestamp;
         mockDbState.lastScrambleTime = this.lastScrambleTime;
+        mockDbState.scrambleOnRoundEndBy = this.scrambleOnRoundEndBy;
       },
     };
     return instance;
@@ -312,8 +315,13 @@ async function runPluginLogicTests() {
   tb._scrambleOnRoundEnd = false;
   await tb.onScrambleCommand({ message: 'matchend', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
   assert(tb._scrambleOnRoundEnd === true, 'matchend: command arms the round-end flag.');
+  // Survives a restart: the arm is persisted to the DB and reads back parsed (what mount() restores).
+  assert(typeof mockDbState.scrambleOnRoundEndBy === 'string' && mockDbState.scrambleOnRoundEndBy.includes('admin1'), 'matchend: armed state is persisted to the DB.');
+  const reloadedArm = tb.db._parseArm(mockDbState.scrambleOnRoundEndBy);
+  assert(reloadedArm && reloadedArm.steamID === 'admin1', 'matchend: persisted arm reads back on reload (survives restart).');
   await tb.onScrambleCommand({ message: 'cancel', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
   assert(tb._scrambleOnRoundEnd === false, 'matchend: "!scramble cancel" clears the armed flag.');
+  assert(mockDbState.scrambleOnRoundEndBy === null, 'matchend: cancel clears the persisted arm too.');
 
   // "matchend" must not combine with "now"/"dry" (dry would bypass the confirmation gate and arm a live scramble).
   await tb.onScrambleCommand({ message: 'matchend dry', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
