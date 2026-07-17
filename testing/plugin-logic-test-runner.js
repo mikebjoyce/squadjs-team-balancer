@@ -350,16 +350,18 @@ async function runPluginLogicTests() {
   assert(!capturedBroadcasts.find((m) => m.includes('Match-end scramble in')), 'matchend: a stale cross-round arm does NOT scramble the wrong round.');
   assert(tb.winStreakCount === 1, 'matchend: after discarding a stale arm, the round is still evaluated normally (streak incremented).');
 
-  // Restart WITHIN the same round: the arm's stamp matches the current round, so it still fires.
+  // Restart WITHIN the same round: server.matchStartTime is recomputed as Date.now()-PLAYTIME (integer
+  // seconds) on every poll, so it jitters by <1s across polls. The current value differs slightly from
+  // the stamp but stays within tolerance → the arm must STILL fire (regression guard against strict-eq).
   await tb.resetStreak();
   tb._scramblePending = false;
   capturedBroadcasts.length = 0;
-  mockServer.matchStartTime = new Date(3000000);
+  mockServer.matchStartTime = new Date(3000450); // ~450ms intra-round jitter vs the stamp below
   tb._scrambleOnRoundEnd = true;
   tb._scrambleOnRoundEndBy = { steamID: 'admin1', name: 'Admin', matchStartTime: 3000000 }; // same round
   await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
-  assert(tb._scramblePending === true, 'matchend: an arm whose round still matches fires (restart within the same round).');
-  assert(!!capturedBroadcasts.find((m) => m.includes('Match-end scramble in')), 'matchend: matching-round arm broadcasts the round-end announcement.');
+  assert(tb._scramblePending === true, 'matchend: an arm still fires when the round start is within jitter tolerance (restart within the same round).');
+  assert(!!capturedBroadcasts.find((m) => m.includes('Match-end scramble in')), 'matchend: within-tolerance arm broadcasts the round-end announcement.');
   await tb.cancelPendingScramble(null, null, true);
 
   // Arming stamps the current round's start time onto the arm (and persists it).

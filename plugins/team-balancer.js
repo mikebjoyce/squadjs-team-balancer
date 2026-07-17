@@ -454,8 +454,8 @@ export default class TeamBalancer extends BasePlugin {
     this._scramblePending = false;
     // "!scramble matchend" arm. Persisted to the DB (see _setScrambleArm), stamped with the round's
     // server.matchStartTime, so it survives a SquadJS restart mid-round: restored in mount(), and in
-    // onRoundEnded it fires only if the current round's start still matches — a restart that crosses a
-    // round boundary discards the stale arm instead of scrambling the wrong round.
+    // onRoundEnded it fires only if the current round's start is within tolerance of the stamp — a
+    // restart that crosses a round boundary discards the stale arm instead of scrambling the wrong round.
     this._scrambleOnRoundEnd = false;
     this._scrambleOnRoundEndBy = null; // { steamID, name, matchStartTime } — arming admin + round fingerprint, for the gate + discard notices
     this._scrambleTimeout = null;
@@ -1223,13 +1223,17 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
 
       // Stale-arm guard: if a restart carried the arm past the round it was armed for, its stamped
-      // match start no longer matches the current round. Discard it (don't scramble the wrong round)
-      // and fall through so THIS round is evaluated normally by the win-streak path below. Acts only
-      // when both start times are known and differ, so an unknown time falls through to the fire path.
+      // match start differs from the current round's by ~a full round length. Discard it (don't scramble
+      // the wrong round) and fall through so THIS round is evaluated normally by the win-streak path below.
+      // NOTE: server.matchStartTime is recomputed every server-info poll as Date.now() - PLAYTIME (integer
+      // seconds), so it jitters up to ~1s within a single round. Compare with a tolerance well above that
+      // jitter yet far below any round length — never strict equality, or the same round reads as different.
+      // Acts only when both start times are known, so an unknown time falls through to the fire path.
       if (this._scrambleOnRoundEnd) {
         const armedMatchStart = this._scrambleOnRoundEndBy?.matchStartTime ?? null;
         const currentMatchStart = this.server.matchStartTime?.getTime() ?? null;
-        if (armedMatchStart !== null && currentMatchStart !== null && armedMatchStart !== currentMatchStart) {
+        const SAME_ROUND_TOLERANCE_MS = 60 * 1000; // >> ~1s poll jitter, << any round length
+        if (armedMatchStart !== null && currentMatchStart !== null && Math.abs(armedMatchStart - currentMatchStart) > SAME_ROUND_TOLERANCE_MS) {
           const armedBy = this._scrambleOnRoundEndBy;
           Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Discarding armed match-end scramble: armed in a previous round (matchStart ${armedMatchStart}) but this round started at ${currentMatchStart} — a restart crossed a round boundary.`);
           await this._setScrambleArm(null);
