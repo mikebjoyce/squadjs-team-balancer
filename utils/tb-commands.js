@@ -118,6 +118,7 @@ const CommandHandlers = {
       scrambleFailedMessage: 'Scramble failed! No valid solution found.',
       playerScrambledWarning: "You've been scrambled.", 
       seedScrambleAnnouncement: 'Seed match complete! Scrambling teams in {delay}s...',
+      matchEndScrambleAnnouncement: 'Admin scheduled a team balance at macht end | Scrambling in {delay}s...',
 
       system: {
         trackingEnabled: 'Team Balancer has been enabled.',
@@ -450,7 +451,7 @@ const CommandHandlers = {
           default: {
             return await this.respond(
               player,
-              'Invalid command. Usage: !teambalancer [status|diag|on|off|help] or !scramble [now|dry|cancel]'
+              'Invalid command. Usage: !teambalancer [status|diag|on|off|help] or !scramble [now|dry|matchend|cancel]'
             );
           }
         }
@@ -488,6 +489,7 @@ const CommandHandlers = {
       const hasNow = args.includes('now');
       const hasDry = args.includes('dry');
       const isCancel = args.includes('cancel');
+      const hasMatchEnd = args.includes('matchend');
 
       const steamID = command.steamID;
       const player = command.player;
@@ -497,8 +499,10 @@ const CommandHandlers = {
         // Handle cancel subcommand
         if (isCancel) {
           this.scrambleConfirmation = null;
+          const wasArmed = this._scrambleOnRoundEnd;
+          this._scrambleOnRoundEnd = false;
           const cancelled = await this.cancelPendingScramble(steamID, player, false);
-          if (cancelled) {
+          if (cancelled || wasArmed) {
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Scramble cancelled by ${adminName}`);
             const response = await this.respond(player, 'Pending scramble cancelled.');
             if (this.discordChannel) {
@@ -531,9 +535,31 @@ const CommandHandlers = {
         // Require confirmation for live scrambles
         if (this.options.requireScrambleConfirmation && !hasDry && !isConfirm) {
           this.scrambleConfirmation = { timestamp: Date.now(), args: args };
-          const type = hasNow ? 'IMMEDIATE' : 'scheduled';
+          const type = hasMatchEnd ? 'end-of-round' : hasNow ? 'IMMEDIATE' : 'scheduled';
           const timeoutSec = this.options.scrambleConfirmationTimeout || 60;
           return await this.respond(player, `Please confirm ${type} scramble by typing "!scramble confirm" within ${timeoutSec} seconds.`);
+        }
+
+        // Arm a deferred scramble for the end of the current round (consumed in onRoundEnded).
+        // Runs after the confirmation gate, so it only arms once confirmed (or immediately if confirmation is off).
+        if (hasMatchEnd) {
+          if (this._scrambleOnRoundEnd) {
+            return await this.respond(player, 'A scramble is already scheduled for the end of this round. Use "!scramble cancel" to abort.');
+          }
+          this._scrambleOnRoundEnd = true;
+          const responseMsg = 'Scramble scheduled for the END of this round. Use "!scramble cancel" to abort.';
+          Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ${adminName} scheduled an end-of-round scramble`);
+          if (this.discordChannel) {
+            const embed = {
+              color: 0x3498db,
+              title: '🎮 In-Game Command: !scramble matchend',
+              description: `Executed by **${adminName}**`,
+              fields: [{ name: 'Response', value: responseMsg, inline: false }],
+              timestamp: new Date().toISOString()
+            };
+            await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
+          }
+          return await this.respond(player, responseMsg);
         }
 
         // Dry runs are ALWAYS immediate (no countdown for simulations)
@@ -567,9 +593,9 @@ const CommandHandlers = {
         if (isSimulated) {
           responseMsg = 'Initiating dry run scramble (immediate)...';
         } else {
-          responseMsg = immediate 
-            ? 'Initiating immediate scramble...'
-            : 'Initiating scramble with countdown...';
+          responseMsg = immediate
+            ? 'Initiating immediate scramble... NOTE: this scrambles NOW, mid-round. Use "!scramble matchend" to wait until the round ends.'
+            : `Initiating scramble with countdown... NOTE: this scrambles mid-round in ${this.options.scrambleAnnouncementDelay}s, NOT at round end. Use "!scramble matchend" to wait until the round ends.`;
         }
         if (this.discordChannel) {
           const embed = {
@@ -582,6 +608,9 @@ const CommandHandlers = {
           await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
         }
         await this.respond(player, responseMsg);
+
+        // An immediate/countdown scramble supersedes any armed end-of-round scramble.
+        this._scrambleOnRoundEnd = false;
 
         // Execute
         const success = await this.initiateScramble(
