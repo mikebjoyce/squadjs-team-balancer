@@ -454,6 +454,7 @@ export default class TeamBalancer extends BasePlugin {
     this._scramblePending = false;
     // ponytail: in-memory arm for "!scramble matchend"; a SquadJS restart before round end drops it — re-arm. Persist via db.saveState only if this proves annoying.
     this._scrambleOnRoundEnd = false;
+    this._scrambleOnRoundEndBy = null; // { steamID, name } of the arming admin, for discard notifications
     this._scrambleTimeout = null;
     this._scrambleCountdownTimeout = null;
     this._flippedAfterScramble = false;
@@ -986,6 +987,13 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
+      // "matchend" is exclusive: combined with "dry" it would bypass the confirmation gate
+      // (which skips on hasDry) and arm a LIVE scramble; combined with "now" the intent is ambiguous.
+      if (hasMatchEnd && (hasDry || hasNow)) {
+        await message.reply('⚠️ Cannot combine `matchend` with `now` or `dry`. Use `!scramble matchend` on its own.');
+        return;
+      }
+
       if (this.options.requireScrambleConfirmation && !hasDry && !isConfirm) {
         this.scrambleConfirmation = { timestamp: Date.now(), args: args };
         const type = hasMatchEnd ? 'end-of-round' : hasNow ? 'IMMEDIATE' : 'scheduled';
@@ -1001,6 +1009,7 @@ export default class TeamBalancer extends BasePlugin {
           return;
         }
         this._scrambleOnRoundEnd = true;
+        this._scrambleOnRoundEndBy = { steamID: null, name: message.author?.username || 'Discord admin' };
         await message.reply('🕒 Scramble scheduled for the END of this round. Use `!scramble cancel` to abort.');
         return;
       }
@@ -1028,8 +1037,9 @@ export default class TeamBalancer extends BasePlugin {
         replyMsg += `\n⚠️ This scrambles mid-round, NOT at round end. Use \`!scramble matchend\` to wait until the round ends.`;
       }
       await message.reply(replyMsg);
-      // An immediate/countdown scramble supersedes any armed end-of-round scramble.
-      this._scrambleOnRoundEnd = false;
+      // A LIVE immediate/countdown scramble supersedes any armed end-of-round scramble.
+      // Dry runs are simulations only and must not disarm a scheduled scramble.
+      if (!hasDry) this._scrambleOnRoundEnd = false;
       const success = await this.initiateScramble(hasDry, hasDry || hasNow, null, null);
       if (!success) await message.reply('❌ Failed to initiate scramble.');
     }
@@ -1103,6 +1113,22 @@ export default class TeamBalancer extends BasePlugin {
       if (this._scrambleOnRoundEnd) {
         Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Discarding armed match-end scramble (new game started without consuming it).');
         this._scrambleOnRoundEnd = false;
+        // Don't drop an admin's command silently: tell them (and Discord) the arm was discarded.
+        const armedBy = this._scrambleOnRoundEndBy;
+        this._scrambleOnRoundEndBy = null;
+        const discardMsg = 'Your scheduled end-of-round scramble was discarded because a new round started. Re-issue "!scramble matchend" during the round if still needed.';
+        if (armedBy?.steamID) {
+          try {
+            await this.server.rcon.warn(armedBy.steamID, `${this.RconMessages.prefix} ${discardMsg}`);
+          } catch (err) {
+            Logger.verbose('TeamBalancer', 1, `Failed to warn admin about discarded match-end scramble: ${err.message}`);
+          }
+        }
+        if (this.discordChannel) {
+          DiscordHelpers.sendDiscordMessage(this.discordChannel, {
+            content: `⚠️ Scheduled end-of-round scramble (armed by **${armedBy?.name || 'unknown'}**) was discarded — a new round started before it could fire.`
+          });
+        }
       }
       try {
         const flippedTeam = this.winStreakTeam === 1 ? 2 : this.winStreakTeam === 2 ? 1 : null;
@@ -1172,9 +1198,37 @@ export default class TeamBalancer extends BasePlugin {
       // round-end scramble path (broadcast -> countdown -> execute in the post-round window).
       if (this._scrambleOnRoundEnd) {
         this._scrambleOnRoundEnd = false;
-        roundReport.scrambled = true;
-        roundReport.scrambleCondition = 'Manual Match End';
+        const armedBy = this._scrambleOnRoundEndBy;
+        this._scrambleOnRoundEndBy = null;
+
+        // The early return below skips the main-path parsing, but the finally block still
+        // logs this round — populate the report's layer fallback and outcome fields here.
+        if (this.gameModeCached === null && this.layerNameCached === null && this.lastKnownGoodLayer !== null) {
+          this.gameModeCached = this.lastKnownGoodLayer.gamemode;
+          this.layerNameCached = this.lastKnownGoodLayer.name;
+          roundReport.gameMode = this.gameModeCached;
+          roundReport.layerName = this.layerNameCached;
+        }
+        if (data?.winner) {
+          const matchEndWinnerID = parseInt(data.winner.team);
+          const matchEndWinnerTickets = parseInt(data.winner.tickets);
+          const matchEndLoserTickets = parseInt(data.loser?.tickets);
+          if (!isNaN(matchEndWinnerTickets) && !isNaN(matchEndLoserTickets)) {
+            roundReport.winnerTickets = matchEndWinnerTickets;
+            roundReport.loserTickets = matchEndLoserTickets;
+            roundReport.ticketMargin = matchEndWinnerTickets - matchEndLoserTickets;
+          }
+          if (!isNaN(matchEndWinnerID)) {
+            winnerID = matchEndWinnerID;
+            roundReport.winnerName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${matchEndWinnerID}` : this.getTeamName(matchEndWinnerID)) || `Team ${matchEndWinnerID}`;
+            roundReport.loserName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${3 - matchEndWinnerID}` : this.getTeamName(3 - matchEndWinnerID)) || `Team ${3 - matchEndWinnerID}`;
+          }
+        }
+
         if (!this._scramblePending && !this._scrambleInProgress) {
+          // Only attribute the scramble to this path when it actually initiates one.
+          roundReport.scrambled = true;
+          roundReport.scrambleCondition = 'Manual Match End';
           this.stopPollingGameInfo();
           this.stopPollingTeamAbbreviations();
           if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
@@ -1188,6 +1242,16 @@ export default class TeamBalancer extends BasePlugin {
           this.initiateScramble(false, false).catch(err =>
             Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
           );
+        } else {
+          // Another scramble is already pending/executing — don't double up, but don't stay silent either.
+          Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Armed match-end scramble skipped: another scramble is already pending or in progress.');
+          if (armedBy?.steamID) {
+            try {
+              await this.server.rcon.warn(armedBy.steamID, `${this.RconMessages.prefix} Your scheduled end-of-round scramble was skipped — another scramble is already pending or executing.`);
+            } catch (err) {
+              Logger.verbose('TeamBalancer', 1, `Failed to warn admin about skipped match-end scramble: ${err.message}`);
+            }
+          }
         }
         return;
       }

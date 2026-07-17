@@ -87,6 +87,7 @@ export const DiscordHelpers = {
         { name: 'Elo Integration', value: eloStatus, inline: true },
         { name: 'Dominant Streak', value: winStreakText, inline: true },
         { name: 'Consecutive Streak', value: consecutiveText, inline: true },
+        { name: 'Round-End Scramble', value: tb._scrambleOnRoundEnd ? '🕒 Armed (fires at round end)' : 'None', inline: true },
         { name: 'Last Scramble', value: lastScrambleText, inline: false },
         { name: 'Player Count', value: `Total: ${players.length} | T1: ${t1Count} | T2: ${t2Count}`, inline: false }
       ],
