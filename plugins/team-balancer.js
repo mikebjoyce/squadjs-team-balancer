@@ -1226,13 +1226,14 @@ export default class TeamBalancer extends BasePlugin {
       // match start differs from the current round's by ~a full round length. Discard it (don't scramble
       // the wrong round) and fall through so THIS round is evaluated normally by the win-streak path below.
       // NOTE: server.matchStartTime is recomputed every server-info poll as Date.now() - PLAYTIME (integer
-      // seconds), so it jitters up to ~1s within a single round. Compare with a tolerance well above that
-      // jitter yet far below any round length — never strict equality, or the same round reads as different.
+      // seconds), so it jitters within a round (sub-second normally, more when A2S info is stale). Compare
+      // with a minutes-scale tolerance — comfortably above that jitter, well below a round length (a round
+      // change is many minutes apart) — never strict equality, or the same round reads as different.
       // Acts only when both start times are known, so an unknown time falls through to the fire path.
       if (this._scrambleOnRoundEnd) {
         const armedMatchStart = this._scrambleOnRoundEndBy?.matchStartTime ?? null;
         const currentMatchStart = this.server.matchStartTime?.getTime() ?? null;
-        const SAME_ROUND_TOLERANCE_MS = 60 * 1000; // >> ~1s poll jitter, << any round length
+        const SAME_ROUND_TOLERANCE_MS = 5 * 60 * 1000; // 5 min: far above poll jitter/staleness, far below a round
         if (armedMatchStart !== null && currentMatchStart !== null && Math.abs(armedMatchStart - currentMatchStart) > SAME_ROUND_TOLERANCE_MS) {
           const armedBy = this._scrambleOnRoundEndBy;
           Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Discarding armed match-end scramble: armed in a previous round (matchStart ${armedMatchStart}) but this round started at ${currentMatchStart} — a restart crossed a round boundary.`);
