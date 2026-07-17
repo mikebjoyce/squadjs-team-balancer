@@ -297,12 +297,34 @@ async function runPluginLogicTests() {
   await tb.cancelPendingScramble(null, null, true);
   tb.manuallyDisabled = false;
 
+  // If another scramble is already pending at round end, matchend must not double up (and not announce).
+  tb._scrambleOnRoundEnd = true;
+  tb._scramblePending = true;
+  capturedBroadcasts.length = 0;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scrambleOnRoundEnd === false, 'matchend: flag consumed even when another scramble is pending.');
+  assert(!capturedBroadcasts.find((m) => m.includes('Match-end scramble in')), 'matchend: no announcement when another scramble is already pending.');
+  tb._scramblePending = false;
+
   // Command layer: arm via "!scramble matchend", then abort via "!scramble cancel".
+  // requireScrambleConfirmation defaults to true and would divert the command into the confirmation gate.
+  tb.options.requireScrambleConfirmation = false;
   tb._scrambleOnRoundEnd = false;
   await tb.onScrambleCommand({ message: 'matchend', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
   assert(tb._scrambleOnRoundEnd === true, 'matchend: command arms the round-end flag.');
   await tb.onScrambleCommand({ message: 'cancel', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
   assert(tb._scrambleOnRoundEnd === false, 'matchend: "!scramble cancel" clears the armed flag.');
+
+  // "matchend" must not combine with "now"/"dry" (dry would bypass the confirmation gate and arm a live scramble).
+  await tb.onScrambleCommand({ message: 'matchend dry', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(tb._scrambleOnRoundEnd === false, 'matchend: "matchend dry" combo is rejected, nothing armed.');
+
+  // A dry run must NOT disarm a scheduled end-of-round scramble.
+  tb._scrambleOnRoundEnd = true;
+  await tb.onScrambleCommand({ message: 'dry', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(tb._scrambleOnRoundEnd === true, 'matchend: a dry run does not disarm the scheduled scramble.');
+  tb._scrambleOnRoundEnd = false;
+  tb.options.requireScrambleConfirmation = true; // restore default
 
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);

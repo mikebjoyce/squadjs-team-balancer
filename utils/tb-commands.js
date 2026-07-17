@@ -411,6 +411,7 @@ const CommandHandlers = {
               `Max Consecutive Threshold: ${this.options.maxConsecutiveWinsWithoutThreshold || 'Disabled'}`,
               `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
               `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
+              `Scheduled for Round End: ${this._scrambleOnRoundEnd ? 'Yes' : 'No'}`,
               `Scramble System: ${scrambleInfo}`,
               '',
               '----- ROUND/LAYER INFO -----',
@@ -473,6 +474,11 @@ const CommandHandlers = {
       let args = (command.message?.trim().toLowerCase().split(/\s+/) || []).filter(arg => arg);
       const isConfirm = args.includes('confirm');
 
+      // Declared before the isConfirm early-exits below, which reference `player` (was a TDZ ReferenceError).
+      const steamID = command.steamID;
+      const player = command.player;
+      const adminName = player?.name || steamID;
+
       if (isConfirm) {
         if (!this.scrambleConfirmation) {
           return await this.respond(player, 'No pending scramble confirmation found.');
@@ -490,10 +496,6 @@ const CommandHandlers = {
       const hasDry = args.includes('dry');
       const isCancel = args.includes('cancel');
       const hasMatchEnd = args.includes('matchend');
-
-      const steamID = command.steamID;
-      const player = command.player;
-      const adminName = player?.name || steamID;
 
       try {
         // Handle cancel subcommand
@@ -532,6 +534,12 @@ const CommandHandlers = {
           );
         }
 
+        // "matchend" is exclusive: combined with "dry" it would bypass the confirmation gate
+        // (which skips on hasDry) and arm a LIVE scramble; combined with "now" the intent is ambiguous.
+        if (hasMatchEnd && (hasDry || hasNow)) {
+          return await this.respond(player, 'Cannot combine "matchend" with "now" or "dry". Use "!scramble matchend" on its own.');
+        }
+
         // Require confirmation for live scrambles
         if (this.options.requireScrambleConfirmation && !hasDry && !isConfirm) {
           this.scrambleConfirmation = { timestamp: Date.now(), args: args };
@@ -547,6 +555,7 @@ const CommandHandlers = {
             return await this.respond(player, 'A scramble is already scheduled for the end of this round. Use "!scramble cancel" to abort.');
           }
           this._scrambleOnRoundEnd = true;
+          this._scrambleOnRoundEndBy = { steamID, name: adminName };
           const responseMsg = 'Scramble scheduled for the END of this round. Use "!scramble cancel" to abort.';
           Logger.verbose('TeamBalancer', 2, `[TeamBalancer] ${adminName} scheduled an end-of-round scramble`);
           if (this.discordChannel) {
@@ -609,8 +618,9 @@ const CommandHandlers = {
         }
         await this.respond(player, responseMsg);
 
-        // An immediate/countdown scramble supersedes any armed end-of-round scramble.
-        this._scrambleOnRoundEnd = false;
+        // A LIVE immediate/countdown scramble supersedes any armed end-of-round scramble.
+        // Dry runs are simulations only and must not disarm a scheduled scramble.
+        if (!isSimulated) this._scrambleOnRoundEnd = false;
 
         // Execute
         const success = await this.initiateScramble(
