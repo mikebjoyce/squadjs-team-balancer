@@ -334,6 +334,45 @@ async function runPluginLogicTests() {
   tb._scrambleOnRoundEnd = false;
   tb.options.requireScrambleConfirmation = true; // restore default
 
+  // Match-identity gate: an arm carried across a restart into a LATER round is discarded (not fired),
+  // and that round is still evaluated normally by the win-streak path (fall-through).
+  await tb.resetStreak();
+  tb.manuallyDisabled = false;
+  tb.options.enableWinStreakTracking = true;
+  tb.gameModeCached = 'RAAS';
+  tb._scramblePending = false;
+  capturedBroadcasts.length = 0;
+  mockServer.matchStartTime = new Date(2000000); // this round (round B) started here
+  tb._scrambleOnRoundEnd = true;
+  tb._scrambleOnRoundEndBy = { steamID: 'admin1', name: 'Admin', matchStartTime: 1000000 }; // armed in round A
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } }); // dominant win in round B
+  assert(tb._scrambleOnRoundEnd === false, 'matchend: an arm from a previous round (restart across a boundary) is discarded.');
+  assert(!capturedBroadcasts.find((m) => m.includes('Match-end scramble in')), 'matchend: a stale cross-round arm does NOT scramble the wrong round.');
+  assert(tb.winStreakCount === 1, 'matchend: after discarding a stale arm, the round is still evaluated normally (streak incremented).');
+
+  // Restart WITHIN the same round: the arm's stamp matches the current round, so it still fires.
+  await tb.resetStreak();
+  tb._scramblePending = false;
+  capturedBroadcasts.length = 0;
+  mockServer.matchStartTime = new Date(3000000);
+  tb._scrambleOnRoundEnd = true;
+  tb._scrambleOnRoundEndBy = { steamID: 'admin1', name: 'Admin', matchStartTime: 3000000 }; // same round
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'matchend: an arm whose round still matches fires (restart within the same round).');
+  assert(!!capturedBroadcasts.find((m) => m.includes('Match-end scramble in')), 'matchend: matching-round arm broadcasts the round-end announcement.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // Arming stamps the current round's start time onto the arm (and persists it).
+  tb.options.requireScrambleConfirmation = false;
+  mockServer.matchStartTime = new Date(4000000);
+  tb._scrambleOnRoundEnd = false;
+  await tb.onScrambleCommand({ message: 'matchend', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(tb._scrambleOnRoundEndBy?.matchStartTime === 4000000, 'matchend: arming stamps the round start time onto the arm.');
+  assert(tb.db._parseArm(mockDbState.scrambleOnRoundEndBy)?.matchStartTime === 4000000, 'matchend: the round stamp is persisted to the DB.');
+  await tb.onScrambleCommand({ message: 'cancel', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  tb.options.requireScrambleConfirmation = true;
+  delete mockServer.matchStartTime;
+
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);
   if (passCount !== testCount) {

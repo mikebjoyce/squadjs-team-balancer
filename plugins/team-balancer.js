@@ -452,12 +452,12 @@ export default class TeamBalancer extends BasePlugin {
 
     this._isMounted = false;
     this._scramblePending = false;
-    // "!scramble matchend" arm. Persisted to the DB (see _setScrambleArm) so it survives a SquadJS
-    // restart mid-round; restored in mount() and consumed in onRoundEnded.
-    // ponytail: restore is gated only on the 2.5h staleness window, not on a match id — a restart that
-    // spans a full round boundary could fire the arm on the wrong round. Tie to matchId if that bites.
+    // "!scramble matchend" arm. Persisted to the DB (see _setScrambleArm), stamped with the round's
+    // server.matchStartTime, so it survives a SquadJS restart mid-round: restored in mount(), and in
+    // onRoundEnded it fires only if the current round's start still matches — a restart that crosses a
+    // round boundary discards the stale arm instead of scrambling the wrong round.
     this._scrambleOnRoundEnd = false;
-    this._scrambleOnRoundEndBy = null; // { steamID, name } of the arming admin, for discard notifications
+    this._scrambleOnRoundEndBy = null; // { steamID, name, matchStartTime } — arming admin + round fingerprint, for the gate + discard notices
     this._scrambleTimeout = null;
     this._scrambleCountdownTimeout = null;
     this._flippedAfterScramble = false;
@@ -489,12 +489,34 @@ export default class TeamBalancer extends BasePlugin {
   // arming admin to arm, or null to disarm. Persistence is best-effort (a DB failure is logged,
   // not thrown) so the in-memory behaviour is never blocked by the database.
   async _setScrambleArm(armedBy) {
+    if (armedBy) {
+      // Stamp the arm with the current round's start time. onRoundEnded uses it to detect an arm that
+      // a restart carried into a LATER round and discard it instead of scrambling the wrong round.
+      armedBy = { ...armedBy, matchStartTime: this.server.matchStartTime?.getTime() ?? null };
+    }
     this._scrambleOnRoundEnd = !!armedBy;
     this._scrambleOnRoundEndBy = armedBy;
     try {
       await this.db.saveScrambleArm(armedBy);
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist scramble arm: ${err.message}`);
+    }
+  }
+
+  // Tell the arming admin (RCON warn) and Discord that their scheduled match-end scramble was dropped.
+  // `reason` completes "…was discarded because <reason>." — keep it a fragment, no trailing period.
+  async _notifyScrambleDiscarded(armedBy, reason) {
+    if (armedBy?.steamID) {
+      try {
+        await this.server.rcon.warn(armedBy.steamID, `${this.RconMessages.prefix} Your scheduled end-of-round scramble was discarded because ${reason}. Re-issue "!scramble matchend" during the round if still needed.`);
+      } catch (err) {
+        Logger.verbose('TeamBalancer', 1, `Failed to warn admin about discarded match-end scramble: ${err.message}`);
+      }
+    }
+    if (this.discordChannel) {
+      DiscordHelpers.sendDiscordMessage(this.discordChannel, {
+        content: `⚠️ Scheduled end-of-round scramble (armed by **${armedBy?.name || 'unknown'}**) was discarded — ${reason}.`
+      });
     }
   }
 
@@ -1136,19 +1158,7 @@ export default class TeamBalancer extends BasePlugin {
         // Don't drop an admin's command silently: tell them (and Discord) the arm was discarded.
         const armedBy = this._scrambleOnRoundEndBy;
         await this._setScrambleArm(null);
-        const discardMsg = 'Your scheduled end-of-round scramble was discarded because a new round started. Re-issue "!scramble matchend" during the round if still needed.';
-        if (armedBy?.steamID) {
-          try {
-            await this.server.rcon.warn(armedBy.steamID, `${this.RconMessages.prefix} ${discardMsg}`);
-          } catch (err) {
-            Logger.verbose('TeamBalancer', 1, `Failed to warn admin about discarded match-end scramble: ${err.message}`);
-          }
-        }
-        if (this.discordChannel) {
-          DiscordHelpers.sendDiscordMessage(this.discordChannel, {
-            content: `⚠️ Scheduled end-of-round scramble (armed by **${armedBy?.name || 'unknown'}**) was discarded — a new round started before it could fire.`
-          });
-        }
+        await this._notifyScrambleDiscarded(armedBy, 'a new round started before it could fire');
       }
       try {
         const flippedTeam = this.winStreakTeam === 1 ? 2 : this.winStreakTeam === 2 ? 1 : null;
@@ -1211,6 +1221,21 @@ export default class TeamBalancer extends BasePlugin {
 
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
+
+      // Stale-arm guard: if a restart carried the arm past the round it was armed for, its stamped
+      // match start no longer matches the current round. Discard it (don't scramble the wrong round)
+      // and fall through so THIS round is evaluated normally by the win-streak path below. Acts only
+      // when both start times are known and differ, so an unknown time falls through to the fire path.
+      if (this._scrambleOnRoundEnd) {
+        const armedMatchStart = this._scrambleOnRoundEndBy?.matchStartTime ?? null;
+        const currentMatchStart = this.server.matchStartTime?.getTime() ?? null;
+        if (armedMatchStart !== null && currentMatchStart !== null && armedMatchStart !== currentMatchStart) {
+          const armedBy = this._scrambleOnRoundEndBy;
+          Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Discarding armed match-end scramble: armed in a previous round (matchStart ${armedMatchStart}) but this round started at ${currentMatchStart} — a restart crossed a round boundary.`);
+          await this._setScrambleArm(null);
+          await this._notifyScrambleDiscarded(armedBy, 'a server restart carried it past the round it was armed for');
+        }
+      }
 
       // "!scramble matchend": an admin armed a deferred scramble for the end of this round.
       // Consumed first, before any auto/streak logic, so it fires regardless of win-streak
