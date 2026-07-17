@@ -6,35 +6,88 @@ These are **not part of the plugin** and are **not maintained** alongside it. Th
 
 ---
 
+## Running tests via docker (recommended)
+
+From the project root:
+
+```bash
+docker compose run --rm test scrambler            # Scrambler stress + clan grouping suite
+docker compose run --rm test plugin               # Win-streak / scramble-trigger logic tests
+docker compose run --rm test elo                  # ELO integration scenario
+docker compose run --rm test all                  # scrambler + plugin (skips broken/data-dependent tests)
+docker compose run --rm test historical-scramble /data/elodb.json [/data/matches.jsonl]
+docker compose run --rm test historical-backbone /data/elodb.json
+```
+
+The `test` service mounts your local SquadJS install (set `SQUADJS_PATH` in `.env`) and the project source into a container, then runs `testing/entrypoint.sh` which dispatches to the requested suite. Drop EloTracker fixtures into `testing/data/` to use the historical modes (the directory is gitignored).
+
+If you need to run a script directly with a local Node install, see the per-script notes below — but be aware most use relative imports that assume a SquadJS-style layout (`squad-server/plugins/...` resolving to `../../core/logger.js`).
+
+---
+
 ## Scripts
 
-**`scrambler-test-runner.js`**
-Stress-tests the Scrambler algorithm using mock data. Runs multiple scenarios (standard, all-locked, David vs Goliath) and reports balance outcomes and cohesion metrics. Standalone — no server required.
-```
-node scrambler-test-runner.js
+### `scrambler-test-runner.js`
+
+Stress-tests the Scrambler algorithm using mock data. Standalone — no server required.
+
+**Coverage:**
+- Standard scenarios: 50/50, imbalances (45/55, 20/80, etc.), low pop, max capacity, seeding mode
+- Squad-structure edge cases: All-locked, David-vs-Goliath
+- ELO balancing: pro-stack detection scenario
+- **Clan tag grouping** (when `enableClanTagGrouping` is on):
+  - Same-team clan in multiple squads (default vs `pullEntireSquads: true`)
+  - Cross-team clan (each side cohesive, no forced cross-team consolidation)
+  - Sub-min clan ignored
+  - Similarity merging at edit distances 0 and 1
+  - Case sensitivity: case-fold alone (`caseSensitive: false`, edit=0), case-fold + similarity (`caseSensitive: false`, edit=1), case-sensitive default (`caseSensitive: true`, edit=0)
+- Bulk regression: 2,500 randomized runs (general) + 500 randomized runs (clan grouping with `caseSensitive` and `pullEntireSquads` randomized per run)
+
+```bash
+docker compose run --rm test scrambler
 ```
 
-**`mock-data-generator.js`**
-Helper module used by `scrambler-test-runner.js`. Generates mock player and squad data with configurable team ratios, lock rates, and squad size distributions. Not a runnable script — imported by other test files.
+### `mock-data-generator.js`
 
-**`historical-scramble-test.js`**
-Replays historical match data from an EloTracker DB backup and JSONL match log through the Scrambler. Reports balance outcomes against real round snapshots. Requires EloTracker output files.
-```
-node historical-scramble-test.js <elodb.json> [merged.jsonl]
-```
+Helper module imported by `scrambler-test-runner.js`. Generates mock player and squad data with configurable team ratios, lock rates, and squad size distributions. Provides:
+- `generateMockPlayers`, `generateMockSquads`, `transformForScrambler` — base mock data
+- `injectClanTags` — prefixes a chosen subset of mock players with `[TAG]` for clan-grouping tests
+- Scenario builders: `generateScenario_AllLocked`, `generateScenario_DavidGoliath`, `generateScenario_ClanGrouping`, `generateScenario_ClanSplitAcrossTeams`, `generateScenario_ClanSimilarity`, `generateScenario_ClanBelowMin`
 
-**`plugin-logic-test-runner.js`**
+Not a runnable script.
+
+### `plugin-logic-test-runner.js`
+
 Tests win streak logic, dominant win detection, and scramble triggering using a mock SquadJS environment. Does not require a live server, but the mock server harness may drift from the real SquadJS API over time.
-```
-node plugin-logic-test-runner.js
+
+```bash
+docker compose run --rm test plugin
 ```
 
-**`elo-integration-test.js`**
-Tests ELO-weighted scramble behaviour against a constructed scenario (pro stack vs average team). Requires a live SquadJS environment for Logger — will error if run standalone without mocking Logger first.
+### `elo-integration-test.js`
+
+Tests ELO-weighted scramble behaviour against a constructed scenario (15-man pro stack vs average team). Has a known broken import (`../core/logger.js`) and is excluded from the `all` mode — run via `elo` only after fixing the path.
+
+```bash
+docker compose run --rm test elo
 ```
-node elo-integration-test.js
+
+### `historical-scramble-test.js`
+
+Replays historical match data from an EloTracker DB backup and a JSONL match log through the Scrambler. Reports balance outcomes against real round snapshots. Requires EloTracker output files dropped in `testing/data/` (gitignored).
+
+```bash
+docker compose run --rm test historical-scramble /data/elodb.json /data/matches.jsonl
+```
+
+### `historical-elo-backbone-test.js`
+
+Validates the "Top 15" Backbone ELO logic against a real EloTracker dataset. Mocks `Logger.verbose` so it runs standalone.
+
+```bash
+docker compose run --rm test historical-backbone /data/elodb.json
 ```
 
 ---
 
-> **Note:** Some of these scripts use relative imports that assume a specific directory layout within a SquadJS installation. Running them outside that context will require path adjustments.
+> **Note:** All scripts assume a SquadJS-style directory layout (`squad-server/plugins/...` so `../../core/logger.js` resolves correctly). The docker harness builds that layout for you by overlaying the project's `plugins/`, `utils/`, and `testing/` onto a copy of the SquadJS `squad-server/` tree.
