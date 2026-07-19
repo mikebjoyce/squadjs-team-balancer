@@ -676,7 +676,20 @@ export default class TeamBalancer extends S3PluginBase {
   // Training/Jensen detection also available via S³ GameStateService.isTrainingMode()
   /// S3PluginBase lifecycle hooks
 
+  _checkS3Version() {
+    const required = '1.0.0';
+    const actual = this._s3?.version;
+    if (!actual || actual < required) {
+      throw new Error(
+        `[TeamBalancer] Incompatible S³ version: got ${actual || 'unknown'}, need >=${required}. ` +
+        'Please update SlackersSquadServices.'
+      );
+    }
+    Logger.verbose('TeamBalancer', 2, `[S3] Version check passed: S³ v${actual} >= required v${required}`);
+  }
+
   async _onS3Ready() {
+    this._checkS3Version();
     if (this._isMounted) {
       Logger.verbose('TeamBalancer', 1, 'Plugin already mounted, skipping duplicate mount attempt.');
       return;
