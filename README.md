@@ -10,6 +10,16 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 ---
 
+> [!IMPORTANT]
+> **This repository has moved.** Active development (S³-integrated) continues at the monorepo:
+> **[sqaudjs-slackers-suite](https://github.com/mikebjoyce/sqaudjs-slackers-suite)**
+>
+> The `legacy` branch here is the **pre-S³** line — maintained for users who don't run S³.
+> The `main` branch (and any S³-integration branch) is superseded by the monorepo copy.
+> For new installations, use the monorepo's [install script](https://github.com/mikebjoyce/sqaudjs-slackers-suite) instead.
+
+---
+
 ## Core Features
 
 * **Dual Win Streak Tracking**:
