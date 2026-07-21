@@ -12,7 +12,7 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 > [!IMPORTANT]
 > **This repository has moved.** Active development (S³-integrated) continues at the monorepo:
-> **[sqaudjs-slackers-suite](https://github.com/mikebjoyce/squadjs-slackers-suite)**
+> **[squadjs-slackers-suite](https://github.com/mikebjoyce/squadjs-slackers-suite)**
 >
 > The `legacy` branch here is the **pre-S³** line — maintained for users who don't run S³.
 > The `main` branch (and any S³-integration branch) is superseded by the monorepo copy.
