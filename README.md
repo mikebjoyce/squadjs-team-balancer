@@ -70,6 +70,8 @@ Prevents players from changing teams immediately after a scramble. When TeamBala
 
 S³ is the centralised service container for shared state across Slacker's Squad plugins. TeamBalancer uses it as the primary data source for player state, squad data, faction names, clan grouping, game-mode detection (including ignored modes), and game-state metadata.
 
+**Requires S³ ≥1.0.0.**
+
 **Why this matters**: Rather than maintaining its own duplicate caches, TeamBalancer reads ground-truth data from S³ — player/squad snapshots via `players.getAllPlayers()` / `players.getSquads()`, faction names via `factions.getTeamName()`, game-mode/layer detection via `gameState.getGamemode()` / `gameState.getLayerName()`, ignored-mode checks via `gameState.isIgnoredMode()`, and clan grouping via `clans.extractClanGroups()`. During scrambles, S³'s global-lock mechanism (`players.lockGlobal()` / `players.unlockGlobal()`) prevents concurrent scrambles from conflicting.
 
 **Setup**: Install S³ alongside TeamBalancer. S³ is auto-discovered at runtime via `this.server.plugins`. If S³ is absent, TeamBalancer falls back to raw SquadJS data for all services.
