@@ -50,6 +50,9 @@ import Logger from '../../core/logger.js';
 import { DiscordHelpers } from './tb-discord-helpers.js';
 import { TBDiagnostics } from './tb-diagnostics.js';
 
+// Whitelist for !scramble arguments. Anything else is a typo, not an alias.
+export const SCRAMBLE_ARGS = ['now', 'dry', 'matchend', 'cancel', 'confirm'];
+
 const CommandHandlers = {
   register(tb) {
     tb.respond = async function (player, msg) {
@@ -472,12 +475,20 @@ const CommandHandlers = {
       }
 
       let args = (command.message?.trim().toLowerCase().split(/\s+/) || []).filter(arg => arg);
-      const isConfirm = args.includes('confirm');
 
       // Declared before the isConfirm early-exits below, which reference `player` (was a TDZ ReferenceError).
       const steamID = command.steamID;
       const player = command.player;
       const adminName = player?.name || steamID;
+
+      // Reject typos BEFORE touching scrambleConfirmation: an unknown arg used to fall through to the
+      // bare-"!scramble" path (live mid-round countdown) and overwrite a pending "matchend" confirmation.
+      const badArg = args.find((a) => !SCRAMBLE_ARGS.includes(a));
+      if (badArg) {
+        return await this.respond(player, `Unknown argument "${badArg}". Usage: !scramble [${SCRAMBLE_ARGS.join('|')}]`);
+      }
+
+      const isConfirm = args.includes('confirm');
 
       if (isConfirm) {
         if (!this.scrambleConfirmation) {

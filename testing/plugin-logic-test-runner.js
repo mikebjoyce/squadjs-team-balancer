@@ -334,6 +334,22 @@ async function runPluginLogicTests() {
   tb._scrambleOnRoundEnd = false;
   tb.options.requireScrambleConfirmation = true; // restore default
 
+  // A typo'd argument must be rejected outright. It used to fall through to the bare-"!scramble" path,
+  // overwrite the pending "matchend" confirmation, and turn the next "confirm" into a LIVE mid-round scramble.
+  const admin = { message: '', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } };
+  tb.scrambleConfirmation = null;
+  tb._scramblePending = false;
+  capturedBroadcasts.length = 0;
+  await tb.onScrambleCommand({ ...admin, message: 'matchend' });
+  const typoReply = await tb.onScrambleCommand({ ...admin, message: 'confiirm' });
+  assert(/Unknown argument/.test(typoReply || ''), 'typo: "confiirm" is rejected as an unknown argument.');
+  assert(!!tb.scrambleConfirmation?.args?.includes('matchend'), 'typo: the pending matchend confirmation survives the typo.');
+  await tb.onScrambleCommand({ ...admin, message: 'confirm' });
+  assert(tb._scrambleOnRoundEnd === true, 'typo: "confirm" after a typo still arms the END-OF-ROUND scramble.');
+  assert(tb._scramblePending === false, 'typo: no live mid-round scramble is started.');
+  assert(capturedBroadcasts.length === 0, 'typo: nothing is broadcast to players (arming is silent, no countdown announcement).');
+  await tb.onScrambleCommand({ ...admin, message: 'cancel' });
+
   // Match-identity gate: an arm carried across a restart into a LATER round is discarded (not fired),
   // and that round is still evaluated normally by the win-streak path (fall-through).
   await tb.resetStreak();
