@@ -201,7 +201,7 @@ import { DiscordHelpers } from '../utils/tb-discord-helpers.js';
 import Scrambler from '../utils/tb-scrambler.js';
 import { extractClanGroups } from '../utils/tb-clan-grouping.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
-import CommandHandlers from '../utils/tb-commands.js';
+import CommandHandlers, { SCRAMBLE_ARGS } from '../utils/tb-commands.js';
 import TBDatabase from '../utils/tb-database.js';
 import Logger from '../../core/logger.js';
 import { TBDiagnostics } from '../utils/tb-diagnostics.js';
@@ -994,6 +994,15 @@ export default class TeamBalancer extends BasePlugin {
 
   async handleDiscordScrambleCommand(message) {
     let args = message.content.replace(/^!scramble\s*/i, '').trim().toLowerCase().split(/\s+/).filter(a => a);
+
+    // Reject typos BEFORE touching scrambleConfirmation: an unknown arg used to fall through to the
+    // bare-"!scramble" path (live mid-round countdown) and overwrite a pending "matchend" confirmation.
+    const badArg = args.find((a) => !SCRAMBLE_ARGS.includes(a));
+    if (badArg) {
+      await message.reply(`⚠️ Unknown argument \`${badArg}\`. Usage: \`!scramble [${SCRAMBLE_ARGS.join('|')}]\``);
+      return;
+    }
+
     const isConfirm = args.includes('confirm');
 
     if (isConfirm) {
