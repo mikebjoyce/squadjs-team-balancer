@@ -843,10 +843,14 @@ export const Scrambler = {
     // Only present when clan grouping actually built virtual squads, so consumers can treat
     // "property exists" as "the feature was used this round".
     if (virtualSquadsByTag.size > 0) {
+      // Both lists are derived from allMembers so their union is exactly the virtual squad's
+      // roster. originalMembers is deliberately NOT used as the source: it holds every clan
+      // member on the team, including those sitting in a squad an earlier clan already claimed
+      // as its anchor — those never joined this virtual squad and travel with the foreign clan.
       result.virtualSquads = [...virtualSquadsByTag.values()].map((vs) => ({
         teamID: vs.teamID,
         tag: vs.tag,
-        members: [...vs.originalMembers],
+        members: [...vs.allMembers].filter((id) => vs.originalMembers.has(id)),
         pulled: [...vs.allMembers].filter((id) => !vs.originalMembers.has(id))
       }));
     }
