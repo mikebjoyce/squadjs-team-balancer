@@ -13,18 +13,19 @@
  *
  * DiscordHelpers (named)
  *   Object. Key members:
- *     sendDiscordMessage(channel, content)        — Resilient send with 429 retry.
- *     buildStatusEmbed(tb)                        — Win streak and plugin state embed.
- *     buildDiagnosticsEmbed(results, tb)          — Diagnostic test results embed.
+ *     sendDiscordMessage(channel, content)          — Resilient send with 429 retry.
+ *     buildStatusEmbed(tb)                          — Win streak and plugin state embed.
+ *     buildDiagnosticsEmbed(results, tb)            — Diagnostic test results embed.
  *     createScrambleDetailsMessage(plan, isDry, tb) — Swap plan detail embed.
- *       Lists moved players one per line, grouped by their current in-game
- *       squad. When plan.virtualSquads is present (clan grouping built at
- *       least one group), each team gets a Clan Grouping field ahead of its
- *       regular squads: every virtual squad the plan touched is shown as one
- *       block with its full roster (◆ clan member, ◇ pulled along), tagged
- *       "moved together" or "divided!" — the latter adds a moved/stay column.
- *       Those players are omitted from the regular squad blocks; virtual
- *       squads nobody moved out of are omitted entirely.
+ *
+ *     Lists moved players one per line, grouped by their current in-game
+ *     squad. When plan.virtualSquads is present (clan grouping built at
+ *     least one group), each team gets a Clan Grouping field ahead of its
+ *     regular squads: every virtual squad the plan touched is shown as one
+ *     block with its full roster (◆ clan member, ◇ pulled along), tagged
+ *     "moved together" or "divided!" — the latter adds a moved/stay column.
+ *     Those players are omitted from the regular squad blocks; virtual
+ *     squads nobody moved out of are omitted entirely.
  *     buildScrambleCompletedEmbed(...)            — Post-execution summary embed.
  *     buildScrambleFailedEmbed(reason, time, tb)  — Failure notification embed.
  *     buildFatalErrorEmbed(err, context, tb)      — Critical error embed with stack.
