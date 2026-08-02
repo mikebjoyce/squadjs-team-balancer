@@ -14,7 +14,8 @@ import {
   generateScenario_ClanDelimiters,
   generateScenario_RealWorldNames,
   generateScenario_ClanBelowMin,
-  generateScenario_LowPopLargeClan
+  generateScenario_LowPopLargeClan,
+  generateScenario_ClanSquadCollision
 } from './mock-data-generator.js';
 
 // Failure tracker — turns observational checks into a real gate (process.exit on regression).
@@ -531,10 +532,55 @@ async function runAllTests() {
     scramblePercentage: 0.2
   });
 
+  await runClanCollisionTest(20);
+
   await runBulkTests(2500);
   await runClanBulkTest(500);
   await runEloClanBulkTest(500);
   await runDiagnosticClanTest(50);
+}
+
+/**
+ * Regression guard: two clans sharing a squad must each stay cohesive.
+ * Looped rather than a single runClanTest — the scrambler is randomized, and a
+ * single run reproduces the old orphaning bug only ~60% of the time (measured
+ * 16/40 cohesive pre-fix at pullEntireSquads=true, 40/40 after). Post-fix both
+ * clans form independent atomic units, so 100% is the expected outcome.
+ */
+async function runClanCollisionTest(runsPerMode = 20) {
+  console.log(`\n==================================================`);
+  console.log(`🧪 CROSS-CLAN SQUAD COLLISION (${runsPerMode} runs per pull mode)`);
+  console.log(`==================================================`);
+
+  for (const pullEntireSquads of [false, true]) {
+    let cohesive = 0;
+    for (let i = 0; i < runsPerMode; i++) {
+      const { players, squads } = generateScenario_ClanSquadCollision();
+      const clanGroups = extractClanGroups(players, { minSize: 2, maxSize: 18, maxEditDistance: 0 });
+      const { squads: tfSquads, players: tfPlayers } = transformForScrambler(players, squads);
+
+      const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+        squads: tfSquads,
+        players: tfPlayers,
+        winStreakTeam: 1,
+        scramblePercentage: 0.5,
+        clanGroups,
+        pullEntireSquads
+      });
+
+      const moveByEosID = new Map(swapPlan.map(m => [m.eosID, m.targetTeamID]));
+      const finalTeamByEosID = new Map(
+        tfPlayers.map(p => [p.eosID, moveByEosID.get(p.eosID) ?? p.teamID])
+      );
+
+      const allCohesive = Object.values(clanGroups).every(eosIDs => {
+        const sameTeam = eosIDs.filter(id => tfPlayers.find(p => p.eosID === id)?.teamID === '1');
+        return sameTeam.length < 2 || new Set(sameTeam.map(id => finalTeamByEosID.get(id))).size === 1;
+      });
+      if (allCohesive) cohesive++;
+    }
+    requireRate(`Cross-clan collision cohesion (pullEntireSquads=${pullEntireSquads})`, cohesive, runsPerMode, 1.0);
+  }
 }
 
 

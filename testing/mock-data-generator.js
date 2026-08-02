@@ -206,6 +206,26 @@ export function generateScenario_ClanSimilarity() {
 }
 
 /**
+ * Scenario: two clans on Team 1 that share squad 4.
+ * [AAA] has 3 in squad 4 + 2 in squad 5; [BBB] has 3 in squad 4 + 2 in squad 6.
+ * The clan processed first claims squad 4 as its anchor; the second clan must
+ * still be able to pull its 3 members out of it. Regression guard — those
+ * members used to be orphaned inside the first clan's virtual squad and
+ * travelled with the wrong clan.
+ */
+export function generateScenario_ClanSquadCollision() {
+  const players = generateMockPlayers(80, 0.5, 0);
+  injectClanTags(players, [
+    { tag: 'AAA', count: 3, teamID: 1, squadID: 4 },
+    { tag: 'BBB', count: 3, teamID: 1, squadID: 4 },
+    { tag: 'AAA', count: 2, teamID: 1, squadID: 5 },
+    { tag: 'BBB', count: 2, teamID: 1, squadID: 6 }
+  ]);
+  const squads = generateMockSquads(players);
+  return { players, squads };
+}
+
+/**
  * Scenario: low-pop server with a 15-member clan spread across three squads
  * on Team 1, paired with a low scramble percentage. With Phase 1's fixed
  * 3-player grace and a per-side target of ~6 (60 players × 0.2), a 15-player
