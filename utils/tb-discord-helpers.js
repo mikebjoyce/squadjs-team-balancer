@@ -474,26 +474,51 @@ export const DiscordHelpers = {
   // Packs lines into embed fields per line rather than per block, so a single oversized block
   // (a big clan, or UNASSIGNED collecting every squadless player) cannot produce a field over
   // Discord's 1024-character limit.
+  //
+  // The per-field cap alone is not enough: Discord also rejects the entire message when title +
+  // description + every field name and value + footer exceed 6000 characters, and a clan-heavy
+  // plan produces enough fields to get there (divided virtual squads list their stayers on top
+  // of the movers). So chunks are only pushed while the embed can still afford them, and what
+  // did not fit is reported — a shortened report beats a 400 that drops the report entirely.
   pushChunkedFields(embed, lines, baseName, suffix = '') {
     const codeBlockWrapLen = 13; // ```text\n ... \n```
+    const embedCharLimit = 6000;
+    // Room for the title, the description, the legend footer and the truncation notice itself —
+    // none of which are in embed.fields yet (or at all) while this runs.
+    const reserve = 320;
+    const used = () => embed.fields.reduce((n, f) => n + f.name.length + f.value.length, 0);
     const nameFor = (part) => (part === 1 ? (suffix ? `${baseName} ${suffix}` : baseName) : `${baseName} (Cont.)`);
-    const push = (value, part) =>
-      embed.fields.push({ name: nameFor(part), value: `\`\`\`text\n${value}\n\`\`\``, inline: false });
 
-    let fieldValue = '';
-    let part = 1;
-
+    const chunks = [];
     for (const line of lines) {
-      if (fieldValue && fieldValue.length + line.length + 1 + codeBlockWrapLen > 1024) {
-        push(fieldValue, part);
-        fieldValue = line;
-        part++;
+      const current = chunks[chunks.length - 1];
+      if (current && current.value.length + line.length + 1 + codeBlockWrapLen <= 1024) {
+        current.value += '\n' + line;
+        current.lines++;
       } else {
-        fieldValue = fieldValue ? fieldValue + '\n' + line : line;
+        chunks.push({ value: line, lines: 1 });
       }
     }
 
-    if (fieldValue) push(fieldValue, part);
+    let skipped = 0;
+    chunks.forEach((chunk, i) => {
+      const name = nameFor(i + 1);
+      const cost = name.length + chunk.value.length + codeBlockWrapLen;
+      // Once one chunk is dropped the rest go too, so the report never jumps over a gap.
+      if (skipped || used() + cost + reserve > embedCharLimit) {
+        skipped += chunk.lines;
+        return;
+      }
+      embed.fields.push({ name, value: `\`\`\`text\n${chunk.value}\n\`\`\``, inline: false });
+    });
+
+    if (skipped) {
+      embed.fields.push({
+        name: '⚠️ Truncated',
+        value: `${skipped} further lines omitted to stay within Discord's embed size limit.`,
+        inline: false
+      });
+    }
   },
 
   buildWinStreakEmbed(teamName, teamID, streakCount, maxStreak, margin, isDominant) {

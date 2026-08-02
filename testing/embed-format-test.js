@@ -233,6 +233,56 @@ check('every field stays within Discord limits, virtual and regular alike', () =
   assert.strictEqual(rowsIn(regularFields(bigBlock)).length, 40, 'lost players while chunking');
 });
 
+// ─── Oversized embed: 12 clan squads across both teams, each of them torn in half ───
+// A divided virtual squad lists its stayers as well, so the row count is no longer bounded by
+// the plan — enough blocks and the embed total passes 6000 even though every field is under 1024.
+const crowdPlayers = [];
+const crowdSquads = [];
+const crowdVirtual = [];
+for (const teamID of ['1', '2']) {
+  for (let s = 1; s <= 6; s++) {
+    const squadID = `${teamID}${s}`;
+    const members = Array.from({ length: 8 }, (_, i) => `${squadID}-${i}`);
+    crowdSquads.push({ squadID, teamID, squadName: `Squad ${s} Infantry` });
+    members.forEach((eosID, i) =>
+      crowdPlayers.push(player(eosID, `[CLAN${s}] LongishPlayerName${i}`, teamID, squadID)));
+    crowdVirtual.push({ teamID, tag: `CLAN${s}`, members, pulled: [] });
+  }
+}
+const crowded = await build(
+  withPlan(
+    crowdPlayers.filter((_, i) => i % 2 === 0)
+      .map((p) => ({ eosID: p.eosID, targetTeamID: p.teamID === '1' ? '2' : '1' })),
+    { virtualSquads: crowdVirtual }
+  ),
+  crowdPlayers,
+  crowdSquads,
+  new Map(crowdPlayers.map((p, i) => [p.eosID, { mu: 20 + (i % 20) * 0.5, roundsPlayed: i % 30 }]))
+);
+
+const embedChars = (e) => (e.title || '').length + (e.description || '').length +
+  (e.footer?.text || '').length + e.fields.reduce((n, f) => n + f.name.length + f.value.length, 0);
+const truncationNotice = (e) => e.fields.find((f) => f.name.includes('Truncated'));
+
+check('the whole embed stays within Discord limits and says what it dropped', () => {
+  assert.ok(embedChars(crowded) <= 6000, `${embedChars(crowded)} chars total`);
+  assert.ok(crowded.fields.length <= 25, `${crowded.fields.length} fields`);
+  for (const f of crowded.fields) {
+    assert.ok(f.value.length <= 1024, `field "${f.name}" is ${f.value.length} chars`);
+  }
+  const notice = truncationNotice(crowded);
+  assert.ok(notice, 'a report cut short must say so instead of ending mid-list');
+  assert.ok(/^\d+ further lines/.test(notice.value), `notice: ${notice.value}`);
+  assert.ok(notice === crowded.fields[crowded.fields.length - 1], 'the notice belongs last');
+});
+
+check('reports that fit are left alone by the size budget', () => {
+  for (const [label, embed] of [['bigBlock', bigBlock], ['withClans', withClans]]) {
+    assert.ok(embedChars(embed) <= 6000, `${label}: ${embedChars(embed)} chars`);
+    assert.ok(!truncationNotice(embed), `${label} fits and must not be truncated`);
+  }
+});
+
 // Sample output for eyeballing column alignment.
 if (process.argv.includes('--print')) {
   for (const embed of [withClans, dividedClan]) {
