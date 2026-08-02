@@ -384,8 +384,15 @@ export const DiscordHelpers = {
           }));
         }
 
+        // Counts players who actually change team, same as the regular fields — a divided squad
+        // keeps its stayers visible but they are not part of the move. Per-squad roster sizes
+        // are in the block headers.
+        const movers = teamVirtual.reduce(
+          (n, { roster }) => n + roster.filter(id => moveByEos.has(id)).length, 0);
+
         this.pushChunkedFields(embed, lines,
-          `🔗 Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) Clan Grouping (Virtual Squads)`);
+          `🔗 Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) Clan Grouping (Virtual Squads)`,
+          `[${movers} players]`);
       }
 
       if (data.listedTotal === 0) continue;

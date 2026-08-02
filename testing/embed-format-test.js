@@ -87,7 +87,8 @@ const withClans = await build(withPlan(CLAN_MOVES, { virtualSquads: [VS_3DP] }))
 check('fields are ordered: balance, then per team virtual squads before regular squads', () => {
   const names = withClans.fields.map((f) => f.name);
   assert.strictEqual(names[0], 'Balance Projection');
-  assert.strictEqual(names[1], '🔗 Team 1 (USA) ➔ Team 2 (RGF) Clan Grouping (Virtual Squads)');
+  assert.strictEqual(names[1],
+    '🔗 Team 1 (USA) ➔ Team 2 (RGF) Clan Grouping (Virtual Squads) [4 players]');
   assert.ok(names[2].startsWith('Team 1 (USA) ➔ Team 2 (RGF)'), `3rd field: ${names[2]}`);
   assert.ok(names[3].startsWith('Team 2 (RGF) ➔ Team 1 (USA)'), `4th field: ${names[3]}`);
   assert.strictEqual(names.length, 4, `team 2 has no virtual squad: ${names}`);
@@ -172,6 +173,9 @@ check('a torn-apart virtual squad reads "divided!" and marks moved/stay, movers 
   assert.strictEqual(rows.filter((r) => r.startsWith('  stay')).length, 3, 'three stay');
   const moved = rowsIn(virtualFields(dividedClan)).filter((r) => r.startsWith('  moved')).length;
   assert.strictEqual(moved + rowsIn(regularFields(dividedClan)).length, 2, 'row count vs plan');
+  // The field count tracks who changes team, not how many rows are shown.
+  assert.ok(virtualFields(dividedClan)[0].name.endsWith('[1 players]'),
+    `count must exclude the stayers: ${virtualFields(dividedClan)[0].name}`);
 });
 
 // A virtual squad nobody was moved out of: the report is about what changes, so it is omitted.
