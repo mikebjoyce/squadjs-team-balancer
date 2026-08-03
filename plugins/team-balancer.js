@@ -655,7 +655,7 @@ export default class TeamBalancer extends BasePlugin {
     }
 
     if (this._scrambleTimeout) clearTimeout(this._scrambleTimeout);
-    if (this._scrambleCountdownTimeout) clearTimeout(this._scrambleCountdownTimeout);
+    this._clearPendingScrambleCountdown();
     if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
     this.cleanupScrambleTracking();
     this.stopPollingGameInfo();
@@ -1161,7 +1161,12 @@ export default class TeamBalancer extends BasePlugin {
       }, 5 * 60 * 1000); // 5 minutes
 
       this._scrambleInProgress = false;
-      this._scramblePending = false;
+      // A countdown armed in the previous round must not fire into this one: teams are freshly assigned
+      // at NEW_GAME (teamIDs stay null for 30-60s), so it would scramble the wrong round. Driven off the
+      // timer handle, not _scramblePending — resetStreak() clears that flag while the timer still runs.
+      if (this._clearPendingScrambleCountdown()) {
+        Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Discarding pending scramble countdown (new game started before it could execute).');
+      }
       if (this._scrambleOnRoundEnd) {
         Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Discarding armed match-end scramble (new game started without consuming it).');
         // Don't drop an admin's command silently: tell them (and Discord) the arm was discarded.
@@ -1198,7 +1203,7 @@ export default class TeamBalancer extends BasePlugin {
         Logger.verbose('TeamBalancer', 1, `[DB] onNewGame fallback saveState failed: ${err.message}`);
       }
       this._scrambleInProgress = false;
-      this._scramblePending = false;
+      this._clearPendingScrambleCountdown();
       await this._setScrambleArm(null);
       this.cleanupScrambleTracking();
     }
@@ -1827,6 +1832,9 @@ export default class TeamBalancer extends BasePlugin {
       this._scramblePending = true;
       const delaySeconds = this.options.scrambleAnnouncementDelay;
       this._scrambleCountdownTimeout = setTimeout(async () => {
+        // Drop the handle first: a non-null handle must mean "a countdown is still armed", which is
+        // what NEW_GAME/unmount/cancel check before tearing it down.
+        this._scrambleCountdownTimeout = null;
         Logger.verbose('TeamBalancer', 4, 'Scramble countdown finished, executing scramble.');
         await this.executeScramble(false, steamID, player);
       }, delaySeconds * 1000);
@@ -2159,6 +2167,21 @@ export default class TeamBalancer extends BasePlugin {
     }
   }
 
+  /**
+   * Tears down an armed scramble countdown. The timer handle and _scramblePending are one unit —
+   * clearing the flag alone leaves the timer running, and it then fires into a round it was never
+   * armed for. Returns true if a countdown was actually still armed.
+   */
+  _clearPendingScrambleCountdown() {
+    const wasArmed = !!this._scrambleCountdownTimeout;
+    if (wasArmed) {
+      clearTimeout(this._scrambleCountdownTimeout);
+      this._scrambleCountdownTimeout = null;
+    }
+    this._scramblePending = false;
+    return wasArmed;
+  }
+
   async cancelPendingScramble(steamID, player = null, isAutomatic = false) {
     if (!this._scramblePending) {
       return false;
@@ -2172,12 +2195,7 @@ export default class TeamBalancer extends BasePlugin {
       return false;
     }
 
-    if (this._scrambleCountdownTimeout) {
-      clearTimeout(this._scrambleCountdownTimeout);
-      this._scrambleCountdownTimeout = null;
-    }
-
-    this._scramblePending = false;
+    this._clearPendingScrambleCountdown();
 
     const adminName = player?.name || steamID; // Prioritize player name
     const cancelReason = isAutomatic ? 'automatically' : `by admin ${adminName}`;
