@@ -24,6 +24,7 @@ Stress-tests the Scrambler algorithm using mock data. Standalone — no server r
   - Sub-min clan ignored
   - Similarity merging at edit distances 0 and 1
   - Case sensitivity: case-fold alone (`caseSensitive: false`, edit=0), case-fold + similarity (`caseSensitive: false`, edit=1), case-sensitive default (`caseSensitive: true`, edit=0)
+  - Cross-clan squad collision: two clans sharing a squad must each stay cohesive (20 runs per `pullEntireSquads` mode, 100% required — the scrambler is randomized, so a single run would only catch the regression ~60% of the time)
 - Bulk regression: 2,500 randomized runs (general) + 500 randomized runs (clan grouping with `caseSensitive` and `pullEntireSquads` randomized per run)
 
 ```bash
@@ -35,7 +36,7 @@ node scrambler-test-runner.js
 Helper module imported by `scrambler-test-runner.js`. Generates mock player and squad data with configurable team ratios, lock rates, and squad size distributions. Provides:
 - `generateMockPlayers`, `generateMockSquads`, `transformForScrambler` — base mock data
 - `injectClanTags` — prefixes a chosen subset of mock players with `[TAG]` for clan-grouping tests
-- Scenario builders: `generateScenario_AllLocked`, `generateScenario_DavidGoliath`, `generateScenario_ClanGrouping`, `generateScenario_ClanSplitAcrossTeams`, `generateScenario_ClanSimilarity`, `generateScenario_ClanBelowMin`
+- Scenario builders: `generateScenario_AllLocked`, `generateScenario_DavidGoliath`, `generateScenario_ClanGrouping`, `generateScenario_ClanSplitAcrossTeams`, `generateScenario_ClanSimilarity`, `generateScenario_ClanBelowMin`, `generateScenario_ClanSquadCollision`
 
 Not a runnable script.
 

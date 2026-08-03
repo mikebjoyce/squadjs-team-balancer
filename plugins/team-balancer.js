@@ -209,7 +209,7 @@ import fs from 'fs';
 import path from 'path';
 
 export default class TeamBalancer extends BasePlugin {
-  static version = '3.2.1';
+  static version = '3.2.2';
 
   static get description() {
     return 'Tracks dominant wins by team ID and scrambles teams if one team wins too many rounds.';

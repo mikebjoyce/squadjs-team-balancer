@@ -10,6 +10,16 @@ Scramble execution swaps entire squads or unassigned players, balancing team siz
 
 ---
 
+> [!IMPORTANT]
+> **This repository has moved.** Active development (S³-integrated) continues at the monorepo:
+> **[squadjs-slackers-suite](https://github.com/mikebjoyce/squadjs-slackers-suite)**
+>
+> The `legacy` branch here is the **pre-S³** line — maintained for users who don't run S³.
+> The `main` branch (and any S³-integration branch) is superseded by the monorepo copy.
+> For new installations, use the monorepo's [install script](https://github.com/mikebjoyce/squadjs-slackers-suite) instead.
+
+---
+
 ## Core Features
 
 * **Dual Win Streak Tracking**:
@@ -99,6 +109,7 @@ When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan
 * **Tag detection**: Player names are scanned for a leading clan tag via a five-strategy detector (ported from [squadjs-elo-tracker](https://github.com/mikebjoyce/squadjs-elo-tracker)), tried in order: bracket pairs (`[TAG]`, `【TAG】`, `╔TAG╗`), explicit separators (`TAG | Name`, `TAG // Name`), 2+ space gap, short ASCII ALL-CAPS (`KM Lookout`), and a bare-prefix fallback for Unicode/mixed-case prefixes (`KΛZ Korven`). Names with no visible tag/name boundary (e.g. `ABCJohnSmith`) yield no group.
 * **Matching**: Case-sensitive by default. Set `clanTagCaseSensitive: false` to normalize via NFD-decompose, lookalike mapping (`λ`→`a`, `я`→`r`, …), and uppercase, collapsing variants like `[Café]` / `[CAFE]` / `[CΛFE]`. Tags within `clanTagMaxEditDistance` Levenshtein distance are iteratively merged so transitive matches (`[AAA] ↔ [AAB] ↔ [ABB]`) collapse into one group.
 * **Virtual squads**: Per team, clan members are folded into a virtual squad anchored on the squad already holding the most clan members (tiebreak: larger size, lower ID). `clanGroupingPullEntireSquads` toggles whether non-clan teammates travel along (default: only clan members are pulled).
+* **Overlapping clans**: Two clans sharing a squad each keep their own virtual squad. A squad already used as another clan's anchor stays available as a source — the second clan pulls its members out of it, and `clanGroupingPullEntireSquads` never drags it along wholesale. Only if *every* squad holding a clan's members is already anchored elsewhere do the two clans merge into one unit.
 * **Phase behavior**: Phase 1 swaps virtual squads atomically. Phases 2/3 prefer non-clan victims and only break a virtual squad when no other option exists; a soft scoring penalty further discourages re-splitting once decomposition begins.
 
 **Cross-team clans are intentionally not consolidated** — if a clan starts split across teams, each side is treated independently.
