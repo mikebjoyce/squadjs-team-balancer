@@ -463,13 +463,31 @@ async function runPluginLogicTests() {
   assert(!!capturedBroadcasts.find((m) => m.includes('Seed scramble in')), 'seed: announcement is broadcast with tracking disabled.');
   await tb.cancelPendingScramble(null, null, true);
 
-  // Also unaffected by the manual !teambalancer off toggle.
+  // ...but "!teambalancer off" IS the kill switch: it stops the seed trigger too. Asserted on what
+  // the round DOES as well as what it skips — the disabled round now takes the fall-through path,
+  // and asserting only absences let a dropped poller teardown ship green once already.
   tb.manuallyDisabled = true;
   await seedRoundSetup();
+  tb.startPollingTeamAbbreviations();
   await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
-  assert(tb._scramblePending === true, 'seed: scrambles even when manually disabled.');
+  assert(tb._scramblePending === false, 'seed: does NOT scramble when manually disabled.');
+  assert(capturedBroadcasts.length === 0, 'seed: nothing is broadcast when manually disabled.');
+  assert(tb.seedAutoScrambleStatus() === 'OFF (plugin disabled)', 'seed: status reports the manual toggle as the reason.');
+  assert(tb._teamAbbreviationPollingInterval === null, 'seed: pollers are stopped on the disabled fall-through path.');
+  assert(capturedReports.length === 1, 'seed: a disabled Seed round is still reported.');
+  assert(capturedReports[0]?.scrambleCondition === 'None', 'seed: a disabled Seed round claims no scramble attribution.');
+
+  // ...and "!teambalancer on" re-arms it. Driven through the real command so the DB persist path
+  // runs, not by poking the field — that is what an admin actually does.
+  // enableWinStreakTracking stays false here on purpose: the toggle alone must re-arm the trigger.
+  await tb.onChatCommand({ message: 'on', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(tb.manuallyDisabled === false, 'seed: precondition — "!teambalancer on" cleared the manual disable.');
+  tb.manuallyDisabled = false; // belt and braces: assert() does not throw, so a failed precondition
+                               // would otherwise leak a disabled plugin into every later phase
+  await seedRoundSetup();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'seed: "!teambalancer on" re-arms the trigger.');
   await tb.cancelPendingScramble(null, null, true);
-  tb.manuallyDisabled = false;
 
   // A Seed round that ends without a winner (admin switches the layer mid-seed) must still scramble.
   await seedRoundSetup();
@@ -636,18 +654,59 @@ async function runPluginLogicTests() {
   // Status surfaces must not claim the trigger is armed when ignoredGameModes cannot match Seed.
   tb.options.ignoredGameModes = ['Jensen'];
   assert(tb.seedAutoScrambleStatus() === 'OFF (Seed not in ignoredGameModes)', 'status: a Seed round outside ignoredGameModes is reported as not armed.');
-  assert(tb.seedScrambleNote() === '', 'status: the "stays active" note is withheld when the trigger cannot fire.');
   tb.options.ignoredGameModes = ['Seed', 'Jensen'];
   assert(tb.seedAutoScrambleStatus() === 'ON (at Seed round end)', 'status: armed again once Seed is ignored.');
+
+  // A config blocker outranks the manual toggle: both restart-only reasons must be reported ahead
+  // of the runtime-fixable one, or status sends an admin to "!teambalancer on" for a trigger that
+  // still cannot fire afterwards.
+  tb.options.ignoredGameModes = ['Jensen'];
+  tb.manuallyDisabled = true;
+  assert(tb.seedAutoScrambleStatus() === 'OFF (Seed not in ignoredGameModes)', 'status: the config blocker is reported ahead of the manual toggle.');
+  tb.options.enableSeedAutoScramble = false;
+  assert(tb.seedAutoScrambleStatus() === 'OFF (config)', 'status: the config option outranks everything.');
+  tb.options.enableSeedAutoScramble = true;
+  tb.options.ignoredGameModes = ['Seed', 'Jensen'];
+  assert(tb.seedAutoScrambleStatus() === 'OFF (plugin disabled)', 'status: the manual toggle is reported once nothing in config blocks it.');
+  tb.manuallyDisabled = false;
+
+  // The status command must exercise the ARMED rendering — asserted before any "off" below flips
+  // the state, and on the value, not just the label, or the assertion passes for every branch.
+  const armedStatusReply = await tb.onChatCommand({ message: 'status', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(/Seed Auto Scramble: ON \(at Seed round end\)/.test(armedStatusReply || ''), 'status: the status block reports the armed seed trigger.');
 
   // The seed note is admin-only: it belongs on the reply, not in the server-wide broadcast.
   capturedBroadcasts.length = 0;
   const offReply = await tb.onChatCommand({ message: 'off', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
-  assert(/Seed auto-scramble stays active/.test(offReply || ''), 'off: the admin reply carries the seed note.');
+  assert(/Seed auto-scramble is off too/.test(offReply || ''), 'off: the admin reply says the seed trigger stopped too.');
   assert(!capturedBroadcasts.find((m) => m.includes('Seed auto-scramble')), 'off: the server-wide broadcast does not leak the seed note to players.');
-  const statusReply = await tb.onChatCommand({ message: 'status', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
-  assert(/Seed Auto Scramble:/.test(statusReply || ''), 'status: the status block reports the seed trigger.');
-  await tb.onChatCommand({ message: 'on', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  const onReply = await tb.onChatCommand({ message: 'on', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(/Seed auto-scramble re-armed/.test(onReply || ''), 'on: the admin reply names the side effect the toggle just had.');
+  tb.manuallyDisabled = false;
+
+  // "Win streak tracking enabled." is a lie on a server whose config flag is off — the toggle
+  // clears the manual disable, it does not override the config.
+  tb.options.enableWinStreakTracking = false;
+  assert(/stays off in config/.test(tb.enableConfirmationText()), 'on: the reply does not claim tracking is on when the config flag is off.');
+  tb.options.enableWinStreakTracking = true;
+  assert(/^Win streak tracking enabled\./.test(tb.enableConfirmationText()), 'on: the plain wording is used when tracking really is on.');
+
+  // The note must not go silent for a layer-name match: ignoredGameModes ["Logar"] on
+  // Logar_Seed_v1 arms the trigger, but the config-only probe cannot see it. Silence there hides
+  // a behaviour change the command really made.
+  tb.options.ignoredGameModes = ['Logar'];
+  assert(tb.seedScrambleOffNote() !== '', 'off: the note survives a layer-name-only ignoredGameModes match.');
+  tb.options.ignoredGameModes = ['Seed', 'Jensen'];
+  tb.options.enableSeedAutoScramble = false;
+  assert(tb.seedScrambleOffNote() === '', 'off: the note is withheld when the config option is off.');
+  tb.options.enableSeedAutoScramble = true;
+
+  // An already-armed countdown is NOT stopped by the toggle, so the note must not claim it was —
+  // it has to point at the command that actually reaches it.
+  tb._scramblePending = true;
+  assert(/!scramble cancel/.test(tb.seedScrambleOffNote()), 'off: an armed countdown is reported as still running, with the command that stops it.');
+  assert(!/off too/.test(tb.seedScrambleOffNote()), 'off: the note does not claim a stop that did not happen.');
+  tb._scramblePending = false;
 
   // Restore defaults for any phase added after this one.
   tb.db.insertRoundReport = realInsertRoundReport;

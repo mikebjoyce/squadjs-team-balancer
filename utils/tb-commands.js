@@ -237,7 +237,7 @@ const CommandHandlers = {
               Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist enabled state: ${err.message}`);
             }
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking enabled by ${adminName}`);
-            const response = await this.respond(player, 'Win streak tracking enabled.');
+            const response = await this.respond(player, this.enableConfirmationText());
             try {
               await this.server.rcon.broadcast(
                 `${this.RconMessages.prefix} ${this.RconMessages.system.trackingEnabled}`
@@ -250,7 +250,7 @@ const CommandHandlers = {
                 color: 0x3498db,
                 title: '🎮 In-Game Command: !teambalancer on',
                 description: `Executed by **${adminName}**`,
-                fields: [{ name: 'Response', value: 'Win streak tracking enabled.', inline: false }],
+                fields: [{ name: 'Response', value: this.enableConfirmationText(), inline: false }],
                 timestamp: new Date().toISOString()
               };
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
@@ -268,7 +268,7 @@ const CommandHandlers = {
               Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist disabled state: ${err.message}`);
             }
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking disabled by ${adminName}`);
-            const response = await this.respond(player, `Win streak tracking disabled.${this.seedScrambleNote()}`);
+            const response = await this.respond(player, `Win streak tracking disabled.${this.seedScrambleOffNote()}`);
             try {
               // The seed note stays on the admin reply above — players get the plain message.
               await this.server.rcon.broadcast(
@@ -283,7 +283,7 @@ const CommandHandlers = {
                   color: 0x3498db,
                   title: '🎮 In-Game Command: !teambalancer off',
                   description: `Executed by **${adminName}**`,
-                  fields: [{ name: 'Response', value: `Win streak tracking disabled.${this.seedScrambleNote()}`, inline: false }],
+                  fields: [{ name: 'Response', value: `Win streak tracking disabled.${this.seedScrambleOffNote()}`, inline: false }],
                   timestamp: new Date().toISOString()
                 };
                 await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });

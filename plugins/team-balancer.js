@@ -49,12 +49,13 @@
  * - ignoredGameModes matches against both gamemode and layerName
  *   (case-insensitive substring). Default: ["Seed", "Jensen"].
  * - enableSeedAutoScramble: scrambles automatically when a Seed round ends. Independent
- *   of streak logic, of enableWinStreakTracking, of the !teambalancer on/off toggle, and
- *   of the round outcome (fires on a Seed round that ends without a winner too, e.g. an
- *   admin switching the layer mid-seed). Two conditions remain: the Seed layer must be in
+ *   of streak logic, of enableWinStreakTracking, and of the round outcome (fires on a Seed
+ *   round that ends without a winner too, e.g. an admin switching the layer mid-seed).
+ *   "!teambalancer off" DOES stop it — that toggle is the admin kill switch and the runtime
+ *   way to disarm the trigger. Two further conditions: the Seed layer must be in
  *   ignoredGameModes (take it out and Seed rounds are streak-evaluated instead), and the
  *   round's own layer must have resolved — the lastKnownGoodLayer fallback can be the
- *   previous round's layer, too weak to shuffle teams on. No runtime switch: config only.
+ *   previous round's layer, too weak to shuffle teams on.
  * - useEloForBalance: pulls mu ratings from a running EloTracker instance
  *   at scramble time. Gracefully falls back to pure numerical balance if
  *   EloTracker is absent or the cache is empty.
@@ -71,8 +72,8 @@
  * Admin:
  *   !teambalancer status           → Win streak and plugin status.
  *   !teambalancer diag             → Run self-diagnostics (DB check + live scramble sim).
- *   !teambalancer on               → Enable win streak tracking.
- *   !teambalancer off              → Disable win streak tracking.
+ *   !teambalancer on               → Enable win streak tracking + seed auto-scramble.
+ *   !teambalancer off              → Disable win streak tracking + seed auto-scramble.
  *   !teambalancer export           → Export the round reports JSONL file.
  *   !teambalancer clear            → Clear the round reports log file.
  *   !teambalancer help             → List available commands.
@@ -91,7 +92,7 @@
  *   enableWinStreakTracking             - Enable automatic win streak tracking.
  *   ignoredGameModes                   - Modes/maps excluded from tracking (default: ["Seed", "Jensen"]).
  *   enableSeedAutoScramble             - Auto-scramble at end of Seed. Independent of
- *                                        enableWinStreakTracking and of !teambalancer on/off.
+ *                                        enableWinStreakTracking; stopped by !teambalancer off.
  *
  * Win Streak:
  *   maxWinStreak                       - Dominant wins to trigger scramble (default: 2).
@@ -557,25 +558,54 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   /**
-   * Suffix for the "!teambalancer off" confirmations. The seed auto-scramble is independent of
-   * both enableWinStreakTracking and the manual toggle, so a bare "tracking disabled" would be a
-   * lie while it is still armed. One wording, so the confirmations can't drift apart.
+   * Suffix for the "!teambalancer off" confirmations. The toggle stops the seed auto-scramble
+   * along with streak tracking, so a bare "Win streak tracking disabled." under-reports what the
+   * admin just did. One wording, so the confirmations can't drift apart.
    * Only used where there is no room for a full line: the status and diag surfaces render
    * seedAutoScrambleStatus() as their own field instead, and appending both duplicates it.
    * Not appended to player broadcasts either: it is admin-only detail.
    */
-  seedScrambleNote() {
-    // "config only" is the honest part: there is no runtime switch for it — on/off does not cover
-    // it any more, so the only way to stop it is enableSeedAutoScramble plus a restart.
-    return this.options.enableSeedAutoScramble && this.seedRoundIsIgnored()
-      ? ' | Seed auto-scramble stays active (config only)'
-      : '';
+  seedScrambleOffNote() {
+    // An already-ticking countdown is NOT stopped by the toggle — cancelPendingScramble is the
+    // only thing that reaches it. Warn about that first and name the command that works: an admin
+    // types "off" precisely to head off a scramble they can see coming, and telling them it
+    // stopped would send them away from the one thing that would have. Not seed-specific on
+    // purpose — the countdown could equally be a streak scramble, and the advice is the same.
+    if (this._scramblePending || this._scrambleInProgress) {
+      return ' | A scramble countdown is already running — use !scramble cancel to stop it';
+    }
+    // Guarded on the config option alone, deliberately. seedRoundIsIgnored() is a config-only
+    // probe that misses layer-name matches (ignoredGameModes ["Logar"] on Logar_Seed_v1), where
+    // the trigger really was armed and this command really did disarm it — staying silent there
+    // hides a live behaviour change. The wording holds either way: "off while disabled" is true
+    // whether or not the trigger could have fired on this configuration.
+    return this.options.enableSeedAutoScramble ? ' | Seed auto-scramble is off too while disabled' : '';
   }
 
-  /** Seed auto-scramble state as one line, for the status and diag surfaces. */
+  /**
+   * Full confirmation text for "!teambalancer on" — the mirror of seedScrambleOffNote().
+   * Not a bare literal for two reasons: "Win streak tracking enabled." is false on a server
+   * running enableWinStreakTracking: false (the toggle clears the manual disable, it does not
+   * override the config flag), and "on" re-arms the seed trigger, which is a real side effect an
+   * admin should not have to discover from the next round's broadcast.
+   */
+  enableConfirmationText() {
+    const base = this.options.enableWinStreakTracking
+      ? 'Win streak tracking enabled.'
+      : 'Plugin enabled — win streak tracking stays off in config.';
+    return `${base}${this.options.enableSeedAutoScramble ? ' | Seed auto-scramble re-armed' : ''}`;
+  }
+
+  /**
+   * Seed auto-scramble state as one line, for the status and diag surfaces.
+   * Config blockers are reported BEFORE the manual toggle: both of them need a config edit plus a
+   * restart, and naming the runtime-fixable reason first sends an admin to "!teambalancer on" for
+   * a trigger that will still not fire afterwards.
+   */
   seedAutoScrambleStatus() {
     if (!this.options.enableSeedAutoScramble) return 'OFF (config)';
     if (!this.seedRoundIsIgnored()) return 'OFF (Seed not in ignoredGameModes)';
+    if (this.manuallyDisabled) return 'OFF (plugin disabled)';
     return 'ON (at Seed round end)';
   }
 
@@ -1054,8 +1084,8 @@ export default class TeamBalancer extends BasePlugin {
           fields: [
             { name: 'Plugin Commands', value: '`!teambalancer status` - Show current state & win streak\n' +
               '`!teambalancer diag` - Run diagnostics & dry run\n' +
-              '`!teambalancer on` - Enable win streak tracking\n' +
-              '`!teambalancer off` - Disable win streak tracking\n' +
+              '`!teambalancer on` - Enable win streak tracking + seed auto-scramble\n' +
+              '`!teambalancer off` - Disable win streak tracking + seed auto-scramble\n' +
               '`!teambalancer export` - Export the round reports JSONL file\n' +
               '`!teambalancer clear` - Clear the round reports log file' },
             { name: 'Scramble Commands', value: '`!scramble` - Trigger scramble (with countdown, mid-round)\n' +
@@ -1210,7 +1240,7 @@ export default class TeamBalancer extends BasePlugin {
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist enabled state: ${err.message}`);
       }
-      await message.reply('✅ Win streak tracking enabled.');
+      await message.reply(`✅ ${this.enableConfirmationText()}`);
       await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingEnabled}`);
       this.mirrorRconToDiscord(this.RconMessages.system.trackingEnabled, 'info');
     } else {
@@ -1221,7 +1251,7 @@ export default class TeamBalancer extends BasePlugin {
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist disabled state: ${err.message}`);
       }
-      await message.reply(`✅ Win streak tracking disabled.${this.seedScrambleNote()}`);
+      await message.reply(`✅ Win streak tracking disabled.${this.seedScrambleOffNote()}`);
       await this.resetStreak('Manual disable via Discord');
       // The seed note stays on the admin reply above — players get the plain message.
       await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`);
@@ -1357,6 +1387,15 @@ export default class TeamBalancer extends BasePlugin {
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
 
+      // One teardown for every path below. The round is over, so neither poller has anything left
+      // worth sampling, and onNewGame restarts both. Hoisted out of the individual branches because
+      // each of them returns: a branch that forgot the call (the manually-disabled path did) left
+      // the 5s abbreviation poller running into the next round — onNewGame only clears the delayed
+      // START handle, so it kept feeding the previous round's faction names to the new round's
+      // broadcasts — and could orphan the game-info interval past any stopPollingGameInfo() reach,
+      // since startPollingGameInfo() reassigns the handle without clearing the old one.
+      this._stopPolling();
+
       // Stale-arm guard: if a restart carried the arm past the round it was armed for, its stamped
       // match start differs from the current round's by ~a full round length. Discard it (don't scramble
       // the wrong round) and fall through so THIS round is evaluated normally by the win-streak path below.
@@ -1390,8 +1429,6 @@ export default class TeamBalancer extends BasePlugin {
       if (this._scrambleOnRoundEnd) {
         const armedBy = this._scrambleOnRoundEndBy;
         await this._setScrambleArm(null);
-        // Both branches below return, so tear the pollers down here rather than in the fire branch.
-        this._stopPolling();
 
         // The early return below skips the main path, but the finally block still logs this
         // round — give the report a layer even when this round's own never resolved.
@@ -1425,18 +1462,21 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
-      // Seed auto-scramble: fires when a Seed round ends, independent of enableWinStreakTracking,
-      // of the !teambalancer on/off toggle, and of the round outcome (an admin switching the layer
-      // mid-seed ends the round without a winner). Consumed after the armed match-end scramble so
-      // an admin's explicit command wins, and returns either way so the round is not ALSO reported
-      // as a draw or an ignored win further down.
+      // Seed auto-scramble: fires when a Seed round ends, independent of enableWinStreakTracking
+      // and of the round outcome (an admin switching the layer mid-seed ends the round without a
+      // winner). Consumed after the armed match-end scramble so an admin's explicit command wins,
+      // and returns either way so the round is not ALSO reported as a draw or an ignored win
+      // further down.
+      // Gated on manuallyDisabled: "!teambalancer off" is the admin kill switch, and a scramble
+      // firing at the end of the next Seed round after someone turned the plugin off is exactly
+      // the surprise that switch exists to prevent. Note the asymmetry with the config flag above
+      // it — enableWinStreakTracking is about STREAKS and never governed seeding.
       // Still gated on isIgnoredMatch(): the trigger belongs to Seed rounds that are excluded from
       // streak tracking. An operator who takes "Seed" out of ignoredGameModes wants those rounds
       // evaluated like any other, not auto-scrambled.
       // The layer fallback has deliberately NOT run yet — a round whose own layer never resolved
       // must not be shuffled on the strength of the previous round's layer.
-      if (this.isIgnoredMatch() && this.isSeedMatch() && this.options.enableSeedAutoScramble) {
-        this._stopPolling();
+      if (this.isIgnoredMatch() && this.isSeedMatch() && this.options.enableSeedAutoScramble && !this.manuallyDisabled) {
         // Don't announce or claim attribution for a scramble initiateScramble would refuse — but a
         // Seed round still never feeds the streak, so clear it on the way out.
         if (this._scramblePending || this._scrambleInProgress) {
@@ -1467,8 +1507,6 @@ export default class TeamBalancer extends BasePlugin {
         Logger.verbose('TeamBalancer', 4, 'Win streak tracking disabled, skipping round evaluation.');
         return;
       }
-
-      this._stopPolling();
 
       // Only now: everything below reads the layer for thresholds, ignored-mode matching and the
       // report, all of which tolerate the previous round's layer as a guess.
