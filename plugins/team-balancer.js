@@ -453,6 +453,7 @@ export default class TeamBalancer extends BasePlugin {
     this.consecutiveWinsCount = 0;
     this.lastSyncTimestamp = null;
     this.manuallyDisabled = false;
+    this._roundEndInFlight = false;
     this.scrambleConfirmation = null;
     this.ready = false;
 
@@ -542,20 +543,38 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   /**
-   * Suffix for every surface that reports the plugin as disabled — status, diag, the on/off
-   * confirmations and the server broadcast. The seed auto-scramble is independent of both
-   * enableWinStreakTracking and the manual toggle, so a bare "disabled" would be a lie while it
-   * is still armed. One wording, so the surfaces can't drift apart.
+   * Whether a Seed round would count as an ignored mode — the second half of the auto-scramble
+   * trigger, answered from the config alone so the status surfaces can be evaluated outside a
+   * round. Probes the gamemode string "seed" with the same lowercase-substring rule
+   * isIgnoredMatch() uses.
+   * Deliberately config-only, so it reports conservatively in one corner case: an entry that
+   * matches the LAYER rather than the mode (ignoredGameModes ["Logar"] on Logar_Seed_v1) does arm
+   * the trigger but is not visible here. Under-reporting one map beats the previous behaviour of
+   * claiming "armed" on every surface for a configuration where nothing can fire.
+   */
+  seedRoundIsIgnored() {
+    return this.options.ignoredGameModes.some(m => 'seed'.includes(m.toLowerCase()));
+  }
+
+  /**
+   * Suffix for every surface that reports the plugin as disabled — status, diag and the on/off
+   * confirmations. The seed auto-scramble is independent of both enableWinStreakTracking and the
+   * manual toggle, so a bare "disabled" would be a lie while it is still armed. One wording, so
+   * the surfaces can't drift apart. Not appended to player broadcasts: it is admin-only detail.
    */
   seedScrambleNote() {
     // "config only" is the honest part: there is no runtime switch for it — on/off does not cover
     // it any more, so the only way to stop it is enableSeedAutoScramble plus a restart.
-    return this.options.enableSeedAutoScramble ? ' | Seed auto-scramble stays active (config only)' : '';
+    return this.options.enableSeedAutoScramble && this.seedRoundIsIgnored()
+      ? ' | Seed auto-scramble stays active (config only)'
+      : '';
   }
 
   /** Seed auto-scramble state as one line, for the status and diag surfaces. */
   seedAutoScrambleStatus() {
-    return this.options.enableSeedAutoScramble ? 'ON (at Seed round end)' : 'OFF (config)';
+    if (!this.options.enableSeedAutoScramble) return 'OFF (config)';
+    if (!this.seedRoundIsIgnored()) return 'OFF (Seed not in ignoredGameModes)';
+    return 'ON (at Seed round end)';
   }
 
   async mount() {
@@ -683,6 +702,9 @@ export default class TeamBalancer extends BasePlugin {
     this.cleanupScrambleTracking();
     this._stopPolling();
     this._scrambleInProgress = false;
+    // Pairs with the _scrambleCountdownTimeout clear above: leaving the flag latched would make
+    // every trigger refuse silently after a reload, since resetStreak no longer clears it.
+    this._scramblePending = false;
     this._scrambleOnRoundEnd = false;
     this.ready = false;
     this._isMounted = false;
@@ -1200,9 +1222,9 @@ export default class TeamBalancer extends BasePlugin {
       }
       await message.reply(`✅ Win streak tracking disabled.${this.seedScrambleNote()}`);
       await this.resetStreak('Manual disable via Discord');
-      const disabledMsg = `${this.RconMessages.system.trackingDisabled}${this.seedScrambleNote()}`;
-      await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${disabledMsg}`);
-      this.mirrorRconToDiscord(disabledMsg, 'info');
+      // The seed note stays on the admin reply above — players get the plain message.
+      await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`);
+      this.mirrorRconToDiscord(this.RconMessages.system.trackingDisabled, 'info');
     }
   }
 
@@ -1293,6 +1315,17 @@ export default class TeamBalancer extends BasePlugin {
   async onRoundEnded(data) {
     if (!this.ready) return;
 
+    // Re-entrancy guard. Every branch below awaits RCON/DB calls before it claims the round, so a
+    // second ROUND_ENDED for the same round (a re-emitted log line, a log-reader reconnect) used to
+    // slip into those windows and arm a second scramble — or arm the seed trigger while the
+    // match-end path was still parked on its broadcast. Claiming synchronously here closes all of
+    // those at once, which is why the individual blocks can keep the natural announce-then-arm order.
+    if (this._roundEndInFlight) {
+      Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Duplicate ROUND_ENDED ignored: the previous one is still being processed.');
+      return;
+    }
+    this._roundEndInFlight = true;
+
     // Note: roundReport is initialized early to capture state. It is always written by the
     // finally block, even when the method returns early (draw, tracking disabled, ignored
     // mode) — those rounds are logged with the fields that were filled in before the return.
@@ -1346,6 +1379,8 @@ export default class TeamBalancer extends BasePlugin {
       if (this._scrambleOnRoundEnd) {
         const armedBy = this._scrambleOnRoundEndBy;
         await this._setScrambleArm(null);
+        // Both branches below return, so tear the pollers down here rather than in the fire branch.
+        this._stopPolling();
 
         // The early return below skips the main path, but the finally block still logs this
         // round — give the report a layer even when this round's own never resolved.
@@ -1355,7 +1390,6 @@ export default class TeamBalancer extends BasePlugin {
           // Only attribute the scramble to this path when it actually initiates one.
           roundReport.scrambled = true;
           roundReport.scrambleCondition = 'Manual Match End';
-          this._stopPolling();
           const msg = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.matchEndScrambleAnnouncement, { delay: this.options.scrambleAnnouncementDelay })}`;
           try {
             await this.server.rcon.broadcast(msg);
@@ -1392,20 +1426,16 @@ export default class TeamBalancer extends BasePlugin {
       // must not be shuffled on the strength of the previous round's layer.
       if (this.isIgnoredMatch() && this.isSeedMatch() && this.options.enableSeedAutoScramble) {
         this._stopPolling();
-        // Don't announce or claim attribution for a scramble initiateScramble would refuse.
+        // Don't announce or claim attribution for a scramble initiateScramble would refuse — but a
+        // Seed round still never feeds the streak, so clear it on the way out.
         if (this._scramblePending || this._scrambleInProgress) {
           Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Seed auto-scramble skipped: another scramble is already pending or in progress.');
+          await this.resetStreak('Seed round ended (scramble already pending)');
           return;
         }
         roundReport.scrambled = true;
         roundReport.scrambleCondition = 'Seed Auto Scramble';
         Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Seed match ended with ${this.server.players.length} players. Triggering auto-scramble.`);
-        // Armed BEFORE the awaited broadcast: initiateScramble sets _scramblePending synchronously,
-        // so a second ROUND_ENDED for the same round can't slip past the guard above while this
-        // path is parked on the broadcast.
-        this.initiateScramble(false, false).catch(err =>
-          Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
-        );
         const msg = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.seedScrambleAnnouncement, { delay: this.options.scrambleAnnouncementDelay })}`;
         try {
           await this.server.rcon.broadcast(msg);
@@ -1413,6 +1443,9 @@ export default class TeamBalancer extends BasePlugin {
           Logger.verbose('TeamBalancer', 1, `Failed to broadcast seed scramble announcement: ${err.message}`);
         }
         this.mirrorRconToDiscord(msg, 'warning');
+        this.initiateScramble(false, false).catch(err =>
+          Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
+        );
         // Seed rounds never feed the streak, so clear it here rather than leaving it to
         // executeScramble — that reset is skipped when the scrambler returns an empty plan.
         await this.resetStreak('Seed round ended');
@@ -1743,6 +1776,7 @@ export default class TeamBalancer extends BasePlugin {
       this._scramblePending = false;
       this.cleanupScrambleTracking();
      } finally {
+       this._roundEndInFlight = false;
        roundReport.isDominantWin = isDominant ?? null;
        roundReport.winStreak = this.winStreakCount;
        roundReport.consecutiveWins = this.consecutiveWinsCount;

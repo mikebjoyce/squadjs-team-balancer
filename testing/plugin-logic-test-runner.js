@@ -39,6 +39,8 @@ const mockServer = {
 const mockDbState = {
   winStreakTeam: null,
   winStreakCount: 0,
+  consecutiveWinsTeam: null,
+  consecutiveWinsCount: 0,
   manuallyDisabled: false,
   lastSyncTimestamp: Date.now(),
   lastScrambleTime: null,
@@ -57,6 +59,8 @@ const mockModel = {
         mockDbState.lastScrambleTime = this.lastScrambleTime;
         mockDbState.scrambleOnRoundEndBy = this.scrambleOnRoundEndBy;
         mockDbState.manuallyDisabled = this.manuallyDisabled;
+        mockDbState.consecutiveWinsTeam = this.consecutiveWinsTeam;
+        mockDbState.consecutiveWinsCount = this.consecutiveWinsCount;
       },
     };
     return [instance, true];
@@ -71,6 +75,8 @@ const mockModel = {
         mockDbState.lastScrambleTime = this.lastScrambleTime;
         mockDbState.scrambleOnRoundEndBy = this.scrambleOnRoundEndBy;
         mockDbState.manuallyDisabled = this.manuallyDisabled;
+        mockDbState.consecutiveWinsTeam = this.consecutiveWinsTeam;
+        mockDbState.consecutiveWinsCount = this.consecutiveWinsCount;
       },
     };
     return instance;
@@ -539,9 +545,66 @@ async function runPluginLogicTests() {
   tb.startPollingTeamAbbreviations();
   await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
   assert(!capturedBroadcasts.find((m) => m.includes('Seed scramble in')), 'seed: no announcement when another scramble is already pending.');
-  assert(capturedReports[0]?.scrambleCondition !== 'Seed Auto Scramble', 'seed: a skipped scramble is not attributed in the report.');
+  assert(capturedReports.length === 1 && capturedReports[0].scrambleCondition === 'None', 'seed: a skipped scramble is still reported, without attribution.');
   assert(tb._teamAbbreviationPollingInterval === null, 'seed: pollers are stopped even when the scramble is skipped.');
   tb._scramblePending = false;
+
+  // A Seed round never feeds the streak, even on the skip path — the old ignored-match branch
+  // always reset, and the early return must not cost that.
+  await seedRoundSetup();
+  tb.winStreakTeam = 1;
+  tb.winStreakCount = 1;
+  tb._scramblePending = true;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 0, 'seed: the streak is reset even when the scramble is skipped.');
+  tb._scramblePending = false;
+
+  // Duplicate ROUND_ENDED for the same round: the second one must not slip into the first one's
+  // await windows and arm a second scramble. Fired without awaiting the first on purpose.
+  await seedRoundSetup();
+  const firstRound = tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  const duplicateRound = tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  await Promise.all([firstRound, duplicateRound]);
+  assert(capturedBroadcasts.filter((m) => m.includes('Seed scramble in')).length === 1, 'reentrancy: a duplicate ROUND_ENDED announces only once.');
+  assert(capturedReports.length === 1, 'reentrancy: a duplicate ROUND_ENDED writes only one round report.');
+  assert(tb._roundEndInFlight === false, 'reentrancy: the in-flight guard is released afterwards.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // The armed match-end path tears the pollers down on BOTH branches — here the skip branch.
+  await seedRoundSetup();
+  tb.gameModeCached = 'RAAS';
+  tb.layerNameCached = null;
+  tb._scrambleOnRoundEnd = true;
+  tb._scramblePending = true;
+  tb.startPollingTeamAbbreviations();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._teamAbbreviationPollingInterval === null, 'matchend: pollers are stopped even when the armed scramble is skipped.');
+  tb._scramblePending = false;
+  tb._scrambleOnRoundEnd = false;
+
+  // unmount() must not leave the pending flag latched — it kills the countdown timer, so nothing
+  // would ever clear the flag again and every later trigger would refuse silently.
+  tb._scramblePending = true;
+  await tb.unmount();
+  assert(tb._scramblePending === false, 'unmount: a pending scramble flag is cleared with the countdown it kills.');
+  await tb.mount();
+  tb._stopPolling(); // mount() restarted the abbreviation poller
+
+  // Status surfaces must not claim the trigger is armed when ignoredGameModes cannot match Seed.
+  tb.options.ignoredGameModes = ['Jensen'];
+  assert(tb.seedAutoScrambleStatus() === 'OFF (Seed not in ignoredGameModes)', 'status: a Seed round outside ignoredGameModes is reported as not armed.');
+  assert(tb.seedScrambleNote() === '', 'status: the "stays active" note is withheld when the trigger cannot fire.');
+  tb.options.ignoredGameModes = ['Seed', 'Jensen'];
+  assert(tb.seedAutoScrambleStatus() === 'ON (at Seed round end)', 'status: armed again once Seed is ignored.');
+
+  // The seed note is admin-only: it belongs on the reply, not in the server-wide broadcast.
+  capturedBroadcasts.length = 0;
+  const offReply = await tb.onChatCommand({ message: 'off', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(/Seed auto-scramble stays active/.test(offReply || ''), 'off: the admin reply carries the seed note.');
+  assert(!capturedBroadcasts.find((m) => m.includes('Seed auto-scramble')), 'off: the server-wide broadcast does not leak the seed note to players.');
+  const statusReply = await tb.onChatCommand({ message: 'status', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(/Seed Auto Scramble:/.test(statusReply || ''), 'status: the status block reports the seed trigger.');
+  await tb.onChatCommand({ message: 'on', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
 
   // Restore defaults for any phase added after this one.
   tb.db.insertRoundReport = realInsertRoundReport;

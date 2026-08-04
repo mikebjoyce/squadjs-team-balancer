@@ -270,8 +270,9 @@ const CommandHandlers = {
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking disabled by ${adminName}`);
             const response = await this.respond(player, `Win streak tracking disabled.${this.seedScrambleNote()}`);
             try {
+              // The seed note stays on the admin reply above — players get the plain message.
               await this.server.rcon.broadcast(
-                `${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}${this.seedScrambleNote()}`
+                `${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`
               );
             } catch (err) {
               Logger.verbose('TeamBalancer', 1, `Failed to broadcast tracking disabled message: ${err.message}`);
@@ -348,6 +349,7 @@ const CommandHandlers = {
               `Elo Integration: ${eloStatus}`,
               `Win Streak: ${winStreakText}`,
               `Consecutive Wins: ${consecText}`,
+              `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
               `Last Scramble: ${lastScrambleText}`,
               `Players: ${players.length} (T1: ${t1Count} | T2: ${t2Count})`,
               `Layer: ${currentLayer}`,
