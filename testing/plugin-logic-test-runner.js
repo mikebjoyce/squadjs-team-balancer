@@ -405,8 +405,35 @@ async function runPluginLogicTests() {
   tb.options.requireScrambleConfirmation = true;
   delete mockServer.matchStartTime;
 
-  // --- Phase 3.6: Seed auto-scramble (independent of win-streak tracking) ---
-  console.log('\n[Phase 3.6: Seed auto-scramble]');
+  // --- Phase 3.6: NEW_GAME discards a pending scramble countdown ---
+  console.log('\n[Phase 3.6: NEW_GAME discards a pending countdown]');
+
+  // A countdown armed in the previous round must not fire into the new one: at NEW_GAME the teams are
+  // freshly assigned (and teamIDs stay null for 30-60s), so it would scramble the wrong round.
+  // The timer, not _scramblePending, has to drive the cleanup: resetStreak() clears that flag on its
+  // own right after the seed/streak paths arm the countdown, so the flag is already false here.
+  await tb.resetStreak();
+  tb._scramblePending = false;
+  tb._scrambleInProgress = false;
+  tb.options.scrambleAnnouncementDelay = 0.05; // 50ms countdown, fires while this test is still running
+  let countdownExecutions = 0;
+  tb.executeScramble = async () => {
+    countdownExecutions++;
+    return true;
+  };
+  await tb.initiateScramble(false, false);
+  assert(!!tb._scrambleCountdownTimeout, 'newgame: initiateScramble arms a countdown timer.');
+  tb._scramblePending = false; // simulate the flag going false while the countdown is still armed
+  await tb.onNewGame({ layer: { gamemode: 'RAAS', name: 'Yehorivka_RAAS_v1' } });
+  assert(!tb._scrambleCountdownTimeout, 'newgame: the pending countdown timer is cleared at NEW_GAME.');
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert(countdownExecutions === 0, 'newgame: a countdown from the previous round does not execute in the new round.');
+  delete tb.executeScramble;
+  tb.options.scrambleAnnouncementDelay = defaultTestOptions.scrambleAnnouncementDelay;
+  clearTimeout(tb._abbreviationPollStartTimeout); // onNewGame schedules abbreviation polling 5 min out
+
+  // --- Phase 3.7: Seed auto-scramble (independent of win-streak tracking) ---
+  console.log('\n[Phase 3.7: Seed auto-scramble]');
 
   // Capture what onRoundEnded actually reported for the round — the JSONL row and the DB row are
   // built from the same object, and the seed path's outcome fields live or die with it.
