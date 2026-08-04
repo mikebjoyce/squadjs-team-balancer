@@ -58,10 +58,10 @@ export const DiscordHelpers = {
     const effectiveStatus = !tb.ready
       ? 'INITIALIZING'
       : tb.manuallyDisabled
-      ? 'DISABLED (manual)'
+      ? `DISABLED (manual)${tb.seedScrambleNote()}`
       : tb.options?.enableWinStreakTracking
       ? 'ENABLED'
-      : 'DISABLED (config)';
+      : `DISABLED (config)${tb.seedScrambleNote()}`;
 
     const maxStreak = tb.options?.maxWinStreak || 2;
     const winStreakText = tb.winStreakTeam
@@ -96,6 +96,7 @@ export const DiscordHelpers = {
         { name: 'Elo Integration', value: eloStatus, inline: true },
         { name: 'Dominant Streak', value: winStreakText, inline: true },
         { name: 'Consecutive Streak', value: consecutiveText, inline: true },
+        { name: 'Seed Auto Scramble', value: tb.seedAutoScrambleStatus(), inline: true },
         { name: 'Round-End Scramble', value: tb._scrambleOnRoundEnd ? '🕒 Armed (fires at round end)' : 'None', inline: true },
         { name: 'Last Scramble', value: lastScrambleText, inline: false },
         { name: 'Player Count', value: `Total: ${players.length} | T1: ${t1Count} | T2: ${t2Count}`, inline: false }
@@ -132,7 +133,15 @@ export const DiscordHelpers = {
     const embed1 = {
       color: color,
       title: '🩺 TeamBalancer Diagnostics - Live State',
-      description: `**Plugin Status:** ${!tb.ready ? 'INITIALIZING' : tb.manuallyDisabled ? 'DISABLED (Manual)' : 'ENABLED'}`,
+      description: `**Plugin Status:** ${
+        !tb.ready
+          ? 'INITIALIZING'
+          : tb.manuallyDisabled
+          ? `DISABLED (Manual)${tb.seedScrambleNote()}`
+          : tb.options?.enableWinStreakTracking
+          ? 'ENABLED'
+          : `DISABLED (config)${tb.seedScrambleNote()}`
+      }`,
       fields: [
         { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
         { name: 'Elo Integration', value: eloStatus, inline: true },
@@ -161,6 +170,7 @@ export const DiscordHelpers = {
         { name: 'Max Consec. Wins', value: `${tb.options?.maxConsecutiveWinsWithoutThreshold || 0}`, inline: true },
         { name: 'Dominant Threshold', value: `${tb.options?.minTicketsToCountAsDominantWin || 150} tickets`, inline: true },
         { name: 'Single Round Scramble', value: tb.options?.enableSingleRoundScramble ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` : 'OFF', inline: true },
+        { name: 'Seed Auto Scramble', value: tb.seedAutoScrambleStatus(), inline: true },
         { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
         { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
         { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s`, inline: true },

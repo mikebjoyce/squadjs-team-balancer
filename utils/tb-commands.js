@@ -157,10 +157,10 @@ const CommandHandlers = {
       const statusText = !this.ready
         ? 'Initializing...'
         : this.manuallyDisabled
-        ? 'Manually disabled'
+        ? `Manually disabled${this.seedScrambleNote()}`
         : this.options.enableWinStreakTracking
         ? 'Active'
-        : 'Disabled in config';
+        : `Disabled in config${this.seedScrambleNote()}`;
 
       const winStreakText =
         this.winStreakCount > 0
@@ -177,6 +177,7 @@ const CommandHandlers = {
         `Status: ${statusText}`,
         `Elo Integration: ${eloStatus}`,
         `Dominance Streak: ${winStreakText}`,
+        `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
         `Last Scramble: ${lastScrambleText}`,
         `Max Streak Threshold: ${this.options.maxWinStreak} dominant win(s)`
       ].join('\n');
@@ -267,10 +268,10 @@ const CommandHandlers = {
               Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist disabled state: ${err.message}`);
             }
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking disabled by ${adminName}`);
-            const response = await this.respond(player, 'Win streak tracking disabled.');
+            const response = await this.respond(player, `Win streak tracking disabled.${this.seedScrambleNote()}`);
             try {
               await this.server.rcon.broadcast(
-                `${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`
+                `${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}${this.seedScrambleNote()}`
               );
             } catch (err) {
               Logger.verbose('TeamBalancer', 1, `Failed to broadcast tracking disabled message: ${err.message}`);
@@ -281,7 +282,7 @@ const CommandHandlers = {
                   color: 0x3498db,
                   title: '🎮 In-Game Command: !teambalancer off',
                   description: `Executed by **${adminName}**`,
-                  fields: [{ name: 'Response', value: 'Win streak tracking disabled.', inline: false }],
+                  fields: [{ name: 'Response', value: `Win streak tracking disabled.${this.seedScrambleNote()}`, inline: false }],
                   timestamp: new Date().toISOString()
                 };
                 await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
@@ -297,10 +298,10 @@ const CommandHandlers = {
             const effectiveStatus = !this.ready
               ? 'INITIALIZING'
               : this.manuallyDisabled
-              ? 'DISABLED (manual)'
+              ? `DISABLED (manual)${this.seedScrambleNote()}`
               : this.options.enableWinStreakTracking
               ? 'ENABLED'
-              : 'DISABLED (config)';
+              : `DISABLED (config)${this.seedScrambleNote()}`;
 
             // Win Streak with Threshold
             const maxStreak = this.options?.maxWinStreak || 2;
@@ -399,7 +400,13 @@ const CommandHandlers = {
               '',
               '----- CORE STATUS -----',
               `Version: ${this.constructor.version}`,
-              `Plugin Status: ${this.manuallyDisabled ? 'DISABLED (Manual override)' : 'ENABLED'}`,
+              `Plugin Status: ${
+                this.manuallyDisabled
+                  ? `DISABLED (Manual override)${this.seedScrambleNote()}`
+                  : this.options.enableWinStreakTracking
+                  ? 'ENABLED'
+                  : `DISABLED (config)${this.seedScrambleNote()}`
+              }`,
               `Win Streak: ${
                 this.winStreakTeam
                   ? `${this.getTeamName(this.winStreakTeam)} with ${this.winStreakCount} win(s)`
@@ -434,6 +441,7 @@ const CommandHandlers = {
               '----- CONFIGURATION -----',
               `Dominant Win Threshold: ${this.options?.minTicketsToCountAsDominantWin || 150} tickets`,
               `Single Round Scramble: ${this.options?.enableSingleRoundScramble ? `ON (> ${this.options?.singleRoundScrambleThreshold} tix)` : 'OFF'}`,
+              `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
               `Invasion Thresholds: Atk: ${this.options?.invasionAttackTeamThreshold} | Def: ${this.options?.invasionDefenceTeamThreshold}`,
               `Scramble %: ${(this.options?.scramblePercentage || 0.5) * 100}%`,
               `Scramble Delay: ${this.options?.scrambleAnnouncementDelay}s`,

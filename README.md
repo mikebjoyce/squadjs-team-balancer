@@ -245,7 +245,7 @@ Core Settings:
 database                            - Sequelize database connector (SQLite, MySQL, PostgreSQL, etc.). Defaults to 'sqlite' if unspecified.
 enableWinStreakTracking              - Enable/disable automatic win streak tracking.
 ignoredGameModes                    - Game modes or map names excluded from win streak tracking (default: ["Seed", "Jensen"]).
-enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round (default: true).
+enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round (default: true). Independent of enableWinStreakTracking and of the !teambalancer on/off toggle.
 
 Win Streak:
 maxWinStreak                        - Dominant wins in a row to trigger scramble (default: 2).
@@ -301,7 +301,7 @@ enableDatabaseLogging               - If true, round reports are also written to
 
 - **RAAS / AAS**: Uses `minTicketsToCountAsDominantWin` threshold.
 - **Invasion**: Uses separate thresholds for attackers (`invasionAttackTeamThreshold`) and defenders (`invasionDefenceTeamThreshold`).
-- **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`.
+- **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`, independent of `enableWinStreakTracking` and of `!teambalancer off`, and it fires even when the round ends without a winner (an admin switching the layer mid-seed). Two conditions still apply: "Seed" must be in `ignoredGameModes` — take it out and Seed rounds are evaluated like any other mode instead — and the round's own layer must have resolved, since the fallback to the last known layer is too weak a basis for shuffling teams. There is no runtime switch: only the config option plus a restart.
 - Other modes and map names can be excluded via `ignoredGameModes`.
 
 ---
