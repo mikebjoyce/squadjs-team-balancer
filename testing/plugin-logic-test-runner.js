@@ -597,6 +597,22 @@ async function runPluginLogicTests() {
   assert(tb._roundEndInFlight === false, 'reentrancy: the in-flight guard is released afterwards.');
   await tb.cancelPendingScramble(null, null, true);
 
+  // A throw AFTER a countdown was armed must not orphan the timer: the catch in onRoundEnded used
+  // to drop _scramblePending on its own, which left the timer running but invisible to
+  // cancelPendingScramble() — an admin could no longer abort a scramble that still fired.
+  await seedRoundSetup();
+  await tb.initiateScramble(false, false);
+  assert(!!tb._scrambleCountdownTimeout, 'catch: precondition — a countdown is armed.');
+  const realIsIgnoredMatch = tb.isIgnoredMatch.bind(tb);
+  tb.isIgnoredMatch = () => {
+    throw new Error('forced failure after the countdown was armed');
+  };
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  tb.isIgnoredMatch = realIsIgnoredMatch;
+  assert(tb._scrambleCountdownTimeout === null, 'catch: a throw clears the armed countdown timer, not just the flag.');
+  assert(tb._scramblePending === false, 'catch: the pending flag and the timer end in the same state.');
+  assert(tb._roundEndInFlight === false, 'catch: the in-flight guard is released after a throw.');
+
   // The armed match-end path tears the pollers down on BOTH branches — here the skip branch.
   await seedRoundSetup();
   tb.gameModeCached = 'RAAS';

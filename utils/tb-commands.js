@@ -157,10 +157,10 @@ const CommandHandlers = {
       const statusText = !this.ready
         ? 'Initializing...'
         : this.manuallyDisabled
-        ? `Manually disabled${this.seedScrambleNote()}`
+        ? 'Manually disabled'
         : this.options.enableWinStreakTracking
         ? 'Active'
-        : `Disabled in config${this.seedScrambleNote()}`;
+        : 'Disabled in config';
 
       const winStreakText =
         this.winStreakCount > 0
@@ -299,10 +299,10 @@ const CommandHandlers = {
             const effectiveStatus = !this.ready
               ? 'INITIALIZING'
               : this.manuallyDisabled
-              ? `DISABLED (manual)${this.seedScrambleNote()}`
+              ? 'DISABLED (manual)'
               : this.options.enableWinStreakTracking
               ? 'ENABLED'
-              : `DISABLED (config)${this.seedScrambleNote()}`;
+              : 'DISABLED (config)';
 
             // Win Streak with Threshold
             const maxStreak = this.options?.maxWinStreak || 2;
@@ -404,10 +404,10 @@ const CommandHandlers = {
               `Version: ${this.constructor.version}`,
               `Plugin Status: ${
                 this.manuallyDisabled
-                  ? `DISABLED (Manual override)${this.seedScrambleNote()}`
+                  ? 'DISABLED (Manual override)'
                   : this.options.enableWinStreakTracking
                   ? 'ENABLED'
-                  : `DISABLED (config)${this.seedScrambleNote()}`
+                  : 'DISABLED (config)'
               }`,
               `Win Streak: ${
                 this.winStreakTeam

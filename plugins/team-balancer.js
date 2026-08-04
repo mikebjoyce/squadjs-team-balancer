@@ -557,10 +557,12 @@ export default class TeamBalancer extends BasePlugin {
   }
 
   /**
-   * Suffix for every surface that reports the plugin as disabled — status, diag and the on/off
-   * confirmations. The seed auto-scramble is independent of both enableWinStreakTracking and the
-   * manual toggle, so a bare "disabled" would be a lie while it is still armed. One wording, so
-   * the surfaces can't drift apart. Not appended to player broadcasts: it is admin-only detail.
+   * Suffix for the "!teambalancer off" confirmations. The seed auto-scramble is independent of
+   * both enableWinStreakTracking and the manual toggle, so a bare "tracking disabled" would be a
+   * lie while it is still armed. One wording, so the confirmations can't drift apart.
+   * Only used where there is no room for a full line: the status and diag surfaces render
+   * seedAutoScrambleStatus() as their own field instead, and appending both duplicates it.
+   * Not appended to player broadcasts either: it is admin-only detail.
    */
   seedScrambleNote() {
     // "config only" is the honest part: there is no runtime switch for it — on/off does not cover
@@ -1329,7 +1331,6 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Duplicate ROUND_ENDED ignored: the previous one is still being processed.');
       return;
     }
-    this._roundEndInFlight = true;
 
     // Note: roundReport is initialized early to capture state. It is always written by the
     // finally block, even when the method returns early (draw, tracking disabled, ignored
@@ -1347,6 +1348,11 @@ export default class TeamBalancer extends BasePlugin {
     let winnerID = null;
     let isDominant = false;
     let isStomp = false;
+
+    // Claimed here, not at the guard above: only the finally below releases it, so a throw in the
+    // prologue would latch it forever and drop every later ROUND_ENDED. Nothing awaits between the
+    // guard and this line, so the check-and-claim is still atomic.
+    this._roundEndInFlight = true;
 
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
@@ -1778,7 +1784,10 @@ export default class TeamBalancer extends BasePlugin {
       this.winStreakTeam = null;
       this.winStreakCount = 0;
       this._scrambleInProgress = false;
-      this._scramblePending = false;
+      // Clear the countdown handle with the flag: a path that already armed one (streak,
+      // consecutive wins) then threw would otherwise leave the timer running while
+      // cancelPendingScramble() reads _scramblePending === false and refuses to abort it.
+      this._clearPendingScrambleCountdown();
       this.cleanupScrambleTracking();
      } finally {
        this._roundEndInFlight = false;

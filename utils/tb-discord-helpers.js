@@ -58,10 +58,10 @@ export const DiscordHelpers = {
     const effectiveStatus = !tb.ready
       ? 'INITIALIZING'
       : tb.manuallyDisabled
-      ? `DISABLED (manual)${tb.seedScrambleNote()}`
+      ? 'DISABLED (manual)'
       : tb.options?.enableWinStreakTracking
       ? 'ENABLED'
-      : `DISABLED (config)${tb.seedScrambleNote()}`;
+      : 'DISABLED (config)';
 
     const maxStreak = tb.options?.maxWinStreak || 2;
     const winStreakText = tb.winStreakTeam
@@ -137,10 +137,10 @@ export const DiscordHelpers = {
         !tb.ready
           ? 'INITIALIZING'
           : tb.manuallyDisabled
-          ? `DISABLED (Manual)${tb.seedScrambleNote()}`
+          ? 'DISABLED (Manual)'
           : tb.options?.enableWinStreakTracking
           ? 'ENABLED'
-          : `DISABLED (config)${tb.seedScrambleNote()}`
+          : 'DISABLED (config)'
       }`,
       fields: [
         { name: 'Version', value: tb.constructor.version || 'Unknown', inline: true },
