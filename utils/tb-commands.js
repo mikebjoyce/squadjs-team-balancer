@@ -177,6 +177,7 @@ const CommandHandlers = {
         `Status: ${statusText}`,
         `Elo Integration: ${eloStatus}`,
         `Dominance Streak: ${winStreakText}`,
+        `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
         `Last Scramble: ${lastScrambleText}`,
         `Max Streak Threshold: ${this.options.maxWinStreak} dominant win(s)`
       ].join('\n');
@@ -236,7 +237,7 @@ const CommandHandlers = {
               Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist enabled state: ${err.message}`);
             }
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking enabled by ${adminName}`);
-            const response = await this.respond(player, 'Win streak tracking enabled.');
+            const response = await this.respond(player, this.enableConfirmationText());
             try {
               await this.server.rcon.broadcast(
                 `${this.RconMessages.prefix} ${this.RconMessages.system.trackingEnabled}`
@@ -249,7 +250,7 @@ const CommandHandlers = {
                 color: 0x3498db,
                 title: '🎮 In-Game Command: !teambalancer on',
                 description: `Executed by **${adminName}**`,
-                fields: [{ name: 'Response', value: 'Win streak tracking enabled.', inline: false }],
+                fields: [{ name: 'Response', value: this.enableConfirmationText(), inline: false }],
                 timestamp: new Date().toISOString()
               };
               await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
@@ -267,8 +268,9 @@ const CommandHandlers = {
               Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist disabled state: ${err.message}`);
             }
             Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Win streak tracking disabled by ${adminName}`);
-            const response = await this.respond(player, 'Win streak tracking disabled.');
+            const response = await this.respond(player, `Win streak tracking disabled.${this.seedScrambleOffNote()}`);
             try {
+              // The seed note stays on the admin reply above — players get the plain message.
               await this.server.rcon.broadcast(
                 `${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`
               );
@@ -281,7 +283,7 @@ const CommandHandlers = {
                   color: 0x3498db,
                   title: '🎮 In-Game Command: !teambalancer off',
                   description: `Executed by **${adminName}**`,
-                  fields: [{ name: 'Response', value: 'Win streak tracking disabled.', inline: false }],
+                  fields: [{ name: 'Response', value: `Win streak tracking disabled.${this.seedScrambleOffNote()}`, inline: false }],
                   timestamp: new Date().toISOString()
                 };
                 await DiscordHelpers.sendDiscordMessage(this.discordChannel, { embeds: [embed] });
@@ -347,6 +349,7 @@ const CommandHandlers = {
               `Elo Integration: ${eloStatus}`,
               `Win Streak: ${winStreakText}`,
               `Consecutive Wins: ${consecText}`,
+              `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
               `Last Scramble: ${lastScrambleText}`,
               `Players: ${players.length} (T1: ${t1Count} | T2: ${t2Count})`,
               `Layer: ${currentLayer}`,
@@ -399,7 +402,13 @@ const CommandHandlers = {
               '',
               '----- CORE STATUS -----',
               `Version: ${this.constructor.version}`,
-              `Plugin Status: ${this.manuallyDisabled ? 'DISABLED (Manual override)' : 'ENABLED'}`,
+              `Plugin Status: ${
+                this.manuallyDisabled
+                  ? 'DISABLED (Manual override)'
+                  : this.options.enableWinStreakTracking
+                  ? 'ENABLED'
+                  : 'DISABLED (config)'
+              }`,
               `Win Streak: ${
                 this.winStreakTeam
                   ? `${this.getTeamName(this.winStreakTeam)} with ${this.winStreakCount} win(s)`
@@ -434,6 +443,7 @@ const CommandHandlers = {
               '----- CONFIGURATION -----',
               `Dominant Win Threshold: ${this.options?.minTicketsToCountAsDominantWin || 150} tickets`,
               `Single Round Scramble: ${this.options?.enableSingleRoundScramble ? `ON (> ${this.options?.singleRoundScrambleThreshold} tix)` : 'OFF'}`,
+              `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
               `Invasion Thresholds: Atk: ${this.options?.invasionAttackTeamThreshold} | Def: ${this.options?.invasionDefenceTeamThreshold}`,
               `Scramble %: ${(this.options?.scramblePercentage || 0.5) * 100}%`,
               `Scramble Delay: ${this.options?.scrambleAnnouncementDelay}s`,

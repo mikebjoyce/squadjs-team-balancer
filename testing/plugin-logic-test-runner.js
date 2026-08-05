@@ -39,6 +39,9 @@ const mockServer = {
 const mockDbState = {
   winStreakTeam: null,
   winStreakCount: 0,
+  consecutiveWinsTeam: null,
+  consecutiveWinsCount: 0,
+  manuallyDisabled: false,
   lastSyncTimestamp: Date.now(),
   lastScrambleTime: null,
   scrambleOnRoundEndBy: null,
@@ -55,6 +58,9 @@ const mockModel = {
         mockDbState.lastSyncTimestamp = this.lastSyncTimestamp;
         mockDbState.lastScrambleTime = this.lastScrambleTime;
         mockDbState.scrambleOnRoundEndBy = this.scrambleOnRoundEndBy;
+        mockDbState.manuallyDisabled = this.manuallyDisabled;
+        mockDbState.consecutiveWinsTeam = this.consecutiveWinsTeam;
+        mockDbState.consecutiveWinsCount = this.consecutiveWinsCount;
       },
     };
     return [instance, true];
@@ -68,6 +74,9 @@ const mockModel = {
         mockDbState.lastSyncTimestamp = this.lastSyncTimestamp;
         mockDbState.lastScrambleTime = this.lastScrambleTime;
         mockDbState.scrambleOnRoundEndBy = this.scrambleOnRoundEndBy;
+        mockDbState.manuallyDisabled = this.manuallyDisabled;
+        mockDbState.consecutiveWinsTeam = this.consecutiveWinsTeam;
+        mockDbState.consecutiveWinsCount = this.consecutiveWinsCount;
       },
     };
     return instance;
@@ -87,6 +96,9 @@ const mockConnectors = {
       });
     },
     query: async () => [], // tb-database initDB issues PRAGMA journal_mode=WAL etc.
+    // Without this, initDB throws ("getDialect is not a function") and falls into its catch, so
+    // mount() would only ever restore defaults and no restore-from-DB path would be covered.
+    getDialect: () => 'sqlite',
   },
 };
 
@@ -145,6 +157,8 @@ async function runPluginLogicTests() {
     scrambleAnnouncement: 'Scramble in {delay}s after {count} dominant wins',
     singleRoundScramble: 'Single round scramble triggered.',
     matchEndScrambleAnnouncement: 'Match-end scramble in {delay}s',
+    seedScrambleAnnouncement: 'Seed scramble in {delay}s',
+    draw: 'Round ended in a Draw!',
     system: { trackingEnabled: 'Tracking enabled', trackingDisabled: 'Tracking disabled' },
     dominant: { stomped: 'Stomp', steamrolled: 'Steamrolled', invasionAttackStomp: 'Atk Stomp', invasionDefendStomp: 'Def Stomp' },
     nonDominant: { streakBroken: 'Streak Broken', invasionAttackWin: 'Atk Win', invasionDefendWin: 'Def Win', narrowVictory: 'Narrow', marginalVictory: 'Marginal', tacticalAdvantage: 'Tactical', operationalSuperiority: 'Operational' }
@@ -409,7 +423,7 @@ async function runPluginLogicTests() {
   };
   await tb.initiateScramble(false, false);
   assert(!!tb._scrambleCountdownTimeout, 'newgame: initiateScramble arms a countdown timer.');
-  tb._scramblePending = false; // as resetStreak() does while the countdown is still armed
+  tb._scramblePending = false; // simulate the flag going false while the countdown is still armed
   await tb.onNewGame({ layer: { gamemode: 'RAAS', name: 'Yehorivka_RAAS_v1' } });
   assert(!tb._scrambleCountdownTimeout, 'newgame: the pending countdown timer is cleared at NEW_GAME.');
   await new Promise((resolve) => setTimeout(resolve, 150));
@@ -417,6 +431,291 @@ async function runPluginLogicTests() {
   delete tb.executeScramble;
   tb.options.scrambleAnnouncementDelay = defaultTestOptions.scrambleAnnouncementDelay;
   clearTimeout(tb._abbreviationPollStartTimeout); // onNewGame schedules abbreviation polling 5 min out
+
+  // --- Phase 3.7: Seed auto-scramble (independent of win-streak tracking) ---
+  console.log('\n[Phase 3.7: Seed auto-scramble]');
+
+  // Capture what onRoundEnded actually reported for the round — the JSONL row and the DB row are
+  // built from the same object, and the seed path's outcome fields live or die with it.
+  const capturedReports = [];
+  const realInsertRoundReport = tb.db.insertRoundReport.bind(tb.db);
+  tb.db.insertRoundReport = async (row) => {
+    capturedReports.push(row);
+  };
+  tb.options.enableDatabaseLogging = true;
+
+  const seedRoundSetup = async () => {
+    await tb.resetStreak();
+    tb._scramblePending = false;
+    tb._scrambleOnRoundEnd = false;
+    tb.gameModeCached = 'Seed';
+    tb.layerNameCached = 'Logar_Seed_v1';
+    capturedBroadcasts.length = 0;
+    capturedReports.length = 0;
+  };
+
+  // The fix: a Seed round ends while win-streak tracking is off in the config -> still scrambles.
+  tb.options.enableWinStreakTracking = false;
+  tb.manuallyDisabled = false;
+  await seedRoundSetup();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'seed: scrambles with enableWinStreakTracking = false.');
+  assert(!!capturedBroadcasts.find((m) => m.includes('Seed scramble in')), 'seed: announcement is broadcast with tracking disabled.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // ...but "!teambalancer off" IS the kill switch: it stops the seed trigger too. Asserted on what
+  // the round DOES as well as what it skips — the disabled round now takes the fall-through path,
+  // and asserting only absences let a dropped poller teardown ship green once already.
+  tb.manuallyDisabled = true;
+  await seedRoundSetup();
+  tb.startPollingTeamAbbreviations();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === false, 'seed: does NOT scramble when manually disabled.');
+  assert(capturedBroadcasts.length === 0, 'seed: nothing is broadcast when manually disabled.');
+  assert(tb.seedAutoScrambleStatus() === 'OFF (plugin disabled)', 'seed: status reports the manual toggle as the reason.');
+  assert(tb._teamAbbreviationPollingInterval === null, 'seed: pollers are stopped on the disabled fall-through path.');
+  assert(capturedReports.length === 1, 'seed: a disabled Seed round is still reported.');
+  assert(capturedReports[0]?.scrambleCondition === 'None', 'seed: a disabled Seed round claims no scramble attribution.');
+
+  // ...and "!teambalancer on" re-arms it. Driven through the real command so the DB persist path
+  // runs, not by poking the field — that is what an admin actually does.
+  // enableWinStreakTracking stays false here on purpose: the toggle alone must re-arm the trigger.
+  await tb.onChatCommand({ message: 'on', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(tb.manuallyDisabled === false, 'seed: precondition — "!teambalancer on" cleared the manual disable.');
+  tb.manuallyDisabled = false; // belt and braces: assert() does not throw, so a failed precondition
+                               // would otherwise leak a disabled plugin into every later phase
+  await seedRoundSetup();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'seed: "!teambalancer on" re-arms the trigger.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // A Seed round that ends without a winner (admin switches the layer mid-seed) must still scramble.
+  await seedRoundSetup();
+  await tb.onRoundEnded({});
+  assert(tb._scramblePending === true, 'seed: scrambles on a Seed round that ends without a winner.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // Must not over-fire: a non-Seed round with tracking disabled stays silent.
+  await seedRoundSetup();
+  tb.gameModeCached = 'RAAS';
+  tb.layerNameCached = 'Gorodok_RAAS_v1';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === false, 'seed: a non-Seed round does not scramble when tracking is disabled.');
+  assert(capturedBroadcasts.length === 0, 'seed: a non-Seed round broadcasts nothing when tracking is disabled.');
+
+  // Its own option still switches it off.
+  tb.options.enableSeedAutoScramble = false;
+  await seedRoundSetup();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === false, 'seed: enableSeedAutoScramble = false suppresses the scramble.');
+  assert(capturedBroadcasts.length === 0, 'seed: nothing is broadcast when enableSeedAutoScramble = false.');
+  tb.options.enableSeedAutoScramble = true;
+
+  // Never scrambles off a guessed layer: this round's layer never resolved, so the caches are
+  // null and only lastKnownGoodLayer (the PREVIOUS round's Seed layer) is available.
+  await seedRoundSetup();
+  tb.gameModeCached = null;
+  tb.layerNameCached = null;
+  tb.lastKnownGoodLayer = { gamemode: 'Seed', name: 'Logar_Seed_v1' };
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === false, 'seed: a fallback (stale) layer does not trigger the seed scramble.');
+  assert(capturedBroadcasts.length === 0, 'seed: nothing is broadcast when the layer is only a fallback guess.');
+  tb.lastKnownGoodLayer = null;
+
+  // Regression: the original path (tracking enabled) still fires.
+  // The seed block returns, so _scramblePending survives — it must not fall through into
+  // resetStreak('Ignored match ended'), which would clear it under an armed countdown.
+  tb.options.enableWinStreakTracking = true;
+  await seedRoundSetup();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'seed: still scrambles with tracking enabled (unchanged path).');
+  assert(!!capturedBroadcasts.find((m) => m.includes('Seed scramble in')), 'seed: announcement is broadcast with tracking enabled.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // The early return must not cost the round its outcome data: the report is written by the
+  // finally block for every path, so winner and tickets have to be parsed before the return.
+  assert(capturedReports.length === 1, 'seed: the auto-scrambled round is still reported.');
+  assert(capturedReports[0]?.winningTeamID === 1, 'seed report: winning team is recorded.');
+  assert(capturedReports[0]?.winnerTickets === 400 && capturedReports[0]?.loserTickets === 0, 'seed report: ticket counts are recorded.');
+  assert(capturedReports[0]?.ticketMargin === 400, 'seed report: ticket margin is recorded.');
+  assert(capturedReports[0]?.winnerName === 'Team 1' && capturedReports[0]?.loserName === 'Team 2', 'seed report: team names are recorded.');
+  assert(capturedReports[0]?.scrambleCondition === 'Seed Auto Scramble', 'seed report: the scramble is attributed to the seed trigger.');
+
+  // A streak carried into the Seed round must not survive it. Asserted with a NON-zero streak:
+  // seedRoundSetup() zeroes the counter, so asserting 0 after a fresh setup proves nothing.
+  await seedRoundSetup();
+  tb.winStreakTeam = 1;
+  tb.winStreakCount = 1;
+  tb.consecutiveWinsTeam = 1;
+  tb.consecutiveWinsCount = 1;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 0, 'seed: a carried-over win streak is reset by the Seed round.');
+  assert(tb.consecutiveWinsCount === 0, 'seed: a carried-over consecutive-win count is reset too.');
+  assert(tb._scramblePending === true, 'seed: resetting the streak does not disarm the countdown.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // Only for Seed rounds the operator excluded from tracking: take "Seed" out of ignoredGameModes
+  // and the round must be streak-evaluated like any other mode instead of auto-scrambled.
+  await seedRoundSetup();
+  tb.options.ignoredGameModes = ['Jensen'];
+  tb.options.maxWinStreak = 2; // Phase 3.4 left it at 1; a dominant win would trigger a scramble.
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(!capturedBroadcasts.find((m) => m.includes('Seed scramble in')), 'seed: no auto-scramble when Seed is not in ignoredGameModes.');
+  assert(tb.winStreakCount === 1, 'seed: a non-ignored Seed round is win-streak evaluated instead.');
+  assert(tb._scramblePending === false, 'seed: a non-ignored Seed round below the streak threshold arms nothing.');
+  tb.options.ignoredGameModes = ['Seed', 'Jensen'];
+  tb.options.maxWinStreak = 1;
+
+  // "!teambalancer off" must not orphan an armed seed countdown: it calls resetStreak, which must
+  // leave _scramblePending alone so the admin can still abort with "!scramble cancel".
+  await seedRoundSetup();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'off: precondition — a seed countdown is armed.');
+  await tb.onChatCommand({ message: 'off', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(tb._scramblePending === true, 'off: "!teambalancer off" leaves the armed countdown visible.');
+  assert((await tb.cancelPendingScramble('admin1', null, true)) === true, 'off: the countdown can still be cancelled after "!teambalancer off".');
+  await tb.onChatCommand({ message: 'on', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+
+  // Tracking enabled + no winner: must scramble WITHOUT also reporting the round as a draw.
+  await seedRoundSetup();
+  await tb.onRoundEnded({});
+  assert(tb._scramblePending === true, 'seed: a winner-less Seed round scrambles with tracking enabled.');
+  assert(!capturedBroadcasts.find((m) => m.includes('Draw')), 'seed: a winner-less Seed round does not also broadcast the draw message.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // Another scramble already pending: no second announcement, no false report attribution, and
+  // the round-end poller teardown still happens before the early return.
+  await seedRoundSetup();
+  tb._scramblePending = true;
+  tb.startPollingTeamAbbreviations();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(!capturedBroadcasts.find((m) => m.includes('Seed scramble in')), 'seed: no announcement when another scramble is already pending.');
+  assert(capturedReports.length === 1 && capturedReports[0].scrambleCondition === 'None', 'seed: a skipped scramble is still reported, without attribution.');
+  assert(tb._teamAbbreviationPollingInterval === null, 'seed: pollers are stopped even when the scramble is skipped.');
+  tb._scramblePending = false;
+
+  // A Seed round never feeds the streak, even on the skip path — the old ignored-match branch
+  // always reset, and the early return must not cost that.
+  await seedRoundSetup();
+  tb.winStreakTeam = 1;
+  tb.winStreakCount = 1;
+  tb._scramblePending = true;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 0, 'seed: the streak is reset even when the scramble is skipped.');
+  tb._scramblePending = false;
+
+  // Duplicate ROUND_ENDED for the same round: the second one must not slip into the first one's
+  // await windows and arm a second scramble. Fired without awaiting the first on purpose.
+  await seedRoundSetup();
+  const firstRound = tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  const duplicateRound = tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  await Promise.all([firstRound, duplicateRound]);
+  assert(capturedBroadcasts.filter((m) => m.includes('Seed scramble in')).length === 1, 'reentrancy: a duplicate ROUND_ENDED announces only once.');
+  assert(capturedReports.length === 1, 'reentrancy: a duplicate ROUND_ENDED writes only one round report.');
+  assert(tb._roundEndInFlight === false, 'reentrancy: the in-flight guard is released afterwards.');
+  await tb.cancelPendingScramble(null, null, true);
+
+  // A throw AFTER a countdown was armed must not orphan the timer: the catch in onRoundEnded used
+  // to drop _scramblePending on its own, which left the timer running but invisible to
+  // cancelPendingScramble() — an admin could no longer abort a scramble that still fired.
+  await seedRoundSetup();
+  await tb.initiateScramble(false, false);
+  assert(!!tb._scrambleCountdownTimeout, 'catch: precondition — a countdown is armed.');
+  const realIsIgnoredMatch = tb.isIgnoredMatch.bind(tb);
+  tb.isIgnoredMatch = () => {
+    throw new Error('forced failure after the countdown was armed');
+  };
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  tb.isIgnoredMatch = realIsIgnoredMatch;
+  assert(tb._scrambleCountdownTimeout === null, 'catch: a throw clears the armed countdown timer, not just the flag.');
+  assert(tb._scramblePending === false, 'catch: the pending flag and the timer end in the same state.');
+  assert(tb._roundEndInFlight === false, 'catch: the in-flight guard is released after a throw.');
+
+  // The armed match-end path tears the pollers down on BOTH branches — here the skip branch.
+  await seedRoundSetup();
+  tb.gameModeCached = 'RAAS';
+  tb.layerNameCached = null;
+  tb._scrambleOnRoundEnd = true;
+  tb._scramblePending = true;
+  tb.startPollingTeamAbbreviations();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(tb._teamAbbreviationPollingInterval === null, 'matchend: pollers are stopped even when the armed scramble is skipped.');
+  tb._scramblePending = false;
+  tb._scrambleOnRoundEnd = false;
+
+  // unmount() must not leave the pending flag latched — it kills the countdown timer, so nothing
+  // would ever clear the flag again and every later trigger would refuse silently.
+  tb._scramblePending = true;
+  await tb.unmount();
+  assert(tb._scramblePending === false, 'unmount: a pending scramble flag is cleared with the countdown it kills.');
+  await tb.mount();
+  tb._stopPolling(); // mount() restarted the abbreviation poller
+
+  // Status surfaces must not claim the trigger is armed when ignoredGameModes cannot match Seed.
+  tb.options.ignoredGameModes = ['Jensen'];
+  assert(tb.seedAutoScrambleStatus() === 'OFF (Seed not in ignoredGameModes)', 'status: a Seed round outside ignoredGameModes is reported as not armed.');
+  tb.options.ignoredGameModes = ['Seed', 'Jensen'];
+  assert(tb.seedAutoScrambleStatus() === 'ON (at Seed round end)', 'status: armed again once Seed is ignored.');
+
+  // A config blocker outranks the manual toggle: both restart-only reasons must be reported ahead
+  // of the runtime-fixable one, or status sends an admin to "!teambalancer on" for a trigger that
+  // still cannot fire afterwards.
+  tb.options.ignoredGameModes = ['Jensen'];
+  tb.manuallyDisabled = true;
+  assert(tb.seedAutoScrambleStatus() === 'OFF (Seed not in ignoredGameModes)', 'status: the config blocker is reported ahead of the manual toggle.');
+  tb.options.enableSeedAutoScramble = false;
+  assert(tb.seedAutoScrambleStatus() === 'OFF (config)', 'status: the config option outranks everything.');
+  tb.options.enableSeedAutoScramble = true;
+  tb.options.ignoredGameModes = ['Seed', 'Jensen'];
+  assert(tb.seedAutoScrambleStatus() === 'OFF (plugin disabled)', 'status: the manual toggle is reported once nothing in config blocks it.');
+  tb.manuallyDisabled = false;
+
+  // The status command must exercise the ARMED rendering — asserted before any "off" below flips
+  // the state, and on the value, not just the label, or the assertion passes for every branch.
+  const armedStatusReply = await tb.onChatCommand({ message: 'status', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(/Seed Auto Scramble: ON \(at Seed round end\)/.test(armedStatusReply || ''), 'status: the status block reports the armed seed trigger.');
+
+  // The seed note is admin-only: it belongs on the reply, not in the server-wide broadcast.
+  capturedBroadcasts.length = 0;
+  const offReply = await tb.onChatCommand({ message: 'off', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(/Seed auto-scramble is off too/.test(offReply || ''), 'off: the admin reply says the seed trigger stopped too.');
+  assert(!capturedBroadcasts.find((m) => m.includes('Seed auto-scramble')), 'off: the server-wide broadcast does not leak the seed note to players.');
+  const onReply = await tb.onChatCommand({ message: 'on', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+  assert(/Seed auto-scramble re-armed/.test(onReply || ''), 'on: the admin reply names the side effect the toggle just had.');
+  tb.manuallyDisabled = false;
+
+  // "Win streak tracking enabled." is a lie on a server whose config flag is off — the toggle
+  // clears the manual disable, it does not override the config.
+  tb.options.enableWinStreakTracking = false;
+  assert(/stays off in config/.test(tb.enableConfirmationText()), 'on: the reply does not claim tracking is on when the config flag is off.');
+  tb.options.enableWinStreakTracking = true;
+  assert(/^Win streak tracking enabled\./.test(tb.enableConfirmationText()), 'on: the plain wording is used when tracking really is on.');
+
+  // The note must not go silent for a layer-name match: ignoredGameModes ["Logar"] on
+  // Logar_Seed_v1 arms the trigger, but the config-only probe cannot see it. Silence there hides
+  // a behaviour change the command really made.
+  tb.options.ignoredGameModes = ['Logar'];
+  assert(tb.seedScrambleOffNote() !== '', 'off: the note survives a layer-name-only ignoredGameModes match.');
+  tb.options.ignoredGameModes = ['Seed', 'Jensen'];
+  tb.options.enableSeedAutoScramble = false;
+  assert(tb.seedScrambleOffNote() === '', 'off: the note is withheld when the config option is off.');
+  tb.options.enableSeedAutoScramble = true;
+
+  // An already-armed countdown is NOT stopped by the toggle, so the note must not claim it was —
+  // it has to point at the command that actually reaches it.
+  tb._scramblePending = true;
+  assert(/!scramble cancel/.test(tb.seedScrambleOffNote()), 'off: an armed countdown is reported as still running, with the command that stops it.');
+  assert(!/off too/.test(tb.seedScrambleOffNote()), 'off: the note does not claim a stop that did not happen.');
+  tb._scramblePending = false;
+
+  // Restore defaults for any phase added after this one.
+  tb.db.insertRoundReport = realInsertRoundReport;
+  tb.options.enableDatabaseLogging = false;
+  tb.gameModeCached = 'RAAS';
+  tb.layerNameCached = null;
+  tb.manuallyDisabled = false;
+  tb.options.enableWinStreakTracking = true;
+  tb.options.enableSeedAutoScramble = true;
 
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);

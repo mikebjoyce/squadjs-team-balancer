@@ -222,8 +222,8 @@ Public Commands:
 Admin Commands:
 !teambalancer status           → View win streak and plugin status.
 !teambalancer diag             → Run self-diagnostics (DB check + live scramble sim).
-!teambalancer on               → Enable win streak tracking.
-!teambalancer off              → Disable win streak tracking.
+!teambalancer on               → Enable win streak tracking + seed auto-scramble.
+!teambalancer off              → Disable win streak tracking + seed auto-scramble.
 !teambalancer export           → Export the round reports JSONL file.
 !teambalancer clear            → Clear the round reports log file.
 !teambalancer help             → List available commands.
@@ -245,7 +245,7 @@ Core Settings:
 database                            - Sequelize database connector (SQLite, MySQL, PostgreSQL, etc.). Defaults to 'sqlite' if unspecified.
 enableWinStreakTracking              - Enable/disable automatic win streak tracking.
 ignoredGameModes                    - Game modes or map names excluded from win streak tracking (default: ["Seed", "Jensen"]).
-enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round (default: true).
+enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round (default: true). Independent of enableWinStreakTracking, but stopped by !teambalancer off.
 
 Win Streak:
 maxWinStreak                        - Dominant wins in a row to trigger scramble (default: 2).
@@ -301,7 +301,7 @@ enableDatabaseLogging               - If true, round reports are also written to
 
 - **RAAS / AAS**: Uses `minTicketsToCountAsDominantWin` threshold.
 - **Invasion**: Uses separate thresholds for attackers (`invasionAttackTeamThreshold`) and defenders (`invasionDefenceTeamThreshold`).
-- **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`.
+- **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`, independent of `enableWinStreakTracking` — that option is about streaks and never governed seeding — and it fires even when the round ends without a winner (an admin switching the layer mid-seed). `!teambalancer off` does stop it: that toggle is the admin kill switch, and it is the runtime way to disarm the trigger without a restart. Two conditions still apply: "Seed" must be in `ignoredGameModes` — take it out and Seed rounds are evaluated like any other mode instead — and the round's own layer must have resolved, since the fallback to the last known layer is too weak a basis for shuffling teams.
 - Other modes and map names can be excluded via `ignoredGameModes`.
 
 ---

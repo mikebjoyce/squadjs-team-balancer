@@ -48,8 +48,14 @@
  *   Either can trigger a scramble. Resets are independent.
  * - ignoredGameModes matches against both gamemode and layerName
  *   (case-insensitive substring). Default: ["Seed", "Jensen"].
- * - enableSeedAutoScramble: scrambles automatically when a Seed round
- *   ends. Independent of streak logic.
+ * - enableSeedAutoScramble: scrambles automatically when a Seed round ends. Independent
+ *   of streak logic, of enableWinStreakTracking, and of the round outcome (fires on a Seed
+ *   round that ends without a winner too, e.g. an admin switching the layer mid-seed).
+ *   "!teambalancer off" DOES stop it — that toggle is the admin kill switch and the runtime
+ *   way to disarm the trigger. Two further conditions: the Seed layer must be in
+ *   ignoredGameModes (take it out and Seed rounds are streak-evaluated instead), and the
+ *   round's own layer must have resolved — the lastKnownGoodLayer fallback can be the
+ *   previous round's layer, too weak to shuffle teams on.
  * - useEloForBalance: pulls mu ratings from a running EloTracker instance
  *   at scramble time. Gracefully falls back to pure numerical balance if
  *   EloTracker is absent or the cache is empty.
@@ -66,8 +72,8 @@
  * Admin:
  *   !teambalancer status           → Win streak and plugin status.
  *   !teambalancer diag             → Run self-diagnostics (DB check + live scramble sim).
- *   !teambalancer on               → Enable win streak tracking.
- *   !teambalancer off              → Disable win streak tracking.
+ *   !teambalancer on               → Enable win streak tracking + seed auto-scramble.
+ *   !teambalancer off              → Disable win streak tracking + seed auto-scramble.
  *   !teambalancer export           → Export the round reports JSONL file.
  *   !teambalancer clear            → Clear the round reports log file.
  *   !teambalancer help             → List available commands.
@@ -85,7 +91,8 @@
  *   database                           - Sequelize/SQLite connector.
  *   enableWinStreakTracking             - Enable automatic win streak tracking.
  *   ignoredGameModes                   - Modes/maps excluded from tracking (default: ["Seed", "Jensen"]).
- *   enableSeedAutoScramble             - Auto-scramble at end of Seed.
+ *   enableSeedAutoScramble             - Auto-scramble at end of Seed. Independent of
+ *                                        enableWinStreakTracking; stopped by !teambalancer off.
  *
  * Win Streak:
  *   maxWinStreak                       - Dominant wins to trigger scramble (default: 2).
@@ -447,6 +454,7 @@ export default class TeamBalancer extends BasePlugin {
     this.consecutiveWinsCount = 0;
     this.lastSyncTimestamp = null;
     this.manuallyDisabled = false;
+    this._roundEndInFlight = false;
     this.scrambleConfirmation = null;
     this.ready = false;
 
@@ -534,6 +542,73 @@ export default class TeamBalancer extends BasePlugin {
     const layerName = this.layerNameCached?.toLowerCase() || '';
     return gameMode.includes('seed') || layerName.includes('seed');
   }
+
+  /**
+   * Whether a Seed round would count as an ignored mode — the second half of the auto-scramble
+   * trigger, answered from the config alone so the status surfaces can be evaluated outside a
+   * round. Probes the gamemode string "seed" with the same lowercase-substring rule
+   * isIgnoredMatch() uses.
+   * Deliberately config-only, so it reports conservatively in one corner case: an entry that
+   * matches the LAYER rather than the mode (ignoredGameModes ["Logar"] on Logar_Seed_v1) does arm
+   * the trigger but is not visible here. Under-reporting one map beats the previous behaviour of
+   * claiming "armed" on every surface for a configuration where nothing can fire.
+   */
+  seedRoundIsIgnored() {
+    return this.options.ignoredGameModes.some(m => 'seed'.includes(m.toLowerCase()));
+  }
+
+  /**
+   * Suffix for the "!teambalancer off" confirmations. The toggle stops the seed auto-scramble
+   * along with streak tracking, so a bare "Win streak tracking disabled." under-reports what the
+   * admin just did. One wording, so the confirmations can't drift apart.
+   * Only used where there is no room for a full line: the status and diag surfaces render
+   * seedAutoScrambleStatus() as their own field instead, and appending both duplicates it.
+   * Not appended to player broadcasts either: it is admin-only detail.
+   */
+  seedScrambleOffNote() {
+    // An already-ticking countdown is NOT stopped by the toggle — cancelPendingScramble is the
+    // only thing that reaches it. Warn about that first and name the command that works: an admin
+    // types "off" precisely to head off a scramble they can see coming, and telling them it
+    // stopped would send them away from the one thing that would have. Not seed-specific on
+    // purpose — the countdown could equally be a streak scramble, and the advice is the same.
+    if (this._scramblePending || this._scrambleInProgress) {
+      return ' | A scramble countdown is already running — use !scramble cancel to stop it';
+    }
+    // Guarded on the config option alone, deliberately. seedRoundIsIgnored() is a config-only
+    // probe that misses layer-name matches (ignoredGameModes ["Logar"] on Logar_Seed_v1), where
+    // the trigger really was armed and this command really did disarm it — staying silent there
+    // hides a live behaviour change. The wording holds either way: "off while disabled" is true
+    // whether or not the trigger could have fired on this configuration.
+    return this.options.enableSeedAutoScramble ? ' | Seed auto-scramble is off too while disabled' : '';
+  }
+
+  /**
+   * Full confirmation text for "!teambalancer on" — the mirror of seedScrambleOffNote().
+   * Not a bare literal for two reasons: "Win streak tracking enabled." is false on a server
+   * running enableWinStreakTracking: false (the toggle clears the manual disable, it does not
+   * override the config flag), and "on" re-arms the seed trigger, which is a real side effect an
+   * admin should not have to discover from the next round's broadcast.
+   */
+  enableConfirmationText() {
+    const base = this.options.enableWinStreakTracking
+      ? 'Win streak tracking enabled.'
+      : 'Plugin enabled — win streak tracking stays off in config.';
+    return `${base}${this.options.enableSeedAutoScramble ? ' | Seed auto-scramble re-armed' : ''}`;
+  }
+
+  /**
+   * Seed auto-scramble state as one line, for the status and diag surfaces.
+   * Config blockers are reported BEFORE the manual toggle: both of them need a config edit plus a
+   * restart, and naming the runtime-fixable reason first sends an admin to "!teambalancer on" for
+   * a trigger that will still not fire afterwards.
+   */
+  seedAutoScrambleStatus() {
+    if (!this.options.enableSeedAutoScramble) return 'OFF (config)';
+    if (!this.seedRoundIsIgnored()) return 'OFF (Seed not in ignoredGameModes)';
+    if (this.manuallyDisabled) return 'OFF (plugin disabled)';
+    return 'ON (at Seed round end)';
+  }
+
   async mount() {
     if (this._isMounted) {
       Logger.verbose('TeamBalancer', 1, 'Plugin already mounted, skipping duplicate mount attempt.');
@@ -655,11 +730,11 @@ export default class TeamBalancer extends BasePlugin {
     }
 
     if (this._scrambleTimeout) clearTimeout(this._scrambleTimeout);
+    // Clears the countdown handle AND _scramblePending together — without the flag reset a reload
+    // mid-countdown would leave it latched and every later trigger would refuse silently.
     this._clearPendingScrambleCountdown();
-    if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
     this.cleanupScrambleTracking();
-    this.stopPollingGameInfo();
-    this.stopPollingTeamAbbreviations();
+    this._stopPolling();
     this._scrambleInProgress = false;
     this._scrambleOnRoundEnd = false;
     this.ready = false;
@@ -821,6 +896,65 @@ export default class TeamBalancer extends BasePlugin {
     }
   }
 
+  /**
+   * Parses a ROUND_ENDED payload into the round report and hands the values back to the caller.
+   * Runs once per round, before any early-returning path, so an armed match-end scramble and a
+   * seed auto-scramble log the same winner/ticket data the win-streak path does. Each field is
+   * written only when it parsed; the returned values may be NaN, which callers that need a
+   * complete outcome check for themselves.
+   */
+  _parseRoundOutcome(data, roundReport) {
+    const winnerID = parseInt(data?.winner?.team);
+    const winnerTickets = parseInt(data?.winner?.tickets);
+    const loserTickets = parseInt(data?.loser?.tickets);
+    const margin = winnerTickets - loserTickets;
+
+    if (!isNaN(winnerTickets) && !isNaN(loserTickets)) {
+      roundReport.winnerTickets = winnerTickets;
+      roundReport.loserTickets = loserTickets;
+      roundReport.ticketMargin = margin;
+    }
+
+    let winnerName = null;
+    let loserName = null;
+    if (!isNaN(winnerID)) {
+      winnerName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${winnerID}` : this.getTeamName(winnerID)) || `Team ${winnerID}`;
+      loserName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${3 - winnerID}` : this.getTeamName(3 - winnerID)) || `Team ${3 - winnerID}`;
+      roundReport.winnerName = winnerName;
+      roundReport.loserName = loserName;
+    }
+
+    return { winnerID, winnerTickets, loserTickets, margin, winnerName, loserName };
+  }
+
+  /**
+   * Substitutes the last layer that resolved when this round's own layer never did.
+   * lastKnownGoodLayer is not cleared by onNewGame, so the substitute can be the PREVIOUS round's
+   * layer — good enough to guess ticket thresholds and label the report, too weak to decide on a
+   * team shuffle. Hence it runs only on the paths that need it, never before the seed decision.
+   */
+  _applyLayerFallback(roundReport) {
+    if (this.gameModeCached !== null || this.layerNameCached !== null || this.lastKnownGoodLayer === null) return;
+    Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Warning: Layer info missing at round end. Using fallback lastKnownGoodLayer (${this.lastKnownGoodLayer.gamemode} / ${this.lastKnownGoodLayer.name})`);
+    this.gameModeCached = this.lastKnownGoodLayer.gamemode;
+    this.layerNameCached = this.lastKnownGoodLayer.name;
+    roundReport.gameMode = this.gameModeCached;
+    roundReport.layerName = this.layerNameCached;
+    // Provenance for the JSONL log: otherwise a round skipped because the layer was unknown is
+    // indistinguishable from one where the trigger was simply switched off.
+    roundReport.layerFallback = true;
+  }
+
+  /**
+   * Stops both pollers and cancels the delayed abbreviation-poll start. Idempotent — every
+   * round-end path and unmount call it, so teardown lives in one place instead of four copies.
+   */
+  _stopPolling() {
+    this.stopPollingGameInfo();
+    this.stopPollingTeamAbbreviations();
+    if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
+  }
+
   pollTeamAbbreviations() {
     Logger.verbose('TeamBalancer', 4, 'Running periodic team abbreviation poll.');
     const newAbbreviations = this.extractTeamAbbreviationsFromRoles();
@@ -950,8 +1084,8 @@ export default class TeamBalancer extends BasePlugin {
           fields: [
             { name: 'Plugin Commands', value: '`!teambalancer status` - Show current state & win streak\n' +
               '`!teambalancer diag` - Run diagnostics & dry run\n' +
-              '`!teambalancer on` - Enable win streak tracking\n' +
-              '`!teambalancer off` - Disable win streak tracking\n' +
+              '`!teambalancer on` - Enable win streak tracking + seed auto-scramble\n' +
+              '`!teambalancer off` - Disable win streak tracking + seed auto-scramble\n' +
               '`!teambalancer export` - Export the round reports JSONL file\n' +
               '`!teambalancer clear` - Clear the round reports log file' },
             { name: 'Scramble Commands', value: '`!scramble` - Trigger scramble (with countdown, mid-round)\n' +
@@ -1106,7 +1240,7 @@ export default class TeamBalancer extends BasePlugin {
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist enabled state: ${err.message}`);
       }
-      await message.reply('✅ Win streak tracking enabled.');
+      await message.reply(`✅ ${this.enableConfirmationText()}`);
       await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingEnabled}`);
       this.mirrorRconToDiscord(this.RconMessages.system.trackingEnabled, 'info');
     } else {
@@ -1117,8 +1251,9 @@ export default class TeamBalancer extends BasePlugin {
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[DB] Failed to persist disabled state: ${err.message}`);
       }
-      await message.reply('✅ Win streak tracking disabled.');
+      await message.reply(`✅ Win streak tracking disabled.${this.seedScrambleOffNote()}`);
       await this.resetStreak('Manual disable via Discord');
+      // The seed note stays on the admin reply above — players get the plain message.
       await this.server.rcon.broadcast(`${this.RconMessages.prefix} ${this.RconMessages.system.trackingDisabled}`);
       this.mirrorRconToDiscord(this.RconMessages.system.trackingDisabled, 'info');
     }
@@ -1163,7 +1298,8 @@ export default class TeamBalancer extends BasePlugin {
       this._scrambleInProgress = false;
       // A countdown armed in the previous round must not fire into this one: teams are freshly assigned
       // at NEW_GAME (teamIDs stay null for 30-60s), so it would scramble the wrong round. Driven off the
-      // timer handle, not _scramblePending — resetStreak() clears that flag while the timer still runs.
+      // timer handle, not _scramblePending: the flag can still be false while the timer runs, e.g. the
+      // catch in onRoundEnded clears it on its own.
       if (this._clearPendingScrambleCountdown()) {
         Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Discarding pending scramble countdown (new game started before it could execute).');
       }
@@ -1216,9 +1352,19 @@ export default class TeamBalancer extends BasePlugin {
   async onRoundEnded(data) {
     if (!this.ready) return;
 
-    // Note: roundReport is initialized early to capture state, but will be silently 
-    // abandoned (not logged to JSONL) if the match ends in a draw, is disabled, 
-    // or is an ignored mode before reaching the end of the method.
+    // Re-entrancy guard. Every branch below awaits RCON/DB calls before it claims the round, so a
+    // second ROUND_ENDED for the same round (a re-emitted log line, a log-reader reconnect) used to
+    // slip into those windows and arm a second scramble — or arm the seed trigger while the
+    // match-end path was still parked on its broadcast. Claiming synchronously here closes all of
+    // those at once, which is why the individual blocks can keep the natural announce-then-arm order.
+    if (this._roundEndInFlight) {
+      Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Duplicate ROUND_ENDED ignored: the previous one is still being processed.');
+      return;
+    }
+
+    // Note: roundReport is initialized early to capture state. It is always written by the
+    // finally block, even when the method returns early (draw, tracking disabled, ignored
+    // mode) — those rounds are logged with the fields that were filled in before the return.
     let roundReport = {
       ts: Date.now(),
       gameMode: this.gameModeCached || 'Unknown',
@@ -1233,8 +1379,22 @@ export default class TeamBalancer extends BasePlugin {
     let isDominant = false;
     let isStomp = false;
 
+    // Claimed here, not at the guard above: only the finally below releases it, so a throw in the
+    // prologue would latch it forever and drop every later ROUND_ENDED. Nothing awaits between the
+    // guard and this line, so the check-and-claim is still atomic.
+    this._roundEndInFlight = true;
+
     try {
       Logger.verbose('TeamBalancer', 4, `Round ended event received: ${JSON.stringify(data)}`);
+
+      // One teardown for every path below. The round is over, so neither poller has anything left
+      // worth sampling, and onNewGame restarts both. Hoisted out of the individual branches because
+      // each of them returns: a branch that forgot the call (the manually-disabled path did) left
+      // the 5s abbreviation poller running into the next round — onNewGame only clears the delayed
+      // START handle, so it kept feeding the previous round's faction names to the new round's
+      // broadcasts — and could orphan the game-info interval past any stopPollingGameInfo() reach,
+      // since startPollingGameInfo() reassigns the handle without clearing the old one.
+      this._stopPolling();
 
       // Stale-arm guard: if a restart carried the arm past the round it was armed for, its stamped
       // match start differs from the current round's by ~a full round length. Discard it (don't scramble
@@ -1256,6 +1416,12 @@ export default class TeamBalancer extends BasePlugin {
         }
       }
 
+      // Parse the outcome once, before any early-returning path below, so the finally block logs
+      // the winner and tickets for EVERY round — an armed match-end scramble and a seed
+      // auto-scramble return before the win-streak evaluation but are still reported in full.
+      const outcome = this._parseRoundOutcome(data, roundReport);
+      if (!isNaN(outcome.winnerID)) winnerID = outcome.winnerID;
+
       // "!scramble matchend": an admin armed a deferred scramble for the end of this round.
       // Consumed first, before any auto/streak logic, so it fires regardless of win-streak
       // tracking, match outcome (incl. draws), or ignored/seed modes. Mirrors the automatic
@@ -1264,37 +1430,14 @@ export default class TeamBalancer extends BasePlugin {
         const armedBy = this._scrambleOnRoundEndBy;
         await this._setScrambleArm(null);
 
-        // The early return below skips the main-path parsing, but the finally block still
-        // logs this round — populate the report's layer fallback and outcome fields here.
-        if (this.gameModeCached === null && this.layerNameCached === null && this.lastKnownGoodLayer !== null) {
-          this.gameModeCached = this.lastKnownGoodLayer.gamemode;
-          this.layerNameCached = this.lastKnownGoodLayer.name;
-          roundReport.gameMode = this.gameModeCached;
-          roundReport.layerName = this.layerNameCached;
-        }
-        if (data?.winner) {
-          const matchEndWinnerID = parseInt(data.winner.team);
-          const matchEndWinnerTickets = parseInt(data.winner.tickets);
-          const matchEndLoserTickets = parseInt(data.loser?.tickets);
-          if (!isNaN(matchEndWinnerTickets) && !isNaN(matchEndLoserTickets)) {
-            roundReport.winnerTickets = matchEndWinnerTickets;
-            roundReport.loserTickets = matchEndLoserTickets;
-            roundReport.ticketMargin = matchEndWinnerTickets - matchEndLoserTickets;
-          }
-          if (!isNaN(matchEndWinnerID)) {
-            winnerID = matchEndWinnerID;
-            roundReport.winnerName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${matchEndWinnerID}` : this.getTeamName(matchEndWinnerID)) || `Team ${matchEndWinnerID}`;
-            roundReport.loserName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${3 - matchEndWinnerID}` : this.getTeamName(3 - matchEndWinnerID)) || `Team ${3 - matchEndWinnerID}`;
-          }
-        }
+        // The early return below skips the main path, but the finally block still logs this
+        // round — give the report a layer even when this round's own never resolved.
+        this._applyLayerFallback(roundReport);
 
         if (!this._scramblePending && !this._scrambleInProgress) {
           // Only attribute the scramble to this path when it actually initiates one.
           roundReport.scrambled = true;
           roundReport.scrambleCondition = 'Manual Match End';
-          this.stopPollingGameInfo();
-          this.stopPollingTeamAbbreviations();
-          if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
           const msg = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.matchEndScrambleAnnouncement, { delay: this.options.scrambleAnnouncementDelay })}`;
           try {
             await this.server.rcon.broadcast(msg);
@@ -1319,22 +1462,55 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
+      // Seed auto-scramble: fires when a Seed round ends, independent of enableWinStreakTracking
+      // and of the round outcome (an admin switching the layer mid-seed ends the round without a
+      // winner). Consumed after the armed match-end scramble so an admin's explicit command wins,
+      // and returns either way so the round is not ALSO reported as a draw or an ignored win
+      // further down.
+      // Gated on manuallyDisabled: "!teambalancer off" is the admin kill switch, and a scramble
+      // firing at the end of the next Seed round after someone turned the plugin off is exactly
+      // the surprise that switch exists to prevent. Note the asymmetry with the config flag above
+      // it — enableWinStreakTracking is about STREAKS and never governed seeding.
+      // Still gated on isIgnoredMatch(): the trigger belongs to Seed rounds that are excluded from
+      // streak tracking. An operator who takes "Seed" out of ignoredGameModes wants those rounds
+      // evaluated like any other, not auto-scrambled.
+      // The layer fallback has deliberately NOT run yet — a round whose own layer never resolved
+      // must not be shuffled on the strength of the previous round's layer.
+      if (this.isIgnoredMatch() && this.isSeedMatch() && this.options.enableSeedAutoScramble && !this.manuallyDisabled) {
+        // Don't announce or claim attribution for a scramble initiateScramble would refuse — but a
+        // Seed round still never feeds the streak, so clear it on the way out.
+        if (this._scramblePending || this._scrambleInProgress) {
+          Logger.verbose('TeamBalancer', 2, '[TeamBalancer] Seed auto-scramble skipped: another scramble is already pending or in progress.');
+          await this.resetStreak('Seed round ended (scramble already pending)');
+          return;
+        }
+        roundReport.scrambled = true;
+        roundReport.scrambleCondition = 'Seed Auto Scramble';
+        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Seed match ended with ${this.server.players.length} players. Triggering auto-scramble.`);
+        const msg = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.seedScrambleAnnouncement, { delay: this.options.scrambleAnnouncementDelay })}`;
+        try {
+          await this.server.rcon.broadcast(msg);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `Failed to broadcast seed scramble announcement: ${err.message}`);
+        }
+        this.mirrorRconToDiscord(msg, 'warning');
+        this.initiateScramble(false, false).catch(err =>
+          Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
+        );
+        // Seed rounds never feed the streak, so clear it here rather than leaving it to
+        // executeScramble — that reset is skipped when the scrambler returns an empty plan.
+        await this.resetStreak('Seed round ended');
+        return;
+      }
+
       if (!this.options.enableWinStreakTracking || this.manuallyDisabled) {
         Logger.verbose('TeamBalancer', 4, 'Win streak tracking disabled, skipping round evaluation.');
         return;
       }
 
-      this.stopPollingGameInfo();
-      this.stopPollingTeamAbbreviations();
-      if (this._abbreviationPollStartTimeout) clearTimeout(this._abbreviationPollStartTimeout);
-
-      if (this.gameModeCached === null && this.layerNameCached === null && this.lastKnownGoodLayer !== null) {
-        Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Warning: Layer info missing at round end. Using fallback lastKnownGoodLayer (${this.lastKnownGoodLayer.gamemode} / ${this.lastKnownGoodLayer.name})`);
-        this.gameModeCached = this.lastKnownGoodLayer.gamemode;
-        this.layerNameCached = this.lastKnownGoodLayer.name;
-        roundReport.gameMode = this.gameModeCached;
-        roundReport.layerName = this.layerNameCached;
-      }
+      // Only now: everything below reads the layer for thresholds, ignored-mode matching and the
+      // report, all of which tolerate the previous round's layer as a guess.
+      this._applyLayerFallback(roundReport);
 
       // Check for Draw (Winner is null)
       if (!data || !data.winner) {
@@ -1349,67 +1525,32 @@ export default class TeamBalancer extends BasePlugin {
         return await this.resetStreak('Draw');
       }
 
-      winnerID = parseInt(data?.winner?.team);
-      const winnerTickets = parseInt(data?.winner?.tickets);
-      const loserTickets = parseInt(data?.loser?.tickets);
-      const margin = winnerTickets - loserTickets;
-
-      if (isNaN(winnerID) || isNaN(winnerTickets) || isNaN(loserTickets)) {
+      // Already parsed into the report above; the win-streak evaluation needs it complete.
+      const { winnerTickets, loserTickets, margin, winnerName, loserName } = outcome;
+      if (isNaN(outcome.winnerID) || isNaN(winnerTickets) || isNaN(loserTickets)) {
         Logger.verbose('TeamBalancer', 1, 'Could not parse round end data, skipping evaluation.');
         return;
       }
 
-      const winnerName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${winnerID}` : this.getTeamName(winnerID)) || `Team ${winnerID}`;
-      const loserName = (this.options.useGenericTeamNamesInBroadcasts ? `Team ${3 - winnerID}` : this.getTeamName(3 - winnerID)) || `Team ${3 - winnerID}`;
-
-      roundReport.winnerTickets = winnerTickets;
-      roundReport.loserTickets = loserTickets;
-      roundReport.ticketMargin = margin;
-      roundReport.winnerName = winnerName;
-      roundReport.loserName = loserName;
-
       Logger.verbose('TeamBalancer', 4, `Parsed winnerID=${winnerID}, winnerTickets=${winnerTickets}, loserTickets=${loserTickets}, margin=${margin}`);
-
-      const gameMode = this.gameModeCached?.toLowerCase() || '';
 
       if (this.isIgnoredMatch()) {
         Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Ignored match ended (${this.gameModeCached} / ${this.layerNameCached}). Resetting streak metrics.`);
         
-        let shouldScramble = false;
-        if (this.isSeedMatch() && this.options.enableSeedAutoScramble) {
-          const playerCount = this.server.players.length;
-          shouldScramble = true;
-          roundReport.scrambled = true;
-          roundReport.scrambleCondition = 'Seed Auto Scramble';
-          Logger.verbose('TeamBalancer', 2, `[TeamBalancer] Seed match ended with ${playerCount} players. Triggering auto-scramble.`);
-          const msg = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.seedScrambleAnnouncement, { delay: this.options.scrambleAnnouncementDelay })}`;
-          try {
-            await this.server.rcon.broadcast(msg);
-          } catch (err) {
-            Logger.verbose('TeamBalancer', 1, `Failed to broadcast seed scramble announcement: ${err.message}`);
-          }
-          this.mirrorRconToDiscord(msg, 'warning');
-          this.initiateScramble(false, false).catch(err =>
-            Logger.verbose('TeamBalancer', 1, `[initiateScramble] Unhandled error: ${err.message}`)
-          );
+        // Reached only when no seed auto-scramble fired — that path returned above.
+        let broadcastWinnerName = winnerName;
+        let broadcastLoserName = loserName;
+        if (!this.options.useGenericTeamNamesInBroadcasts) {
+          if (!/^The\s+/i.test(winnerName) && !winnerName.startsWith('Team ')) broadcastWinnerName = 'The ' + winnerName;
+          if (!/^The\s+/i.test(loserName) && !loserName.startsWith('Team ')) broadcastLoserName = 'The ' + loserName;
         }
-
-        if (!shouldScramble) {
-          // If we aren't scrambling, broadcast the standard win message
-          let broadcastWinnerName = winnerName;
-          let broadcastLoserName = loserName;
-          if (!this.options.useGenericTeamNamesInBroadcasts) {
-            if (!/^The\s+/i.test(winnerName) && !winnerName.startsWith('Team ')) broadcastWinnerName = 'The ' + winnerName;
-            if (!/^The\s+/i.test(loserName) && !loserName.startsWith('Team ')) broadcastLoserName = 'The ' + loserName;
-          }
-          const msg = `${this.RconMessages.prefix} ${broadcastWinnerName} defeated ${broadcastLoserName} | (${margin} tickets)`;
-          try {
-            await this.server.rcon.broadcast(msg);
-          } catch (err) {
-            Logger.verbose('TeamBalancer', 1, `Failed to broadcast standard seed win message: ${err.message}`);
-          }
-          this.mirrorRconToDiscord(msg, 'info');
+        const msg = `${this.RconMessages.prefix} ${broadcastWinnerName} defeated ${broadcastLoserName} | (${margin} tickets)`;
+        try {
+          await this.server.rcon.broadcast(msg);
+        } catch (err) {
+          Logger.verbose('TeamBalancer', 1, `Failed to broadcast standard seed win message: ${err.message}`);
         }
+        this.mirrorRconToDiscord(msg, 'info');
 
         await this.resetStreak('Ignored match ended');
         return;
@@ -1681,9 +1822,13 @@ export default class TeamBalancer extends BasePlugin {
       this.winStreakTeam = null;
       this.winStreakCount = 0;
       this._scrambleInProgress = false;
-      this._scramblePending = false;
+      // Clear the countdown handle with the flag: a path that already armed one (streak,
+      // consecutive wins) then threw would otherwise leave the timer running while
+      // cancelPendingScramble() reads _scramblePending === false and refuses to abort it.
+      this._clearPendingScrambleCountdown();
       this.cleanupScrambleTracking();
      } finally {
+       this._roundEndInFlight = false;
        roundReport.isDominantWin = isDominant ?? null;
        roundReport.winStreak = this.winStreakCount;
        roundReport.consecutiveWins = this.consecutiveWinsCount;
@@ -1808,7 +1953,10 @@ export default class TeamBalancer extends BasePlugin {
     } catch (err) {
       Logger.verbose('TeamBalancer', 1, `[DB] resetStreak saveState failed: ${err.message}`);
     }
-    this._scramblePending = false;
+    // Deliberately does NOT touch _scramblePending: resetting counters says nothing about an
+    // armed countdown. Clearing it here made every caller (a draw, an ignored round, the
+    // !teambalancer off toggle) silently orphan a running countdown — cancelPendingScramble
+    // could no longer see it while the timer still fired. executeScramble clears it instead.
   }
 
   // ╔═══════════════════════════════════════╗
@@ -2163,6 +2311,10 @@ export default class TeamBalancer extends BasePlugin {
       return false;
     } finally {
       this._scrambleInProgress = false;
+      // The countdown that armed this run is consumed by now, whatever the outcome (moves made,
+      // empty swap plan, or a throw) — so the pending flag ends here, not in resetStreak. Same
+      // helper the other teardown paths use, so "no countdown outstanding" has one meaning.
+      this._clearPendingScrambleCountdown();
       Logger.verbose('TeamBalancer', 4, 'Scramble finished');
     }
   }
