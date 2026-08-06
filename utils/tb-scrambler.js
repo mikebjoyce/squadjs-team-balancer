@@ -31,25 +31,24 @@
  *
  * - Unassigned players are treated as individual pseudo-squads to
  *   maximise movement flexibility without breaking formed squads.
- * - Four-phase escalation (2000 iterations total):
- *     Phase 1 — Pure squad swaps only. Maximises cohesion.
- *     Phase 2 — Shatters one random UNLOCKED squad if balance is poor.
- *     Phase 3 — Late fallback: may split one LOCKED squad.
- *     Phase 4 — Nuclear: decomposes all squads for maximum balance (last 5 iterations).
+ * - Single-phase pure squad swaps (2000 iterations):
+ *     All swaps operate at the squad level only. Individual squads, unassigned
+ *     players (treated as size-1 pseudo-squads), and clan virtual squads move
+ *     as atomic units. Squads are never decomposed — friend groups stay together.
  * - Scoring penalties (lower = better):
  *     balanceScore        — Exponential penalty for team diff > 2.
  *     sizeDeviationPenalty — Penalty for significant underpopulation.
  *     eloBalancePenalty   — Composite score derived from a 50/50 weighted split between Mean ELO diff and Top-15 ELO diff (ELO mode only).
  *     veteranPenalty      — Imbalanced regular player counts (ELO mode only).
- *     clanCohesionPenalty — Soft penalty for clan groups splitting across teams (runs in both modes; ~99% per-member preservation in testing).
+ *     clanCohesionPenalty — Safety-net penalty for clan groups splitting across teams (serves as a guard against edge cases since squads are never decomposed).
  *     anchorPenalty       — Moving >2 large squads from one team (Heuristic mode only).
  * - clanGroups is optional. When present, builds virtual squads to keep same-team clan members together as a soft
  *   preference. Balance takes priority; clans may split if necessary for diff ≤ 2. Runs identically in both ELO and
  *   heuristic modes.
  * - eloMap is optional. When present, heuristic penalties are replaced by ELO parity scoring. Clan cohesion penalty
  *   persists unchanged when using ELO mode (no interaction side effects).
- * - Cap enforcement runs as a final pass, trimming team overages in
- *   priority order: Unassigned → Unlocked Squad Members. Locked players are never moved.
+ * - Cap enforcement runs as a final pass, trimming team overages using unassigned players only.
+ *   Squad members are never moved during trimming — overcap is tolerated rather than breaking squads.
  * - Baseline performance: ~70–95ms per exhaustive search, 99.9% balance
  *   success rate (diff ≤ 2 players) under standard conditions.
  *
@@ -79,10 +78,9 @@ export const Scrambler = {
 
     Logger.verbose('TeamBalancer', 2, `========== Starting Team Scramble (Max cap = ${maxTeamSize}) ==========`);
 
-    if (![1, 2].includes(winStreakTeam)) {
-      winStreakTeam = Math.random() < 0.5 ? 1 : 2;
-      Logger.verbose('TeamBalancer', 4, `No win streak team set. Randomly selecting Team ${winStreakTeam} as starting side.`);
-    }
+    // winStreakTeam was previously used by winStreakTax (now removed). The parameter
+    // is retained in the signature for API compatibility but no longer drives any
+    // scramble logic — all squad swaps are team-agnostic at the atom level.
 
     const workingPlayers = players.map((p) => ({
       ...p,
@@ -151,10 +149,9 @@ export const Scrambler = {
 
     // ─── Clan Tag Grouping (Pre-Phase) ─────────────────────────────
     // Build "virtual squads" per team that bind same-team clan members
-    // together so Phase 1 swaps them as a unit. Only mutates the
+    // together so squad swaps move them as a unit. Only mutates the
     // candidate arrays (t1Candidates / t2Candidates) — workingSquads is
-    // left intact so the cap-enforcement pass at the end still sees the
-    // original game-state lock semantics.
+    // left intact for virtual squad construction.
     //
     // Cross-team consolidation is intentionally NOT performed: clan
     // members already split across teams are treated as two independent
@@ -197,9 +194,7 @@ export const Scrambler = {
            );
           if (contributing.length === 0) continue;
 
-          // Register for the Phase 2/3/4 scoring penalty regardless of how many
-          // squads the clan spans the penalty applies whenever a final plan
-          // separates clan members across teams.
+          // Register the virtual squad for the scoring penalty and Discord report.
           virtualSquadsByTag.set(`${teamID}:${tag}`, {
             teamID,
             tag,
@@ -239,7 +234,7 @@ export const Scrambler = {
            const virtualSquad = {
              ...anchor,
              players: newPlayers,
-             locked: false, // virtual squads are never locked; prevents wasLocked contamination via decomposeList
+             locked: anchor.locked, // inherit anchor squad's lock status
              isVirtual: true,
              clanTag: tag
            };
@@ -330,19 +325,20 @@ export const Scrambler = {
     const analyzeComposition = (squads) => {
       let largeInfantryCount = 0;
       let utilityCount = 0;
-      let hasLockedInfantry = false;
       for (const s of squads) {
         const size = s.players.length;
         if (size >= 7) {
           largeInfantryCount++;
-          if (s.locked) hasLockedInfantry = true;
         } else if (size >= 2 && size <= 6) {
           utilityCount++;
         }
       }
-      return { largeInfantryCount, utilityCount, hasLockedInfantry };
+      return { largeInfantryCount, utilityCount };
     };
 
+    // Two-mode scoring: ELO path uses composite mean+top15 diff + veteran parity;
+    // heuristic path uses population diff + composition diversity. Both paths
+    // share the clan cohesion safety net after the if/else block.
     const scoreSwap = (
       selectedT1Squads,
       selectedT2Squads,
@@ -380,8 +376,6 @@ export const Scrambler = {
 
       if (playerEloMap.size > 0) {
         // --- ELO BALANCE SCORING ---
-        // Note: The clan cohesion penalty block below (after this if/else) always runs
-        // regardless of mode. It applies the same soft penalty in both ELO and heuristic paths.
         combinedScore += balanceScore; // Pure numerical parity
 
         const movingToT2 = new Set(selectedT1Squads.flatMap(s => s.players));
@@ -438,21 +432,11 @@ export const Scrambler = {
         const veteranPenalty = Math.abs(vet1 - vet2) * 300;
         combinedScore += veteranPenalty;
 
-        // --- LOCKED SQUAD PENALTY (ELO MODE) ---
-        // Apply the same locked penalty in ELO mode as in heuristic mode.
-        // This discourages the algorithm from breaking locked squads during escalation phases.
-        const calcLockedPenaltyElo = (squads) => {
-          const brokenSquads = new Set();
-          for (const s of squads) {
-            if (s.wasLocked) brokenSquads.add(s.sourceSquadId || s.id);
-          }
-          return brokenSquads.size * 500;
-        };
-        const lockedPenaltyElo = calcLockedPenaltyElo(selectedT1Squads) + calcLockedPenaltyElo(selectedT2Squads);
-        combinedScore += lockedPenaltyElo;
-
       } else {
         // --- HEURISTIC BALANCE SCORING (NO ELO) ---
+        // All swaps are squad-atom — no split/locked squad penalties needed since
+        // squads are never decomposed. Scoring focuses on numerical balance and
+        // composition diversity (infantry/utility/anchors).
         const oldBalanceScore = diff <= 2 ? diff * 80 : (diff * diff) * 60;
         combinedScore += oldBalanceScore;
 
@@ -461,26 +445,6 @@ export const Scrambler = {
         if (actualPlayersMoved < targetPlayersToMoveOverall) {
           churnUnderPenalty = (targetPlayersToMoveOverall - actualPlayersMoved) * 15;
         }
-
-        const calcLockedPenalty = (squads) => {
-          const brokenSquads = new Set();
-          for (const s of squads) {
-            if (s.wasLocked) brokenSquads.add(s.sourceSquadId || s.id);
-          }
-          return brokenSquads.size * 500;
-        };
-        const lockedPenalty = calcLockedPenalty(selectedT1Squads) + calcLockedPenalty(selectedT2Squads);
-
-        const calcCohesionPenalty = (squads) => {
-          let penalty = 0;
-          for (const s of squads) {
-            if (s.id.startsWith('Split-') && !s.wasLocked) {
-              penalty += 10;
-            }
-          }
-          return penalty;
-        };
-        const cohesionPenalty = calcCohesionPenalty(selectedT1Squads) + calcCohesionPenalty(selectedT2Squads);
 
         const countLarge = (squads) => squads.filter(s => s.players.length >= 7).length;
         const movedLargeSquadsT1 = countLarge(selectedT1Squads);
@@ -500,21 +464,12 @@ export const Scrambler = {
         utilityReward -= (Math.min(t1Stats.utilityCount, 3) * 60);
         utilityReward -= (Math.min(t2Stats.utilityCount, 3) * 60);
 
-        let winStreakTax = 0;
-        // Squad preserving algorithm intent: break at least one locked squad from the winning team to disrupt their dominant core.
-        // A penalty of 150 is frequently dominated by other factors, but discourages leaving the dominant core completely intact.
-        if (String(winStreakTeam) === '1' && !selectedT1Squads.some(s => s.locked)) winStreakTax += 150;
-        if (String(winStreakTeam) === '2' && !selectedT2Squads.some(s => s.locked)) winStreakTax += 150;
-
         combinedScore +=
           (churnScore * 2) +
           churnUnderPenalty +
-          lockedPenalty +
-          cohesionPenalty +
           anchorPenalty +
           infantryOverload +
-          utilityReward +
-          winStreakTax;
+          utilityReward;
 
         if (targetPlayersToMoveOverall > 10 && actualPlayersMoved < targetPlayersToMoveOverall * 0.5) {
           combinedScore += 300; // Penalty for missing churn
@@ -522,10 +477,9 @@ export const Scrambler = {
       }
 
       // ─── Clan Cohesion Penalty ──────────────────────────────────────
-      // Soft penalty for splitting a registered virtual clan group across teams.
-      // Phase 1 swaps virtual squads atomically so this only triggers after
-      // Phase 2/3/4 decomposes a virtual squad — exactly when we want to push
-      // the search away from breaking up a clan unless balance demands it.
+      // Safety-net penalty for splitting a registered virtual clan group across teams.
+      // Squads are never decomposed, so this only triggers if clan members span multiple
+      // squad boundaries — a condition that shouldn't arise in normal operation.
       if (virtualSquadsByTag.size > 0) {
         const movingToT2 = new Set(selectedT1Squads.flatMap((s) => s.players));
         const movingToT1 = new Set(selectedT2Squads.flatMap((s) => s.players));
@@ -549,74 +503,20 @@ export const Scrambler = {
       return combinedScore;
     };
 
-    // Hardcoded to 2000 as an exhaustive search bound.
-    // At ~5-20ms per 500 searches, this takes ~20-80ms and provides deeper permutation exploration.
-    // NOTE: The scrambler runs for 2,000 iterations to ensure it fully explores
-    // the possibility space before escalating to more destructive phases.
+    // Single-phase pure squad swaps across 2000 iterations.
+    // All swaps operate at the squad level only — squads are never decomposed.
     const MAX_ATTEMPTS = 2000;
-    const SURGICAL_START = Math.floor(MAX_ATTEMPTS * 0.5);
-    const LOCKED_START = Math.floor(MAX_ATTEMPTS * 0.8);
-    const NUCLEAR_START = MAX_ATTEMPTS - 5;
     let bestScore = Infinity;
     let bestT1SwapCandidates = null;
     let bestT2SwapCandidates = null;
 
     Logger.verbose('TeamBalancer', 4, `Starting swap attempts (max ${MAX_ATTEMPTS})`);
 
-    const decomposeList = (list, targetId = null, breakAll = false) => {
-      const result = [];
-      for (const item of list) {
-        const isTarget = breakAll || (targetId && item.id === targetId);
-        if (isTarget && !item.id.startsWith('Unassigned') && !item.id.startsWith('Split')) {
-          for (const pid of item.players) {
-            result.push({
-              id: `Split-${pid}`,
-              teamID: item.teamID,
-              players: [pid],
-              wasLocked: item.locked,
-              sourceSquadId: item.id
-            });
-          }
-        } else {
-          result.push(item);
-        }
-      }
-      return result;
-    };
-
+    // All 2000 iterations use pure squad-level swaps. localT1/localT2 are shallow
+    // copies of the original candidate lists — no decomposition occurs at any stage.
     for (let i = 0; i < MAX_ATTEMPTS; i++) {
-      let localT1 = [...t1Candidates];
-      let localT2 = [...t2Candidates];
-
-      // Surgical Squad Splitting
-      if (i >= SURGICAL_START && i < NUCLEAR_START && bestScore > 10) {
-        const allowLocked = i >= LOCKED_START;
-        const getEligible = (list) => list.filter(s => (allowLocked || !s.locked) && !s.id.startsWith('Unassigned') && !s.id.startsWith('Split'));
-        const t1Eligible = getEligible(localT1);
-        const t2Eligible = getEligible(localT2);
-        const allEligible = [...t1Eligible, ...t2Eligible];
-
-        if (allEligible.length > 0) {
-          // Prefer non-clan-virtual squads so clan groups stay intact unless nothing else is eligible.
-          const nonClanEligible = allEligible.filter((s) => !s.isVirtual);
-          const victimPool = nonClanEligible.length > 0 ? nonClanEligible : allEligible;
-          const victim = victimPool[Math.floor(Math.random() * victimPool.length)];
-          if (victim.teamID === '1') localT1 = decomposeList(localT1, victim.id);
-          else localT2 = decomposeList(localT2, victim.id);
-        }
-      }
-
-      // Phase 4: Nuclear Option
-      // NOTE: This phase is explicitly designed as a last-resort safety valve.
-      // It only triggers in the final 5 iterations (1995-1999) if 1,995 attempts
-      // failed to find a mathematically viable solution that preserves squads.
-      // It sacrifices squad cohesion to ensure numerical balance can be achieved
-      // in unresolvable edge cases.
-      if (i >= NUCLEAR_START) {
-        if (i === NUCLEAR_START) Logger.verbose('TeamBalancer', 2, 'Engaging Nuclear Option: Decomposing all squads for final attempts.');
-        localT1 = decomposeList(localT1, null, true);
-        localT2 = decomposeList(localT2, null, true);
-      }
+      const localT1 = [...t1Candidates];
+      const localT2 = [...t2Candidates];
 
       const currentUsedSquadIds = new Set(); // Reset for each attempt
 
@@ -736,110 +636,57 @@ export const Scrambler = {
     const postInitialSwapCounts = getCurrentTeamCounts();
     Logger.verbose('TeamBalancer', 4, `Post-initial-swap internal team sizes: Team1 = ${postInitialSwapCounts.team1Count}, Team2 = ${postInitialSwapCounts.team2Count}`);
 
-
-    const getPlayersForTrimming = (
-      teamID,
-      currentWorkingPlayers,
-      currentWorkingSquads,
-      existingMovesMap
-    ) => {
-      const playersOnTeam = currentWorkingPlayers.filter((p) => p.teamID === String(teamID));
-
-
-      const eligiblePlayers = playersOnTeam.filter((p) => !existingMovesMap.has(p.eosID));
-
-      const unassignedPlayers = eligiblePlayers.filter((p) => p.squadID === null);
-
-      const playersInSquads = eligiblePlayers.filter((p) => p.squadID !== null);
-
-
-      const playersWithSquadStatus = playersInSquads.map((p) => {
-        const squad = currentWorkingSquads.find((s) => s.players.includes(p.eosID));
-        return {
-          ...p,
-          isLocked: squad ? squad.locked : false // Default to not locked if squad not found (shouldn't happen)
-        };
-      });
-
-      const unlockedSquadPlayers = playersWithSquadStatus.filter((p) => !p.isLocked);
-      const lockedSquadPlayers = playersWithSquadStatus.filter((p) => p.isLocked);
-
-
-      return [...unassignedPlayers, ...unlockedSquadPlayers, ...lockedSquadPlayers];
-    };
-
+    // ─── Cap Enforcement (Unassigned-only Trimming) ──────────────────
+    // Trim over-cap teams using unassigned players only.
+    // Squad members are never moved during trimming — overcap is tolerated
+    // rather than breaking any squad or friend group.
     let team1Overcap = postInitialSwapCounts.team1Count - maxTeamSize;
     let team2Overcap = postInitialSwapCounts.team2Count - maxTeamSize;
 
-
-    let madeProgress = true;
-    while (madeProgress && (team1Overcap > 0 || team2Overcap > 0)) {
-      madeProgress = false;
-
-
-      if (team1Overcap > 0) {
-
-        const playersToConsider = getPlayersForTrimming(
-          '1',
-          workingPlayers,
-          workingSquads,
-          finalPlayerMovesMap
+    if (team1Overcap > 0 || team2Overcap > 0) {
+      // Only unassigned players not already being moved by the main swap plan
+      // are eligible for trimming — avoids double-counting.
+      const unassignedOnTeam = (teamID) =>
+        workingPlayers.filter(p =>
+          String(p.teamID) === String(teamID) &&
+          p.squadID === null &&
+          !finalPlayerMovesMap.has(p.eosID)
         );
-        for (const player of playersToConsider) {
-          if (player.isLocked) continue;
-          if (getCurrentTeamCounts().team1Count > getCurrentTeamCounts().team2Count + 1) {
-            finalPlayerMovesMap.set(player.eosID, { eosID: player.eosID, targetTeamID: '2' });
-            updatePlayerTeam(player.eosID, '2');
-            Logger.verbose('TeamBalancer', 4, `Trimming: Player ${player.eosID} from Team 1 to Team 2 (overcap fix)`);
-            madeProgress = true;
-            break; // Move one player at a time and re-evaluate
-          }
-        }
+
+      for (const p of unassignedOnTeam('1')) {
+        if (team1Overcap <= 0) break;
+        finalPlayerMovesMap.set(p.eosID, { eosID: p.eosID, targetTeamID: '2' });
+        updatePlayerTeam(p.eosID, '2');
+        team1Overcap--;
+        Logger.verbose('TeamBalancer', 4, `Trimming: Unassigned player ${p.eosID} from Team 1 to Team 2 (overcap fix)`);
       }
 
-
-      const currentCountsAfterT1Trim = getCurrentTeamCounts();
-      team1Overcap = currentCountsAfterT1Trim.team1Count - maxTeamSize;
-      team2Overcap = currentCountsAfterT1Trim.team2Count - maxTeamSize;
-
-
-      if (team2Overcap > 0) {
-
-        const playersToConsider = getPlayersForTrimming(
-          '2',
-          workingPlayers,
-          workingSquads,
-          finalPlayerMovesMap
-        );
-        for (const player of playersToConsider) {
-          if (player.isLocked) continue;
-          if (getCurrentTeamCounts().team2Count > getCurrentTeamCounts().team1Count + 1) {
-            finalPlayerMovesMap.set(player.eosID, { eosID: player.eosID, targetTeamID: '1' });
-            updatePlayerTeam(player.eosID, '1');
-            Logger.verbose('TeamBalancer', 4, `Trimming: Player ${player.eosID} from Team 2 to Team 1 (overcap fix)`);
-            madeProgress = true;
-            break; // Move one player at a time and re-evaluate
-          }
-        }
+      for (const p of unassignedOnTeam('2')) {
+        if (team2Overcap <= 0) break;
+        finalPlayerMovesMap.set(p.eosID, { eosID: p.eosID, targetTeamID: '1' });
+        updatePlayerTeam(p.eosID, '1');
+        team2Overcap--;
+        Logger.verbose('TeamBalancer', 4, `Trimming: Unassigned player ${p.eosID} from Team 2 to Team 1 (overcap fix)`);
       }
 
-
-      const currentCounts = getCurrentTeamCounts();
-      team1Overcap = currentCounts.team1Count - maxTeamSize;
-      team2Overcap = currentCounts.team2Count - maxTeamSize;
+      if (team1Overcap > 0 || team2Overcap > 0) {
+        Logger.verbose('TeamBalancer', 1,
+          `WARNING: Team(s) still over cap after trim (T1:+${team1Overcap}, T2:+${team2Overcap}). ` +
+          `No unassigned players left. Trimming would require splitting squads — tolerating overcap.`
+        );
+      }
     }
 
     const finalInternalCounts = getCurrentTeamCounts();
     Logger.verbose('TeamBalancer', 4, `Final internal team sizes after all adjustments: Team1 = ${finalInternalCounts.team1Count}, Team2 = ${finalInternalCounts.team2Count}, Unassigned (no squad) = ${finalInternalCounts.unassignedCount}`);
 
-
     const finalTeam1Overcap = finalInternalCounts.team1Count - maxTeamSize;
     const finalTeam2Overcap = finalInternalCounts.team2Count - maxTeamSize;
 
     if (finalTeam1Overcap > 0 || finalTeam2Overcap > 0) {
-      Logger.verbose('TeamBalancer', 2, `WARNING: Scramble plan results in teams still exceeding caps after all possible internal moves.`);
+      Logger.verbose('TeamBalancer', 2, `WARNING: Scramble plan results in teams still exceeding caps.`);
       Logger.verbose('TeamBalancer', 2, `Team1 still over by: ${finalTeam1Overcap}, Team2 still over by: ${finalTeam2Overcap}`);
-      Logger.verbose('TeamBalancer', 2, `This may require manual intervention or a change in balancing strategy.`);
+      Logger.verbose('TeamBalancer', 2, `Squad-preserving mode tolerates this to avoid breaking friend groups.`);
     }
 
     const duration = Date.now() - startTime;
