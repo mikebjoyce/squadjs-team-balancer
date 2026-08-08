@@ -40,11 +40,11 @@
  *     sizeDeviationPenalty — Penalty for significant underpopulation.
  *     eloBalancePenalty   — Composite score derived from a 50/50 weighted split between Mean ELO diff and Top-15 ELO diff (ELO mode only).
  *     veteranPenalty      — Imbalanced regular player counts (ELO mode only).
- *     clanCohesionPenalty — Safety-net penalty for clan groups splitting across teams (serves as a guard against edge cases since squads are never decomposed).
+ *     clanCohesionConstraint — Hard constraint: candidates that split any clan are rejected (score = Infinity).
  *     anchorPenalty       — Moving >2 large squads from one team (Heuristic mode only).
- * - clanGroups is optional. When present, builds virtual squads to keep same-team clan members together as a soft
- *   preference. Balance takes priority; clans may split if necessary for diff ≤ 2. Runs identically in both ELO and
- *   heuristic modes.
+ * - clanGroups is optional. When present, builds virtual squads to keep same-team clan members together.
+ *   Clan cohesion is a hard constraint — candidates that would split a clan group are rejected outright
+ *   (score = Infinity). Runs identically in both ELO and heuristic modes.
  * - eloMap is optional. When present, heuristic penalties are replaced by ELO parity scoring. Clan cohesion penalty
  *   persists unchanged when using ELO mode (no interaction side effects).
  * - Cap enforcement runs as a final pass, trimming team overages using unassigned players only.
@@ -149,9 +149,12 @@ export const Scrambler = {
 
     // ─── Clan Tag Grouping (Pre-Phase) ─────────────────────────────
     // Build "virtual squads" per team that bind same-team clan members
-    // together so squad swaps move them as a unit. Only mutates the
-    // candidate arrays (t1Candidates / t2Candidates) — workingSquads is
-    // left intact for virtual squad construction.
+    // together so squad swaps move them as a unit. Three stages per clan:
+    //   1. Identify contributing squads (any candidate holding a clan member).
+    //   2. Build the virtual squad's player list from anchor + "others".
+    //   3. Clean up the candidate array (replace anchor, splice/trim others).
+    // Only mutates the candidate arrays (t1Candidates / t2Candidates) —
+    // workingSquads is left intact for virtual squad construction.
     //
     // Cross-team consolidation is intentionally NOT performed: clan
     // members already split across teams are treated as two independent
@@ -203,9 +206,9 @@ export const Scrambler = {
 
           // Anchor: most clan members; tiebreak by larger total size; tiebreak by lower id.
           // Claimed squads are barred from being the anchor so two clans keep separate
-          // units. Only when every contributing squad is already claimed do we fall back
-          // and anchor on one — the clans then merge into a single unit, which still
-          // satisfies cohesion for both.
+          // units. The fallback (anchor on an already-claimed squad) triggers when a
+          // later clan's members are entirely within prior clans' virtual squads — the
+          // clans merge into a single atomic unit, which still satisfies cohesion for both.
           const anchorPool = contributing.filter((s) => !claimedAnchorIds.has(s.id));
           const anchor = [...(anchorPool.length ? anchorPool : contributing)].sort((a, b) => {
             const aClan = a.players.filter((p) => memberSet.has(p)).length;
@@ -241,6 +244,9 @@ export const Scrambler = {
 
            // Full roster (clan members + anyone riding along in the anchor squad, or in every
            // contributing squad when pullEntireSquads is on) for the Discord report.
+           // NOTE: allMembers is frozen at construction time. Later clans extracting from
+           // physical squads may leave stale entries, causing false "divided!" in the
+           // Discord report. This is cosmetic — the move plan remains correct.
            virtualSquadsByTag.get(`${teamID}:${tag}`).allMembers = new Set(newPlayers);
 
            // Replace anchor in the candidate list with the virtual squad.
@@ -248,22 +254,27 @@ export const Scrambler = {
            if (anchorIdx !== -1) teamCandidates[anchorIdx] = virtualSquad;
            claimedAnchorIds.add(anchor.id); // prevent later clans from re-using this anchor
 
-          // Update other contributing squads (iterate in reverse for safe splicing).
-          const otherSet = new Set(others);
-          for (let i = teamCandidates.length - 1; i >= 0; i--) {
-            const s = teamCandidates[i];
-            if (s === virtualSquad || !otherSet.has(s)) continue;
-            if (pullEntireSquads && !claimedAnchorIds.has(s.id)) {
-              teamCandidates.splice(i, 1);
-            } else {
-              const remaining = s.players.filter((p) => !memberSet.has(p));
-              if (remaining.length === 0) {
-                teamCandidates.splice(i, 1);
-              } else {
-                teamCandidates[i] = { ...s, players: remaining };
-              }
-            }
-          }
+           // Update other contributing squads (iterate in reverse for safe splicing).
+           const otherSet = new Set(others);
+           for (let i = teamCandidates.length - 1; i >= 0; i--) {
+             const s = teamCandidates[i];
+             if (s === virtualSquad || !otherSet.has(s)) continue;
+              // Skip virtual squads already built by a prior clan — their members
+              // are already in an atomic unit. Extracting them would decompose the
+              // virtual squad into independent candidates, enabling the swap loop
+              // to select partial squads independently — the "divided!" bug.
+             if (s.isVirtual) continue;
+             if (pullEntireSquads && !claimedAnchorIds.has(s.id)) {
+               teamCandidates.splice(i, 1);
+             } else {
+               const remaining = s.players.filter((p) => !memberSet.has(p));
+               if (remaining.length === 0) {
+                 teamCandidates.splice(i, 1);
+               } else {
+                 teamCandidates[i] = { ...s, players: remaining };
+               }
+             }
+           }
 
           Logger.verbose(
             'TeamBalancer',
@@ -278,6 +289,21 @@ export const Scrambler = {
         `Clan grouping active: ${virtualSquadsByTag.size} per-team groups built across ${Object.keys(clanGroups).length} extracted clans.`
       );
     }
+    // ─── Clan Member Registry ─────────────────────────────────────
+    // Build a Set of all eosIDs belonging to any virtual clan group.
+    // Used by cap enforcement (Layer 2) and final verification (Layer 3)
+    // to prevent clan members from being moved independently.
+    const clanMemberSet = new Set();
+    for (const vs of virtualSquadsByTag.values()) {
+      for (const id of vs.originalMembers) {
+        clanMemberSet.add(id);
+      }
+    }
+    Logger.verbose(
+      'TeamBalancer',
+      4,
+      `Clan member registry: ${clanMemberSet.size} unique members tracked.`
+    );
     // ────────────────────────────────────────────────────────────────
 
     const shuffle = (arr) => {
@@ -483,7 +509,6 @@ export const Scrambler = {
       if (virtualSquadsByTag.size > 0) {
         const movingToT2 = new Set(selectedT1Squads.flatMap((s) => s.players));
         const movingToT1 = new Set(selectedT2Squads.flatMap((s) => s.players));
-        let clanSplitPenalty = 0;
         for (const vs of virtualSquadsByTag.values()) {
           let onT1 = 0, onT2 = 0;
           for (const pid of vs.originalMembers) {
@@ -495,9 +520,11 @@ export const Scrambler = {
             if (finalTeam === '1') onT1++;
             else onT2++;
           }
-          clanSplitPenalty += Math.min(onT1, onT2) * 75;
+          // Hard constraint: clan groups must never be split across teams.
+          // A soft penalty is drowned out by ELO/veteran/balance scoring;
+          // returning Infinity guarantees the candidate is rejected outright.
+          if (onT1 > 0 && onT2 > 0) return Infinity;
         }
-        combinedScore += clanSplitPenalty;
       }
 
       return combinedScore;
@@ -650,7 +677,8 @@ export const Scrambler = {
         workingPlayers.filter(p =>
           String(p.teamID) === String(teamID) &&
           p.squadID === null &&
-          !finalPlayerMovesMap.has(p.eosID)
+          !finalPlayerMovesMap.has(p.eosID) &&
+          !clanMemberSet.has(p.eosID)
         );
 
       for (const p of unassignedOnTeam('1')) {
@@ -688,6 +716,35 @@ export const Scrambler = {
       Logger.verbose('TeamBalancer', 2, `Team1 still over by: ${finalTeam1Overcap}, Team2 still over by: ${finalTeam2Overcap}`);
       Logger.verbose('TeamBalancer', 2, `Squad-preserving mode tolerates this to avoid breaking friend groups.`);
     }
+
+    // ─── Post-Plan Clan Cohesion Verification ────────────────────────
+    // Defense-in-depth safety net: verify that no clan group was
+    // split across teams in the final plan, regardless of which code
+    // path produced the moves (swap loop, cap enforcement, or future
+    // additions). If a split is detected, abort the entire scramble
+    // rather than tearing a clan apart.
+    if (clanMemberSet.size > 0 && finalPlayerMovesMap.size > 0) {
+      const finalTeamByEosID = new Map();
+      for (const [eosID, move] of finalPlayerMovesMap) {
+        finalTeamByEosID.set(eosID, move.targetTeamID);
+      }
+      for (const vs of virtualSquadsByTag.values()) {
+        const teams = new Set();
+        for (const pid of vs.originalMembers) {
+          const t = finalTeamByEosID.get(pid) ?? playerMap.get(pid)?.teamID;
+          if (t) teams.add(t);
+        }
+        if (teams.size > 1) {
+          Logger.verbose('TeamBalancer', 1,
+            `CRITICAL: Clan [${vs.tag}] on Team ${vs.teamID} was split across teams in final plan. Aborting scramble to preserve clan cohesion.`
+          );
+          const res = [];
+          res.calculationTime = Date.now() - startTime;
+          return res;
+        }
+      }
+    }
+    // ────────────────────────────────────────────────────────────────
 
     const duration = Date.now() - startTime;
     Logger.verbose('TeamBalancer', 2, `========== Scramble Plan Generated (${duration}ms) ==========`);
