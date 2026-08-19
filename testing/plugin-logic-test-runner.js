@@ -112,6 +112,7 @@ const defaultTestOptions = {
   invasionAttackTeamThreshold: 300,
   invasionDefenceTeamThreshold: 650,
   scrambleAnnouncementDelay: 10,
+  seedScrambleAnnouncementDelay: 5,
   scramblePercentage: 0.5,
   showWinStreakMessages: true,
   debugLogs: false,
@@ -502,6 +503,24 @@ async function runPluginLogicTests() {
   await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
   assert(tb._scramblePending === false, 'seed: a non-Seed round does not scramble when tracking is disabled.');
   assert(capturedBroadcasts.length === 0, 'seed: a non-Seed round broadcasts nothing when tracking is disabled.');
+
+  // The seed trigger runs on its OWN countdown, not the global one — text and timer both. A
+  // text-only check would pass while the setTimeout still ran on scrambleAnnouncementDelay, which
+  // is the actual failure: that countdown outlives the seed round and NEW_GAME discards it.
+  tb.options.seedScrambleAnnouncementDelay = 0.05; // fires while this test is still running
+  let seedExecutions = 0;
+  tb.executeScramble = async () => {
+    seedExecutions++;
+    return true;
+  };
+  await seedRoundSetup();
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 50 }, loser: { tickets: 0 } });
+  assert(!!capturedBroadcasts.find((m) => m.includes('Seed scramble in 0.05s')), 'seed: the announcement quotes seedScrambleAnnouncementDelay, not the global delay.');
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert(seedExecutions === 1, 'seed: the countdown itself runs on seedScrambleAnnouncementDelay (10s global would not have fired).');
+  delete tb.executeScramble;
+  tb.options.seedScrambleAnnouncementDelay = defaultTestOptions.seedScrambleAnnouncementDelay;
+  await tb.cancelPendingScramble(null, null, true);
 
   // Its own option still switches it off.
   tb.options.enableSeedAutoScramble = false;

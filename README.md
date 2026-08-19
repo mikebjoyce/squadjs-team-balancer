@@ -151,6 +151,7 @@ Add to your `config.json`:
   "enableWinStreakTracking": true,
   "ignoredGameModes": ["Seed", "Jensen"],
   "enableSeedAutoScramble": true,
+  "seedScrambleAnnouncementDelay": 5,
   "maxWinStreak": 2,
   "maxConsecutiveWinsWithoutThreshold": 0,
   "enableSingleRoundScramble": false,
@@ -246,6 +247,7 @@ database                            - Sequelize database connector (SQLite, MySQ
 enableWinStreakTracking              - Enable/disable automatic win streak tracking.
 ignoredGameModes                    - Game modes or map names excluded from win streak tracking (default: ["Seed", "Jensen"]).
 enableSeedAutoScramble              - Auto-scramble teams at the end of a Seed round (default: true). Independent of enableWinStreakTracking, but stopped by !teambalancer off.
+seedScrambleAnnouncementDelay       - Countdown for the seed auto-scramble only, in seconds (default: 5, minimum 3). Separate from scrambleAnnouncementDelay because the window before the map change is much shorter after a Seed round.
 
 Win Streak:
 maxWinStreak                        - Dominant wins in a row to trigger scramble (default: 2).
@@ -301,7 +303,7 @@ enableDatabaseLogging               - If true, round reports are also written to
 
 - **RAAS / AAS**: Uses `minTicketsToCountAsDominantWin` threshold.
 - **Invasion**: Uses separate thresholds for attackers (`invasionAttackTeamThreshold`) and defenders (`invasionDefenceTeamThreshold`).
-- **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`, independent of `enableWinStreakTracking` — that option is about streaks and never governed seeding — and it fires even when the round ends without a winner (an admin switching the layer mid-seed). `!teambalancer off` does stop it: that toggle is the admin kill switch, and it is the runtime way to disarm the trigger without a restart. Two conditions still apply: "Seed" must be in `ignoredGameModes` — take it out and Seed rounds are evaluated like any other mode instead — and the round's own layer must have resolved, since the fallback to the last known layer is too weak a basis for shuffling teams.
+- **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`, independent of `enableWinStreakTracking` — that option is about streaks and never governed seeding — and it fires even when the round ends without a winner (an admin switching the layer mid-seed). `!teambalancer off` does stop it: that toggle is the admin kill switch, and it is the runtime way to disarm the trigger without a restart. Two conditions still apply: "Seed" must be in `ignoredGameModes` — take it out and Seed rounds are evaluated like any other mode instead — and the round's own layer must have resolved, since the fallback to the last known layer is too weak a basis for shuffling teams. This trigger runs on its own countdown, `seedScrambleAnnouncementDelay` (default 5s), not the global `scrambleAnnouncementDelay` — the gap between a Seed round ending and the map change is much shorter.
 - Other modes and map names can be excluded via `ignoredGameModes`.
 
 ---
@@ -385,6 +387,8 @@ TimeBeforeVote=45
 
 > [!IMPORTANT]
 > Ensure your `scrambleAnnouncementDelay` gives the plugin enough time to calculate and execute all swaps before the Map Voting phase concludes. If the plugin is still executing when Faction Voting begins, the remaining players will not be swapped successfully.
+
+**Seed rounds run on a shorter clock.** The window between a Seed round ending and the next map loading can be far shorter than the timings above, which is why the seed auto-scramble has its own `seedScrambleAnnouncementDelay` (default 5s, minimum 3s) instead of the global 12s/30s value. This matters because a countdown that has not fired by the time `NEW_GAME` arrives is discarded outright — teams are freshly assigned at that point, so firing into the new round would scramble the wrong one. Too long a seed delay therefore does not merely delay the scramble, it cancels it. If your seed rounds still end without a scramble, lower this value further.
 
 ---
 
