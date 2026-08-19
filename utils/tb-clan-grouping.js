@@ -13,10 +13,16 @@
  * ──────────────────────────
  * When clan groups are passed to scrambleTeamsPreservingSquads(), the
  * scrambler builds "virtual squads" that bind same-team clan members
- * together as a SOFT preference. Balance always takes priority: clan members
- * may split across teams if necessary to achieve diff ≤ 2. Real-world testing
- * shows ~87.7% per-member cohesion with a 100% balance success rate. Clan
- * preservation works identically in both ELO and heuristic balancing modes.
+ * together, and cohesion is a HARD constraint: any candidate plan that would
+ * put one group on both teams is rejected outright (score = Infinity). So
+ * cohesion wins over numerical balance, not the other way round — bulk
+ * testing shows 100% per-group cohesion at ~97% balance success (diff ≤ 2),
+ * against 100% balance with grouping off. Clan preservation works identically
+ * in both ELO and heuristic balancing modes.
+ *
+ * Clans that share a squad merge into a single unit rather than each keeping
+ * its own; the returned plan reports one entry per unit, listing every tag
+ * that ended up in it.
 
  *
  * EXPORTS

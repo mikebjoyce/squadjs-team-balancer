@@ -1,4 +1,4 @@
-# Team Balancer Plugin v3.2.0
+# Team Balancer Plugin v3.2.2
 
 **SquadJS Plugin for Fair Match Enforcement**
 
@@ -6,7 +6,7 @@
 
 Tracks dominant win streaks and rebalances teams using a squad-preserving scramble algorithm. Designed for Squad servers to avoid steamrolling, reduce churn, and maintain match fairness over time.
 
-Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion. Includes dry-run mode, configurable thresholds, and fallback logic for emergency breakup squads in the worst case if needed.
+Scramble execution swaps entire squads or unassigned players, balancing team sizes while respecting the 50-player cap and preserving squad cohesion. Squads are never broken open to hit a balance target — a slightly uneven team is preferred over a split friend group. Includes dry-run mode and configurable thresholds.
 
 ---
 
@@ -76,29 +76,24 @@ Prevents players from changing teams immediately after a scramble. When TeamBala
 
 ## Scramble Algorithm (Optimal Exhaustive Search)
 
-Operates using a four-phase dynamic escalation system to ensure perfect numerical parity while protecting the core identity and cohesion of existing teams.
+Runs a single-phase exhaustive search over 2000 randomized candidate plans and keeps the best-scoring one. Every move is a whole-squad move — there is no escalation tier that breaks a squad open, so a plan that cannot be reached with intact squads is simply not reached.
 
 * **Data Prep**: Normalizes squad snapshots and treats unassigned players as individual "pseudo-squads" for maximum movement flexibility.
 
 * **Target Calc**: Computes ideal player swap targets (default 50% churn) adjusted by current team population deltas.
 
-* **Tiered Optimization (2000 Iterations)**:
-  * **Phase 1 (Pure Swaps)**: Focuses exclusively on whole-squad moves to maximize friend-group cohesion.
-  * **Phase 2 (Surgical Unlocked)**: Dynamically shatters one random unlocked squad if balance remains poor to provide precision adjustments.
-  * **Phase 3 (Surgical Locked)**: A late-stage fallback that allows breaking a single locked squad to resolve extreme parity issues.
-  * **Phase 4 (Nuclear Option)**: A final resort that decomposes all squads to achieve maximum numerical balance. Runs for the last 5 iterations.
-  * **With Clan Tag Grouping enabled**: same-team clan members are folded into "virtual squads" anchored on the squad with the most clan members; Phase 1 swaps them as one unit, and Phases 2/3 only shatter a virtual squad when no non-clan squad is eligible.
+* **Squad-Level Search (2000 Iterations)**: Each iteration reshuffles both teams' candidate lists and picks squads to swap until the churn target is met, with a 3-player grace so a squad that slightly overshoots still qualifies. The atoms are whole squads, unassigned players (size-1 pseudo-squads), and — with Clan Tag Grouping on — virtual clan squads. All 2000 iterations work the same way; nothing is decomposed at any stage.
 
 * **ELO Integration (Optional)**: When ELO data is available, the scrambler uses a dedicated ELO-weighted scoring branch (composite Mean/Top-15 ELO diff + veteran parity + numerical balance). Standard heuristic penalties like churn, anchor rules, and cohesion weights are disabled in favor of ELO parity.
 
 * **Identity Preservation**: In heuristic (non-ELO) mode, a penalty discourages moving more than 2 large infantry squads from a single team per scramble.
 
-* **Cap Enforcement**: A final corrective pass trims overages in priority order: Unassigned → Unlocked Squad Members. Locked players are never moved during cap enforcement.
+* **Cap Enforcement**: A final corrective pass trims teams over the cap using unassigned players only — never squad members, never clan members. If no eligible unassigned player is left, the overage is tolerated and logged rather than breaking a squad.
 
 ### Performance Benchmarks
-* **Execution Time**: ~70–95ms per search (exhaustive 2000-attempt pass).
-* **Balance Success**: 99.9% rate of achieving a team differential of ≤ 2 players.
-* **Cohesion**: Locked squads are preserved during Phases 1–2. Phase 3 may split one locked squad as a late-stage fallback. Phase 4 decomposes all squads.
+* **Execution Time**: ~25ms average per search (2500-run bulk test, exhaustive 2000-attempt pass).
+* **Balance Success**: 100% of runs land within 1 player without clan grouping. With clan grouping on, ~97% land within 2 — clan cohesion is a hard constraint and can rule out the otherwise perfect split.
+* **Cohesion**: No squad is ever split, locked or not, and no clan group ever ends up on both teams.
 
 ### Clan Tag Grouping (Optional)
 
@@ -109,10 +104,19 @@ When `enableClanTagGrouping` is on, the scrambler keeps players who share a clan
 * **Tag detection**: Player names are scanned for a leading clan tag via a five-strategy detector (ported from [squadjs-elo-tracker](https://github.com/mikebjoyce/squadjs-elo-tracker)), tried in order: bracket pairs (`[TAG]`, `【TAG】`, `╔TAG╗`), explicit separators (`TAG | Name`, `TAG // Name`), 2+ space gap, short ASCII ALL-CAPS (`KM Lookout`), and a bare-prefix fallback for Unicode/mixed-case prefixes (`KΛZ Korven`). Names with no visible tag/name boundary (e.g. `ABCJohnSmith`) yield no group.
 * **Matching**: Case-sensitive by default. Set `clanTagCaseSensitive: false` to normalize via NFD-decompose, lookalike mapping (`λ`→`a`, `я`→`r`, …), and uppercase, collapsing variants like `[Café]` / `[CAFE]` / `[CΛFE]`. Tags within `clanTagMaxEditDistance` Levenshtein distance are iteratively merged so transitive matches (`[AAA] ↔ [AAB] ↔ [ABB]`) collapse into one group.
 * **Virtual squads**: Per team, clan members are folded into a virtual squad anchored on the squad already holding the most clan members (tiebreak: larger size, lower ID). `clanGroupingPullEntireSquads` toggles whether non-clan teammates travel along (default: only clan members are pulled).
-* **Overlapping clans**: Two clans sharing a squad each keep their own virtual squad. A squad already used as another clan's anchor stays available as a source — the second clan pulls its members out of it, and `clanGroupingPullEntireSquads` never drags it along wholesale. Only if *every* squad holding a clan's members is already anchored elsewhere do the two clans merge into one unit.
-* **Phase behavior**: Phase 1 swaps virtual squads atomically. Phases 2/3 prefer non-clan victims and only break a virtual squad when no other option exists; a soft scoring penalty further discourages re-splitting once decomposition begins.
+* **Overlapping clans**: Clans sitting in disjoint squads get one virtual squad each. Clans that share a squad merge into a single unit that moves as a whole — pulling one clan's members back out of another clan's virtual squad would break the very cohesion the grouping exists to provide.
+* **Cohesion guarantee**: A candidate plan that would place one clan group on both teams is rejected outright (score = `Infinity`), in ELO and heuristic mode alike. This is a hard constraint rather than a preference: it can cost a player or two of numerical balance, and that is the intended trade-off.
 
 **Cross-team clans are intentionally not consolidated** — if a clan starts split across teams, each side is treated independently.
+
+**In the Discord report**, every unit the scrambler moves is one block, naming each clan tag merged into it, its anchor squad (`⚓`) when the unit spans several in-game squads, and each player's original squad — `◆` for players carrying one of the block's tags, `◇` for the ones pulled along:
+
+```text
+Virtual Squad: [3DP] + [KMP] 6p · Ø27.5μ · 6★ · ⚓Alpha
+  30.0★  ◆ Alpha     [3DP] Sparrow
+  28.0★  ◇ Alpha     Halloway
+  27.0★  ◆ Bravo     KMP | Okonkwo
+```
 
 Add to your `config.json`:
 
@@ -166,6 +170,7 @@ Add to your `config.json`:
    "clanTagMaxEditDistance": 1,
    "clanTagCaseSensitive": true,
    "clanGroupingPullEntireSquads": false,
+   "clanTagIgnoreList": [],
    "changeTeamRetryInterval": 50,
   "maxScrambleCompletionTime": 15000,
   "showWinStreakMessages": true,
@@ -204,6 +209,8 @@ squad-server/
 │   └── tb-swap-executor.js
 └── testing/ (optional)
     ├── scrambler-test-runner.js
+    ├── test-cross-clan-squad-collision.js
+    ├── embed-format-test.js
     ├── historical-scramble-test.js
     ├── historical-elo-backbone-test.js
     ├── plugin-logic-test-runner.js
