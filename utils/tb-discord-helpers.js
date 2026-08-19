@@ -173,7 +173,7 @@ export const DiscordHelpers = {
         { name: 'Seed Auto Scramble', value: tb.seedAutoScrambleStatus(), inline: true },
         { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
         { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
-        { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s`, inline: true },
+        { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s (Seed: ${tb.options?.seedScrambleAnnouncementDelay}s)`, inline: true },
         { name: 'Max Scramble Time', value: `${tb.options?.maxScrambleCompletionTime}ms`, inline: true },
         { name: 'Discord Options', value: `Mirror: ${tb.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${tb.options?.postScrambleDetails ? 'Yes' : 'No'}`, inline: true },
       ],

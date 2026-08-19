@@ -446,7 +446,7 @@ const CommandHandlers = {
               `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
               `Invasion Thresholds: Atk: ${this.options?.invasionAttackTeamThreshold} | Def: ${this.options?.invasionDefenceTeamThreshold}`,
               `Scramble %: ${(this.options?.scramblePercentage || 0.5) * 100}%`,
-              `Scramble Delay: ${this.options?.scrambleAnnouncementDelay}s`,
+              `Scramble Delay: ${this.options?.scrambleAnnouncementDelay}s (Seed: ${this.options?.seedScrambleAnnouncementDelay}s)`,
               `Max Scramble Time: ${this.options?.maxScrambleCompletionTime}ms`,
               `Discord Options: Mirror: ${this.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${this.options?.postScrambleDetails ? 'Yes' : 'No'}`,
               `------------------------------------------`
