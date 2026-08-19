@@ -346,6 +346,8 @@ check('the whole embed stays within Discord limits and says what it dropped', ()
   }
   const notice = truncationNotice(crowded);
   assert.ok(notice, 'a report cut short must say so instead of ending mid-list');
+  assert.strictEqual(crowded.fields.filter((f) => f.name.includes('Truncated')).length, 1,
+    'one notice for the whole report, however many calls were cut short');
   assert.ok(/^\d+ further lines/.test(notice.value), `notice: ${notice.value}`);
   assert.ok(notice === crowded.fields[crowded.fields.length - 1], 'the notice belongs last');
 });
@@ -355,6 +357,34 @@ check('reports that fit are left alone by the size budget', () => {
     assert.ok(embedChars(embed) <= 6000, `${label}: ${embedChars(embed)} chars`);
     assert.ok(!truncationNotice(embed), `${label} fits and must not be truncated`);
   }
+});
+
+// ─── Truncation is reported once per embed, not once per call ───────────────────────────
+// One embed takes up to four pushChunkedFields calls (both directions × virtual and regular
+// squads). The notice is pushed past the size budget, so a notice per call would overshoot
+// the 6000 that `reserve` sets aside for exactly one. The helper therefore only reports how
+// much it dropped and leaves the writing to createScrambleDetailsMessage.
+check('pushChunkedFields returns what it dropped and appends no notice of its own', () => {
+  const embed = {
+    title: '🔀 Scramble Execution Plan',
+    description: '**Total players affected:** 96\n**Calculation Time:** 42ms',
+    fields: [{ name: 'Balance Projection', value: 'x'.repeat(300) }]
+  };
+  const block = (b) => Array.from({ length: 16 }, (_, i) =>
+    `  stay   25.0★ ◆ Squad 1 I  [CLAN${b}] LongishPlayerName${i}`.padEnd(80).slice(0, 80));
+
+  let dropped = 0;
+  for (const dir of ['A', 'B', 'C', 'D']) {
+    dropped += DiscordHelpers.pushChunkedFields(embed, Array.from({ length: 40 }, (_, b) => block(b)),
+      `🔗 Team 1 (USA) ➔ Team 2 (RGF) Clan Grouping (Virtual Squads) ${dir}`, '[96 players]');
+  }
+
+  assert.ok(dropped > 0, 'four oversized calls must report dropped lines');
+  assert.strictEqual(embed.fields.filter((f) => f.name.includes('Truncated')).length, 0,
+    'the helper must not write the notice itself');
+  assert.ok(embedChars(embed) <= 6000, `${embedChars(embed)} chars total`);
+  assert.ok(embed.fields.length <= 25, `${embed.fields.length} fields`);
+  for (const f of embed.fields) assert.ok(f.value.length <= 1024, `field "${f.name}" is ${f.value.length} chars`);
 });
 
 // Sample output for eyeballing column alignment.

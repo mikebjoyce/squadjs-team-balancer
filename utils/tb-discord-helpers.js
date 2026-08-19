@@ -377,6 +377,7 @@ export const DiscordHelpers = {
 
     // Team 1's fields first, then team 2's; within a team the virtual squads come before the
     // regular squads, since a virtual squad is the unit the scrambler moves as a whole.
+    let skippedLines = 0;
     for (const dir of ['1to2', '2to1']) {
       const data = moveData[dir];
       // Only groups the plan actually touched. The cohesion penalty steers the scrambler away
@@ -413,7 +414,7 @@ export const DiscordHelpers = {
         const movers = teamVirtual.reduce(
           (n, { roster }) => n + roster.filter(id => moveByEos.has(id)).length, 0);
 
-        this.pushChunkedFields(embed, blocks,
+        skippedLines += this.pushChunkedFields(embed, blocks,
           `🔗 Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) Clan Grouping (Virtual Squads)`,
           `[${movers} players]`);
       }
@@ -425,9 +426,20 @@ export const DiscordHelpers = {
         ...this.buildPlayerRows(playerIDs, playerByEos, eloMap, null)
       ]);
 
-      this.pushChunkedFields(embed, blocks,
+      skippedLines += this.pushChunkedFields(embed, blocks,
         `Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction})`,
         `[${data.listedTotal} players]`);
+    }
+
+    // One notice for the whole report, and last so the reader sees it after the lists. The
+    // push deliberately ignores the size budget, which is why `reserve` sets aside room for
+    // exactly one of these.
+    if (skippedLines) {
+      embed.fields.push({
+        name: '⚠️ Truncated',
+        value: `${skippedLines} further lines omitted to stay within Discord's embed size limit.`,
+        inline: false
+      });
     }
 
     // Each entry appears only if its symbol actually made it into the report — no legend for
@@ -511,11 +523,13 @@ export const DiscordHelpers = {
   // description + every field name and value + footer exceed 6000 characters, and a clan-heavy
   // plan produces enough fields to get there (divided virtual squads list their stayers on top
   // of the movers). So chunks are only pushed while the embed can still afford them, and what
-  // did not fit is reported — a shortened report beats a 400 that drops the report entirely.
+  // did not fit is returned — a shortened report beats a 400 that drops the report entirely.
+  // Reporting the shortfall is the caller's job: an embed takes up to four calls (both
+  // directions × virtual and regular squads) and gets exactly one truncation notice.
   pushChunkedFields(embed, blocks, baseName, suffix = '') {
     const codeBlockWrapLen = 13; // ```text\n ... \n```
     const embedCharLimit = 6000;
-    // Room for the title, the description, the legend footer and the truncation notice itself —
+    // Room for the title, the description, the legend footer and the one truncation notice —
     // none of which are in embed.fields yet (or at all) while this runs.
     const reserve = 320;
     const used = () => embed.fields.reduce((n, f) => n + f.name.length + f.value.length, 0);
@@ -560,13 +574,7 @@ export const DiscordHelpers = {
       embed.fields.push({ name, value: `\`\`\`text\n${chunk.value}\n\`\`\``, inline: false });
     });
 
-    if (skipped) {
-      embed.fields.push({
-        name: '⚠️ Truncated',
-        value: `${skipped} further lines omitted to stay within Discord's embed size limit.`,
-        inline: false
-      });
-    }
+    return skipped;
   },
 
   buildWinStreakEmbed(teamName, teamID, streakCount, maxStreak, margin, isDominant) {
