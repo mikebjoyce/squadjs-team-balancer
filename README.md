@@ -91,7 +91,7 @@ Runs a single-phase exhaustive search over 2000 randomized candidate plans and k
 * **Cap Enforcement**: A final corrective pass trims teams over the cap using unassigned players only — never squad members, never clan members. If no eligible unassigned player is left, the overage is tolerated and logged rather than breaking a squad.
 
 ### Performance Benchmarks
-* **Execution Time**: ~25ms average per search (2500-run bulk test, exhaustive 2000-attempt pass).
+* **Execution Time**: ~30ms average per search (2500-run bulk test, exhaustive 2000-attempt pass).
 * **Balance Success**: 100% of runs land within 1 player without clan grouping. With clan grouping on, ~97% land within 2 — clan cohesion is a hard constraint and can rule out the otherwise perfect split.
 * **Cohesion**: No squad is ever split, locked or not, and no clan group ever ends up on both teams.
 
