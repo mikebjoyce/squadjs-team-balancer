@@ -35,6 +35,7 @@ export async function runCrossClanSquadDecompositionTest({ runs = 30 } = {}) {
 
   let dividedCount = 0;
   let squadDividedCount = 0;
+  let duplicateCount = 0;
 
   for (let run = 0; run < runs; run++) {
     // Build a full 80-player layout with three clans spanning two squads.
@@ -124,8 +125,17 @@ export async function runCrossClanSquadDecompositionTest({ runs = 30 } = {}) {
 
     const moveSet = new Set(result.map(m => m.eosID));
 
-    // Check virtual squads for division.
+    // Check virtual squads for division. Merged clans share one entry, so a player showing up
+    // in two entries means the report would list them twice — the exact bug the merge path
+    // used to produce by handing every absorbed tag the merged roster.
     if (result.virtualSquads) {
+      const seenInVirtual = new Set();
+      for (const vs of result.virtualSquads) {
+        for (const id of [...vs.members, ...vs.pulled]) {
+          if (seenInVirtual.has(id)) duplicateCount++;
+          seenInVirtual.add(id);
+        }
+      }
       for (const vs of result.virtualSquads) {
         const allRoster = [...new Set([...vs.members, ...vs.pulled])];
         const moved = allRoster.filter(id => moveSet.has(id));
@@ -150,9 +160,62 @@ export async function runCrossClanSquadDecompositionTest({ runs = 30 } = {}) {
 
   console.log(`   Cross-clan squad decomposition: ${dividedCount}/${runs} virtual divisions`);
   console.log(`   Cross-clan physical squad damage: ${squadDividedCount}/${runs}`);
-  
-  const pass = dividedCount === 0 && squadDividedCount === 0;
-  console.log(`   ${pass ? '✅' : '❌'} ${pass ? 'No decomposition — squads stay atomic' : 'Squad decomposition detected!'}`);
-  
-  return { pass, dividedCount, squadDividedCount, runs };
+  console.log(`   Players in more than one virtual squad: ${duplicateCount}`);
+
+  const pass = dividedCount === 0 && squadDividedCount === 0 && duplicateCount === 0;
+  console.log(`   ${pass ? '✅' : '❌'} ${pass ? 'No decomposition — squads stay atomic, rosters disjoint' : 'Squad decomposition or duplicate roster entries detected!'}`);
+
+  return { pass, dividedCount, squadDividedCount, duplicateCount, runs };
+}
+
+/**
+ * Regression test: a clan whose members sit entirely inside a prior clan's virtual squad.
+ *
+ * That is the anchor fallback in tb-scrambler.js — the only contributing candidate is already
+ * claimed, so the new unit is built on top of the earlier one and the earlier squad never
+ * appears in `others`. Deterministic, so one run is enough.
+ *
+ * Both tags must survive on the merged unit and every real clan member must count as a member,
+ * not as someone the squad pulled along: the Discord report names the block after `tags` and
+ * marks `members` with ◆, `pulled` with ◇.
+ */
+export async function runAnchorFallbackTagTest() {
+  console.log('\n--------------------------------------------------');
+  console.log('🧪 TEST: Anchor fallback keeps both clans\' tags');
+
+  const clanned = ['a1', 'a2', 'a3', 'b1', 'b2', 'f1'];
+  const filler = (prefix, n, squadID, teamID) =>
+    Array.from({ length: n }, (_, i) => ({ eosID: `${prefix}${i}`, teamID, squadID }));
+  const players = [
+    ...clanned.map((eosID) => ({ eosID, teamID: '1', squadID: 'T1-S1' })),
+    ...filler('x', 8, 'T1-S2', '1'),
+    ...filler('y', 10, 'T2-S1', '2')
+  ];
+  const squadOf = (id) => players.filter((p) => p.squadID === id).map((p) => p.eosID);
+  const squads = ['T1-S1', 'T1-S2', 'T2-S1'].map((id) => ({
+    id, teamID: id.startsWith('T1') ? '1' : '2', players: squadOf(id), locked: false
+  }));
+
+  const result = await Scrambler.scrambleTeamsPreservingSquads({
+    squads, players, winStreakTeam: 1, scramblePercentage: 0.5,
+    clanGroups: { AAA: ['a1', 'a2', 'a3'], BBB: ['b1', 'b2'] },
+    pullEntireSquads: true
+  });
+
+  const unit = (result.virtualSquads || []).find((vs) => vs.teamID === '1');
+  const tags = [...(unit?.tags || [])].sort();
+  const members = [...(unit?.members || [])].sort();
+  const tagsOk = tags.join(',') === 'AAA,BBB';
+  const membersOk = members.join(',') === 'a1,a2,a3,b1,b2';
+  const pulledOk = (unit?.pulled || []).join(',') === 'f1';
+
+  console.log(`   Units on team 1:  ${(result.virtualSquads || []).filter((v) => v.teamID === '1').length} (expected 1)`);
+  console.log(`   Tags on the unit: [${tags.join(', ')}] (expected [AAA, BBB])`);
+  console.log(`   Clan members:     [${members.join(', ')}] (expected all five)`);
+  console.log(`   Pulled along:     [${(unit?.pulled || []).join(', ')}] (expected f1)`);
+
+  const pass = !!unit && tagsOk && membersOk && pulledOk;
+  console.log(`   ${pass ? '✅' : '❌'} ${pass ? 'Merged unit keeps every tag and every member' : 'A clan tag or its members were lost on the fallback anchor!'}`);
+
+  return { pass, tags, members };
 }

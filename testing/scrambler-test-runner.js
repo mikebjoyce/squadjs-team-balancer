@@ -16,7 +16,10 @@ import {
   generateScenario_ClanBelowMin,
   generateScenario_LowPopLargeClan
 } from './mock-data-generator.js';
-import { runCrossClanSquadDecompositionTest } from './test-cross-clan-squad-collision.js';
+import {
+  runCrossClanSquadDecompositionTest,
+  runAnchorFallbackTagTest
+} from './test-cross-clan-squad-collision.js';
 
 // Failure tracker — turns observational checks into a real gate (process.exit on regression).
 const _failures = [];
@@ -531,6 +534,18 @@ async function runAllTests() {
   await runClanTest('Low-pop + large clan: 15-member virtual at scramble=0.2', generateScenario_LowPopLargeClan, {
     scramblePercentage: 0.2
   });
+
+  // Imported since the collision fix but never wired in, so its gate never ran. It is the only
+  // place the clan-merge path is exercised end to end, which is where duplicate report rosters
+  // came from.
+  const crossClan = await runCrossClanSquadDecompositionTest({ runs: 30 });
+  track('Cross-clan squads stay atomic and rosters stay disjoint', crossClan.pass,
+    ` (${crossClan.dividedCount} divided, ${crossClan.squadDividedCount} damaged, ` +
+    `${crossClan.duplicateCount} duplicated)`);
+
+  const fallbackTags = await runAnchorFallbackTagTest();
+  track('Anchor fallback keeps every merged clan tag and member', fallbackTags.pass,
+    ` (tags [${fallbackTags.tags.join(', ')}], members [${fallbackTags.members.join(', ')}])`);
 
   await runBulkTests(2500);
   await runClanBulkTest(500);

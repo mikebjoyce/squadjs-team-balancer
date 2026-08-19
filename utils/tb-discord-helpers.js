@@ -22,10 +22,13 @@
  *     squad. When plan.virtualSquads is present (clan grouping built at
  *     least one group), each team gets a Clan Grouping field ahead of its
  *     regular squads: every virtual squad the plan touched is shown as one
- *     block with its full roster (◆ clan member, ◇ pulled along), tagged
- *     "moved together" or "divided!" — the latter adds a moved/stay column.
- *     Those players are omitted from the regular squad blocks; virtual
- *     squads nobody moved out of are omitted entirely.
+ *     block naming every clan tag merged into it, with its full roster
+ *     (◆ carries one of the block's tags, ◇ pulled along) and the anchor
+ *     squad (⚓) when the block spans more than one in-game squad. A block
+ *     the plan tore apart is marked "divided!" and adds a moved/stay column;
+ *     moving as a unit is the norm and goes unlabelled. Those players are
+ *     omitted from the regular squad blocks; virtual squads nobody moved out
+ *     of are omitted entirely.
  *     buildScrambleCompletedEmbed(...)            — Post-execution summary embed.
  *     buildScrambleFailedEmbed(reason, time, tb)  — Failure notification embed.
  *     buildFatalErrorEmbed(err, context, tb)      — Critical error embed with stack.
@@ -228,12 +231,16 @@ export const DiscordHelpers = {
     const playerByEos = new Map(players.map(p => [p.eosID, p]));
     const moveByEos = new Map(swapPlan.map(m => [m.eosID, m]));
 
-    // Present only when clan grouping actually built virtual squads this round.
+    // Present only when clan grouping actually built virtual squads this round. The scrambler
+    // emits one entry per unit it moves, so the rosters are disjoint — a flat set is enough to
+    // keep those players out of the regular squad blocks. ◆/◇ is decided per block instead of
+    // globally: a player is a clan member *of the block being rendered*, and a merged unit
+    // carries several tags.
     const virtualSquads = swapPlan.virtualSquads || [];
-    const clanByEos = new Map(); // eosID -> { tag, pulled }
+    const virtualRosterIDs = new Set();
     for (const vs of virtualSquads) {
-      for (const eosID of vs.members) clanByEos.set(eosID, { tag: vs.tag, pulled: false });
-      for (const eosID of vs.pulled) clanByEos.set(eosID, { tag: vs.tag, pulled: true });
+      for (const eosID of vs.members) virtualRosterIDs.add(eosID);
+      for (const eosID of vs.pulled) virtualRosterIDs.add(eosID);
     }
 
     const squadNameByKey = new Map(squads.map(s => [`${s.teamID}:${s.squadID}`, s.squadName]));
@@ -261,7 +268,7 @@ export const DiscordHelpers = {
       if (!data) continue;
 
       data.playersTotal++;
-      if (clanByEos.has(move.eosID)) continue;
+      if (virtualRosterIDs.has(move.eosID)) continue;
 
       data.listedTotal++;
       const sID = player.squadID || 'UNASSIGNED';
@@ -381,19 +388,24 @@ export const DiscordHelpers = {
         .filter(({ roster }) => roster.some(id => moveByEos.has(id)));
 
       if (teamVirtual.length > 0) {
-        const lines = [];
-        for (const { vs, roster } of teamVirtual) {
+        const blocks = teamVirtual.map(({ vs, roster }) => {
           // "divided" is about the virtual squad itself ending up on two teams — the thing the
-          // grouping exists to prevent.
+          // grouping exists to prevent. Moving as a unit is the norm, so it goes unlabelled.
           const divided = roster.some(id => !moveByEos.has(id));
+          const memberSet = new Set(vs.members);
 
-          if (lines.length) lines.push('');
-          lines.push(`Virtual Squad: [${vs.tag}] ${squadStats(roster)} (${divided ? 'divided!' : 'moved together'})`);
-          lines.push(...this.buildPlayerRows(roster, playerByEos, eloMap, clanByEos, {
+          let header = `Virtual Squad: ${this.formatTags(vs)} ${squadStats(roster)}`;
+          // The anchor is the squad the unit was built around; it only tells the reader
+          // anything when the unit actually spans several in-game squads.
+          const squadCount = new Set(roster.map(squadLabelOf)).size;
+          if (vs.anchorEosID && squadCount > 1) header += ` · ⚓${squadLabelOf(vs.anchorEosID)}`;
+          if (divided) header += ' (divided!)';
+
+          return [header, ...this.buildPlayerRows(roster, playerByEos, eloMap, memberSet, {
             squadLabelOf,
             movedOf: divided ? (id => (moveByEos.has(id) ? 'moved' : 'stay')) : null
-          }));
-        }
+          })];
+        });
 
         // Counts players who actually change team, same as the regular fields — a divided squad
         // keeps its stayers visible but they are not part of the move. Per-squad roster sizes
@@ -401,21 +413,19 @@ export const DiscordHelpers = {
         const movers = teamVirtual.reduce(
           (n, { roster }) => n + roster.filter(id => moveByEos.has(id)).length, 0);
 
-        this.pushChunkedFields(embed, lines,
+        this.pushChunkedFields(embed, blocks,
           `🔗 Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction}) Clan Grouping (Virtual Squads)`,
           `[${movers} players]`);
       }
 
       if (data.listedTotal === 0) continue;
 
-      const lines = [];
-      for (const playerIDs of Object.values(data.squads)) {
-        if (lines.length) lines.push('');
-        lines.push(`${squadLabelOf(playerIDs[0]).padEnd(16)} ${squadStats(playerIDs)}`);
-        lines.push(...this.buildPlayerRows(playerIDs, playerByEos, eloMap, clanByEos));
-      }
+      const blocks = Object.values(data.squads).map(playerIDs => [
+        `${squadLabelOf(playerIDs[0]).padEnd(16)} ${squadStats(playerIDs)}`,
+        ...this.buildPlayerRows(playerIDs, playerByEos, eloMap, null)
+      ]);
 
-      this.pushChunkedFields(embed, lines,
+      this.pushChunkedFields(embed, blocks,
         `Team ${data.srcID} (${data.srcFaction}) ➔ Team ${data.tgtID} (${data.tgtFaction})`,
         `[${data.listedTotal} players]`);
     }
@@ -426,7 +436,8 @@ export const DiscordHelpers = {
     const legend = [
       ['★', 'regular (10+ rounds)'],
       ['◆', 'clan member (virtual squad)'],
-      ['◇', 'pulled with squad']
+      ['◇', 'pulled with squad'],
+      ['⚓', 'anchor squad']
     ].filter(([symbol]) => body.includes(symbol)).map(([symbol, text]) => `${symbol} ${text}`);
 
     if (legend.length) embed.footer = { text: legend.join(' · ') };
@@ -439,6 +450,15 @@ export const DiscordHelpers = {
     return embed;
   },
 
+  // Every clan tag bound into one virtual squad. Clans that ended up in the same unit move
+  // together and are reported as one block, so the header has to name all of them. Long
+  // pile-ups are cut short — the header competes with the roster for the same 1024 characters.
+  formatTags(vs) {
+    const tags = vs.tags?.length ? vs.tags : [vs.tag];
+    const shown = tags.slice(0, 3).map(t => `[${t}]`).join(' + ');
+    return tags.length > 3 ? `${shown} +${tags.length - 3}` : shown;
+  },
+
   // One player per line, ELO first: the fixed-width columns stay aligned in Discord's monospace
   // block because the only variable-width part (the name) sits last — player names routinely
   // contain Unicode that would otherwise wreck a right-aligned layout.
@@ -446,20 +466,20 @@ export const DiscordHelpers = {
   // Optional columns, each only rendered where it carries information:
   //   movedOf(eosID)     — 'moved'/'stay'; used for a virtual squad the plan tore apart
   //   squadLabelOf(eosID) — the real in-game squad; a virtual squad spans several of them
-  // The clan marker column appears whenever any listed player belongs to a virtual squad.
-  buildPlayerRows(eosIDs, playerByEos, eloMap, clanByEos, { movedOf = null, squadLabelOf = null } = {}) {
-    const showMarker = eosIDs.some(id => clanByEos.has(id));
+  // memberSet turns on the clan marker column: ◆ for the players carrying one of the block's
+  // clan tags, ◇ for everyone the unit pulled along. Pass null outside a virtual squad block.
+  buildPlayerRows(eosIDs, playerByEos, eloMap, memberSet, { movedOf = null, squadLabelOf = null } = {}) {
+    const showMarker = !!memberSet;
 
     const rows = eosIDs.map(eosID => {
       const player = playerByEos.get(eosID);
       const rating = eloMap ? eloMap.get(eosID) : null;
-      const clan = clanByEos.get(eosID);
       return {
         eosID,
         name: player ? player.name : `Unknown (${eosID.slice(0, 8)}...)`,
         mu: eloMap ? (rating ? rating.mu : 25.0) : null,
         isReg: !!rating && (rating.roundsPlayed || 0) >= 10,
-        marker: !clan ? ' ' : clan.pulled ? '◇' : '◆',
+        marker: !showMarker ? ' ' : memberSet.has(eosID) ? '◆' : '◇',
         moved: movedOf ? movedOf(eosID) : null
       };
     });
@@ -481,16 +501,18 @@ export const DiscordHelpers = {
     });
   },
 
-  // Packs lines into embed fields per line rather than per block, so a single oversized block
-  // (a big clan, or UNASSIGNED collecting every squadless player) cannot produce a field over
-  // Discord's 1024-character limit.
+  // Packs blocks (a header plus its player rows) into embed fields, keeping each block whole in
+  // one field so a squad is never cut in half across two ```text``` blocks. A block that cannot
+  // fit a field on its own — a big clan, or UNASSIGNED collecting every squadless player — is
+  // the one case that falls back to splitting line by line, since Discord caps a field value at
+  // 1024 characters no matter what.
   //
   // The per-field cap alone is not enough: Discord also rejects the entire message when title +
   // description + every field name and value + footer exceed 6000 characters, and a clan-heavy
   // plan produces enough fields to get there (divided virtual squads list their stayers on top
   // of the movers). So chunks are only pushed while the embed can still afford them, and what
   // did not fit is reported — a shortened report beats a 400 that drops the report entirely.
-  pushChunkedFields(embed, lines, baseName, suffix = '') {
+  pushChunkedFields(embed, blocks, baseName, suffix = '') {
     const codeBlockWrapLen = 13; // ```text\n ... \n```
     const embedCharLimit = 6000;
     // Room for the title, the description, the legend footer and the truncation notice itself —
@@ -500,13 +522,29 @@ export const DiscordHelpers = {
     const nameFor = (part) => (part === 1 ? (suffix ? `${baseName} ${suffix}` : baseName) : `${baseName} (Cont.)`);
 
     const chunks = [];
-    for (const line of lines) {
+    const addLine = (line) => {
       const current = chunks[chunks.length - 1];
       if (current && current.value.length + line.length + 1 + codeBlockWrapLen <= 1024) {
         current.value += '\n' + line;
         current.lines++;
       } else {
         chunks.push({ value: line, lines: 1 });
+      }
+    };
+
+    const costOf = (arr) => arr.reduce((n, l) => n + l.length + 1, 0);
+    for (const block of blocks) {
+      if (!block.length) continue;
+      const current = chunks[chunks.length - 1];
+      // Blocks stay separated by a blank line, exactly as before.
+      if (current && current.value.length + costOf(['', ...block]) + codeBlockWrapLen <= 1024) {
+        current.value += '\n\n' + block.join('\n');
+        current.lines += block.length;
+      } else if (costOf(block) + codeBlockWrapLen <= 1024) {
+        chunks.push({ value: block.join('\n'), lines: block.length });
+      } else {
+        if (current) addLine('');
+        block.forEach(addLine);
       }
     }
 
