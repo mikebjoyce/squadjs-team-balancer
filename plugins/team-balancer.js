@@ -255,7 +255,7 @@ export default class TeamBalancer extends BasePlugin {
       seedScrambleAnnouncementDelay: {
         default: 5,
         type: 'number',
-        description: 'Seconds between the seed auto-scramble announcement and its execution (default: 5). Separate from scrambleAnnouncementDelay because the post-round window on a Seed layer is much shorter — a countdown still running at NEW_GAME is discarded and the scramble never happens.'
+        description: 'Seconds between the seed auto-scramble announcement and its execution (default: 5). Independent from scrambleAnnouncementDelay — a countdown still running at NEW_GAME is discarded and the scramble never happens.'
       },
       maxWinStreak: {
         default: 2,
