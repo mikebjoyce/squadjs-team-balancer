@@ -24,11 +24,30 @@ Stress-tests the Scrambler algorithm using mock data. Standalone — no server r
   - Sub-min clan ignored
   - Similarity merging at edit distances 0 and 1
   - Case sensitivity: case-fold alone (`caseSensitive: false`, edit=0), case-fold + similarity (`caseSensitive: false`, edit=1), case-sensitive default (`caseSensitive: true`, edit=0)
-  - Cross-clan squad collision: two clans sharing a squad must each stay cohesive (20 runs per `pullEntireSquads` mode, 100% required — the scrambler is randomized, so a single run would only catch the regression ~60% of the time)
+  - Cross-clan squad collision and the anchor fallback (see `test-cross-clan-squad-collision.js`)
 - Bulk regression: 2,500 randomized runs (general) + 500 randomized runs (clan grouping with `caseSensitive` and `pullEntireSquads` randomized per run)
 
 ```bash
 node scrambler-test-runner.js
+```
+
+### `test-cross-clan-squad-collision.js`
+
+Two regression checks around clans that share a squad, both wired into `scrambler-test-runner.js`:
+
+- `runCrossClanSquadDecompositionTest` — 30 randomized runs where a third clan spans two squads already claimed by other clans. Squads must stay atomic, and no player may appear in two of the reported virtual squads.
+- `runAnchorFallbackTagTest` — deterministic: when a clan's members sit entirely inside an earlier clan's virtual squad, the merged unit must keep both tags and count every real clan member as a member rather than as someone pulled along.
+
+Runs as part of the scrambler suite; no separate command needed.
+
+### `embed-format-test.js`
+
+Standalone assertions for the Discord scramble report (`DiscordHelpers.createScrambleDetailsMessage`): one row per listed player, one block per virtual squad, no player listed twice, correct `◆`/`◇`/`⚓` markers, and no field over Discord's 1024-character limit. Add `--print` to dump sample embeds for eyeballing column alignment.
+
+Needs a SquadJS-style layout plus a package.json marking the tree as ESM; the docker one-liner is in the file header.
+
+```bash
+node testing/embed-format-test.js [--print]
 ```
 
 ### `mock-data-generator.js`
