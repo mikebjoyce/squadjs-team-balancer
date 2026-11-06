@@ -192,7 +192,7 @@ export default class SwapExecutor {
     * This fetches the live player list from the server after RCON moves are complete,
     * tallying successes/failures, and producing a report to ensure no silent failures.
     */
-   async verifyMoves() {
+   async verifyMoves(session = this.activeSession) {
      // updatePlayerList() is an RCON round-trip with no timeout of its own. Under RCON congestion
      // it can hang far past maxScrambleCompletionTime and block completeSession() with it, so a
      // stuck refresh degrades to the same fallback as a failed one.
@@ -209,9 +209,9 @@ export default class SwapExecutor {
        Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Failed to update player list for verification: ${err?.message || err}`);
        // Fall back to current counts if update fails
        return {
-         totalMoves: this.activeSession.totalMoves,
-         movedSuccessfully: this.activeSession.movesSent,
-         failedToMove: this.activeSession.failedMoves,
+         totalMoves: session.totalMoves,
+         movedSuccessfully: session.movesSent,
+         failedToMove: session.failedMoves,
          disconnected: 0
        };
      } finally {
@@ -245,9 +245,19 @@ export default class SwapExecutor {
    }
 
   async completeSession() {
-    if (!this.activeSession || this._completing) return;
+    // Held for the whole call: cleanup() (unmount, error paths) or a new session can replace
+    // activeSession while verifyMoves() is awaiting, and reading this.activeSession afterwards threw.
+    const session = this.activeSession;
+    if (!session || this._completing) return;
     this._completing = true;
+    try {
+      await this._finishSession(session);
+    } finally {
+      this._completing = false; // also after a throw, or every later session would stay unfinished
+    }
+  }
 
+  async _finishSession(session) {
     if (this.scrambleRetryTimer) {
       clearInterval(this.scrambleRetryTimer);
       this.scrambleRetryTimer = null;
@@ -257,10 +267,15 @@ export default class SwapExecutor {
       this.overallTimeout = null;
     }
 
-    const { totalMoves, movedSuccessfully, failedToMove, disconnected, failedNames = [] } = await this.verifyMoves();
-    const duration = Date.now() - this.activeSession.startTime;
+    const { totalMoves, movedSuccessfully, failedToMove, disconnected, failedNames = [] } = await this.verifyMoves(session);
+    // Replaced while it was being verified (cleanup() or a new session): its move list is gone or
+    // mixed with the next one, so the numbers mean nothing and the state belongs to someone else.
+    if (this.activeSession !== session) {
+      Logger.verbose('TeamBalancer', 2, '[SwapExecutor] Session was replaced during verification; its results are discarded.');
+      return;
+    }
+    const duration = Date.now() - session.startTime;
     const successRate = totalMoves > 0 ? Math.round((movedSuccessfully / totalMoves) * 100) : 100;
-    this._lastSessionReport = { totalMoves, movedSuccessfully, failedToMove, disconnected, failedNames, duration, successRate };
 
     Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Session complete in ${duration}ms: ${movedSuccessfully} moved, ${disconnected} disconnected, ${failedToMove} failed (${totalMoves} total, ${successRate}%)`);
 
@@ -280,10 +295,10 @@ export default class SwapExecutor {
       DiscordHelpers.sendDiscordMessage(this.teamBalancer.discordChannel, { embeds: [embed] });
     }
 
+    this._lastSessionReport = { totalMoves, movedSuccessfully, failedToMove, disconnected, failedNames, duration, successRate };
     this.pendingPlayerMoves.clear();
-    this.sessionMoves.clear(); 
+    this.sessionMoves.clear();
     this.activeSession = null;
-    this._completing = false;
   }
 
   async waitForCompletion(timeoutMs = 10000, intervalMs = 100) {

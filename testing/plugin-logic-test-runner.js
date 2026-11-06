@@ -915,6 +915,30 @@ async function runPluginLogicTests() {
     assert(report?.movedSuccessfully === 1, 'executor: waitForCompletion returns only once the session report exists.');
   }
 
+  // A cleanup() while completeSession() is verifying (unmount, error paths) must not throw or leave
+  // the executor stuck in _completing, or every later scramble waits out the full timeout.
+  {
+    const rejections = [];
+    const onRejection = (err) => rejections.push(err?.message || String(err));
+    process.on('unhandledRejection', onRejection);
+    const server = {
+      players: [{ eosID: 'c1', steamID: 'c1', name: 'C1', teamID: 1 }],
+      rcon: {
+        switchTeam: async (id, teamID) => { server.players[0].teamID = Number(teamID); },
+        warn: async () => {}
+      },
+      updatePlayerList: () => new Promise((resolve) => setTimeout(resolve, 200))
+    };
+    const executor = new SwapExecutor(server, { changeTeamRetryInterval: 20, maxScrambleCompletionTime: 2000 });
+    await executor.queueMove('c1', 2);
+    for (let i = 0; i < 400 && !executor._completing; i++) await new Promise((r) => setTimeout(r, 5));
+    executor.cleanup();
+    await new Promise((r) => setTimeout(r, 400));
+    process.off('unhandledRejection', onRejection);
+    assert(rejections.length === 0, `executor: a cleanup during verification throws nothing (${rejections.join('; ') || 'none'}).`);
+    assert(executor._completing === false, 'executor: a cleanup during verification does not leave the executor stuck.');
+  }
+
   // --- Phase 3.14: Per-scramble JSON report ---
   console.log('\n[Phase 3.14: Scramble report files]');
   // The files hold every player's name and SteamID, so an operator has to opt in.
