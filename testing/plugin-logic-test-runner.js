@@ -1,4 +1,5 @@
 import TeamBalancer from '../plugins/team-balancer.js';
+import SwapExecutor from '../utils/tb-swap-executor.js';
 import Logger from '../../core/logger.js'; // The plugin uses this, so we need a mock.
 
 // Suppress logger output for cleaner test results
@@ -773,6 +774,23 @@ async function runPluginLogicTests() {
   await tb.cancelPendingScramble(null, null, true);
   await tb.resetStreak();
   tb.gameModeCached = 'RAAS';
+
+  // --- Phase 3.10: Move verification does not hang on a stuck RCON ---
+  console.log('\n[Phase 3.10: SwapExecutor verification timeout]');
+
+  // updatePlayerList() is an RCON round-trip with no timeout of its own. A refresh that never
+  // returns must fall back to the session counters instead of blocking completeSession() forever.
+  {
+    const stuckServer = { players: [], updatePlayerList: () => new Promise(() => {}) };
+    const executor = new SwapExecutor(stuckServer, { maxScrambleCompletionTime: 100 });
+    executor.activeSession = { startTime: Date.now(), totalMoves: 2, movesSent: 1, failedMoves: 1 };
+    const result = await Promise.race([
+      executor.verifyMoves(),
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 2000))
+    ]);
+    assert(result !== 'hung', 'verify: a stuck updatePlayerList() does not hang verification.');
+    assert(result?.movedSuccessfully === 1 && result?.failedToMove === 1, 'verify: falls back to the session counters after the timeout.');
+  }
 
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);

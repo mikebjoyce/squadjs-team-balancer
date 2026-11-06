@@ -33,7 +33,8 @@
  * - RCON identifier prefers steamID, falls back to player name with a
  *   warning log. Max 5 RCON attempts per player before marking failed.
  * - verifyMoves() calls server.updatePlayerList() before checking final
- *   team positions. Falls back to session counters if the update fails.
+ *   team positions. Falls back to session counters if the update fails
+ *   or does not return within maxScrambleCompletionTime.
  * - cleanup() is safe to call at any time; idempotent.
  *
  * Author:
@@ -188,8 +189,18 @@ export default class SwapExecutor {
     * tallying successes/failures, and producing a report to ensure no silent failures.
     */
    async verifyMoves() {
+     // updatePlayerList() is an RCON round-trip with no timeout of its own. Under RCON congestion
+     // it can hang far past maxScrambleCompletionTime and block completeSession() with it, so a
+     // stuck refresh degrades to the same fallback as a failed one.
+     let refreshTimer;
      try {
-       await this.server.updatePlayerList();
+       await Promise.race([
+         this.server.updatePlayerList(),
+         new Promise((_, reject) => {
+           refreshTimer = setTimeout(() => reject(new Error('updatePlayerList timed out')),
+             this.options.maxScrambleCompletionTime || 15000);
+         })
+       ]);
      } catch (err) {
        Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Failed to update player list for verification: ${err?.message || err}`);
        // Fall back to current counts if update fails
@@ -199,6 +210,8 @@ export default class SwapExecutor {
          failedToMove: this.activeSession.failedMoves,
          disconnected: 0
        };
+     } finally {
+       clearTimeout(refreshTimer);
      }
 
      const verified = { moved: 0, failed: 0, disconnected: 0 };
