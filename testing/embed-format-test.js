@@ -387,6 +387,23 @@ check('pushChunkedFields returns what it dropped and appends no notice of its ow
   for (const f of embed.fields) assert.ok(f.value.length <= 1024, `field "${f.name}" is ${f.value.length} chars`);
 });
 
+// discord.js v12 (stock SquadJS 4.1.0) has no `embeds` key: an embeds-only payload reads as empty
+// and is rejected. The fallback must still deliver every embed of a multi-embed payload.
+{
+  const sent = [];
+  const v12Channel = {
+    send: async (data) => {
+      if (!data.embed) throw new Error('Cannot send an empty message');
+      sent.push(data.embed.title);
+    }
+  };
+  const ok = await DiscordHelpers.sendDiscordMessage(v12Channel, { embeds: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
+  check('discord.js v12 fallback sends every embed, one message each', () => {
+    assert.strictEqual(ok, true);
+    assert.deepStrictEqual(sent, ['A', 'B', 'C']);
+  });
+}
+
 // Sample output for eyeballing column alignment.
 if (process.argv.includes('--print')) {
   for (const embed of [withClans, merged, dividedClan]) {

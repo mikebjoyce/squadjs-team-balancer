@@ -720,11 +720,14 @@ export const DiscordHelpers = {
           return executeSend(data, true);
         }
 
-        // Compatibility: Discord.js v12 Fallback
+        // Compatibility: Discord.js v12 knows only the singular `embed` key, so send one embed
+        // per message. Content and files ride on the first; the rest follow in order.
         if (err.message === 'Cannot send an empty message' && data.embeds && data.embeds.length > 0) {
-          const legacyData = { ...data, embed: data.embeds[0] };
-          delete legacyData.embeds;
-          return executeSend(legacyData, isRetry);
+          const { embeds, ...rest } = data;
+          for (let i = 0; i < embeds.length; i++) {
+            await executeSend(i === 0 ? { ...rest, embed: embeds[i] } : { embed: embeds[i] }, isRetry);
+          }
+          return true;
         }
 
         throw err;
