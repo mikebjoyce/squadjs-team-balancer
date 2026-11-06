@@ -755,6 +755,25 @@ async function runPluginLogicTests() {
   tb.db.saveState = realSaveState;
   await tb.resetStreak();
 
+  // --- Phase 3.9: A round whose layer never resolved does not feed the streak ---
+  console.log('\n[Phase 3.9: Unclassifiable round]');
+
+  // No layer since startup and nothing to fall back on: the round could be a Seed round, so it must
+  // neither count toward the streak nor reset it.
+  tb.options.maxWinStreak = 2;
+  tb.gameModeCached = 'RAAS';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } }); // streak 1, persisted
+  assert(tb.winStreakTeam === 1 && tb.winStreakCount === 1, 'unresolved layer: setup round starts a streak.');
+  tb.gameModeCached = null;
+  tb.layerNameCached = null;
+  tb.lastKnownGoodLayer = null;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakTeam === 1 && tb.winStreakCount === 1, 'unresolved layer: streak is left unchanged.');
+  assert(tb._scramblePending === false, 'unresolved layer: no scramble is armed.');
+  await tb.cancelPendingScramble(null, null, true);
+  await tb.resetStreak();
+  tb.gameModeCached = 'RAAS';
+
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);
   if (passCount !== testCount) {

@@ -311,6 +311,7 @@ enableDatabaseLogging               - If true, round reports are also written to
 - **RAAS / AAS**: Uses `minTicketsToCountAsDominantWin` threshold.
 - **Invasion**: Uses separate thresholds for attackers (`invasionAttackTeamThreshold`) and defenders (`invasionDefenceTeamThreshold`).
 - **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`, independent of `enableWinStreakTracking` — that option is about streaks and never governed seeding — and it fires even when the round ends without a winner (an admin switching the layer mid-seed). `!teambalancer off` does stop it: that toggle is the admin kill switch, and it is the runtime way to disarm the trigger without a restart. Two conditions still apply: "Seed" must be in `ignoredGameModes` — take it out and Seed rounds are evaluated like any other mode instead — and the round's own layer must have resolved, since the fallback to the last known layer is too weak a basis for shuffling teams. This trigger runs on its own countdown, `seedScrambleAnnouncementDelay` (default 5s), not the global `scrambleAnnouncementDelay` — the gap between a Seed round ending and the map change is much shorter.
+- **Unknown layer**: A round that ends before any layer has resolved since startup — so there is no previous layer to fall back on either — is not evaluated. It could be a Seed round, so the win streak is left unchanged rather than counted or reset.
 - Other modes and map names can be excluded via `ignoredGameModes`.
 
 ---
