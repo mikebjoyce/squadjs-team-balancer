@@ -923,6 +923,37 @@ async function runPluginLogicTests() {
     await tb.resetStreak();
   }
 
+  // --- Phase 3.15: In-game diag is paged ---
+  console.log('\n[Phase 3.15: Paged in-game diag]');
+
+  // Squad shows one admin warn at a time and the next replaces it, so one long diag message is
+  // unreadable. It goes out as three short pages, spaced out so each can be read.
+  {
+    const warns = [];
+    const delays = [];
+    const realWarn = tb.server.rcon.warn;
+    const realSetTimeout = globalThis.setTimeout;
+    tb.server.rcon.warn = async (id, msg) => { warns.push(msg); };
+    globalThis.setTimeout = (fn, ms, ...args) => {
+      if (ms >= 5000) { delays.push(ms); ms = 0; } // the page spacing; keeps this test fast
+      return realSetTimeout(fn, ms, ...args);
+    };
+    try {
+      await tb.onChatCommand({ message: 'diag', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      tb.server.rcon.warn = realWarn;
+    }
+    const pages = warns.filter((w) => w.includes('TB Diag'));
+    assert(pages.length === 3, `diag: sent as three pages (${pages.length}).`);
+    assert(pages.every((p, i) => p.includes(`${i + 1}/3`)), 'diag: pages are numbered in order.');
+    assert(pages.every((p) => p.split('\n').length <= 7), 'diag: every page is at most 7 lines.');
+    assert(delays.length === 2, `diag: the pages are spaced out (${delays.length} pauses).`);
+    const all = pages.join('\n');
+    assert(['DB:', 'Scramble test:', 'Layer:', 'Players:', 'Squads:', 'Dominant:', 'TC:', 'Seed auto scramble:', 'Discord:'].every((k) => all.includes(k)),
+      'diag: the pages still carry every section of the old message.');
+  }
+
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);
   if (passCount !== testCount) {

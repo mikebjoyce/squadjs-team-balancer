@@ -366,6 +366,8 @@ Scrambles trigger if one team either wins 2 rounds with 150+ ticket margins, or 
 - **Plugin Status**: Version, ready state, and active configuration.
 - **Population Snapshot**: Player and squad counts, team sizes, unassigned players.
 
+In game the report arrives as three short warn pages (results and streaks, live state, configuration), about 5.5 seconds apart, since Squad shows one admin warn at a time. The Discord embeds are posted first.
+
 ---
 
 ## Logging and Monitoring

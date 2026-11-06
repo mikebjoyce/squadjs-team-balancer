@@ -395,65 +395,43 @@ const CommandHandlers = {
             const team1Name = this.getTeamName(1);
             const team2Name = this.getTeamName(2);
 
-            const diagMsg = [
-              `--- [TeamBalancer Diag] ---`,
-              `DB Connection: [${dbResult.message}]`,
-              `Live Scramble Test: [${scrambleResult.message}]`,
-              '',
-              '----- CORE STATUS -----',
-              `Version: ${this.constructor.version}`,
-              `Plugin Status: ${
-                this.manuallyDisabled
-                  ? 'DISABLED (Manual override)'
-                  : this.options.enableWinStreakTracking
-                  ? 'ENABLED'
-                  : 'DISABLED (config)'
-              }`,
-              `Win Streak: ${
-                this.winStreakTeam
-                  ? `${this.getTeamName(this.winStreakTeam)} with ${this.winStreakCount} win(s)`
-                  : 'N/A'
-              }`,
-              `Max Win Streak Threshold: ${this.options.maxWinStreak} wins`,
-              `Consecutive Win Streak: ${
-                this.consecutiveWinsTeam
-                  ? `${this.getTeamName(this.consecutiveWinsTeam)} with ${this.consecutiveWinsCount} win(s)`
-                  : 'N/A'
-              }`,
-              `Max Consecutive Threshold: ${this.options.maxConsecutiveWinsWithoutThreshold || 'Disabled'}`,
-              `Scramble Pending: ${this._scramblePending ? 'Yes' : 'No'}`,
-              `Scramble In Progress: ${this._scrambleInProgress ? 'Yes' : 'No'}`,
-              `Scheduled for Round End: ${this._scrambleOnRoundEnd ? 'Yes' : 'No'}`,
-              `Scramble System: ${scrambleInfo}`,
-              '',
-              '----- ROUND/LAYER INFO -----',
-              `Layer: ${layerName}`,
-              `Game Mode: ${gameMode}`,
-              `Team 1 Name: ${team1Name}`,
-              `Team 2 Name: ${team2Name}`,
-              '',
-              '----- PLAYER/SQUAD INFO -----',
-              `Total Players: ${players.length}`,
-              `Team 1: ${t1Players.length} (Unassigned: ${t1UnassignedPlayers.length})`,
-              `Team 2: ${t2Players.length} (Unassigned: ${t2UnassignedPlayers.length})`,
-              `Total Squads: ${squads.length}`,
-              `Team 1 Squads: ${t1Squads.length}`,
-              `Team 2 Squads: ${t2Squads.length}`,
-              '',
-              '----- CONFIGURATION -----',
-              `Dominant Win Threshold: ${this.options?.minTicketsToCountAsDominantWin || 150} tickets`,
-              `Single Round Scramble: ${this.options?.enableSingleRoundScramble ? `ON (> ${this.options?.singleRoundScrambleThreshold} tix)` : 'OFF'}`,
-              `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
-              `Invasion Thresholds: Atk: ${this.options?.invasionAttackTeamThreshold} | Def: ${this.options?.invasionDefenceTeamThreshold}`,
-              `TC Thresholds: Dom: ${this.options?.tcDominantThreshold ?? 'standard'} | Single: ${this.options?.tcSingleRoundScrambleThreshold ?? 'standard'}`,
-              `Scramble %: ${(this.options?.scramblePercentage || 0.5) * 100}%`,
-              `Scramble Delay: ${this.options?.scrambleAnnouncementDelay}s (Seed: ${this.options?.seedScrambleAnnouncementDelay}s)`,
-              `Max Scramble Time: ${this.options?.maxScrambleCompletionTime}ms`,
-              `Discord Options: Mirror: ${this.options?.mirrorRconBroadcasts ? 'Yes' : 'No'} | Details: ${this.options?.postScrambleDetails ? 'Yes' : 'No'}`,
-              `------------------------------------------`
-            ].join('\n');
-            const response = await this.respond(player, diagMsg);
+            const pluginStatus = this.manuallyDisabled
+              ? 'DISABLED (Manual override)'
+              : this.options.enableWinStreakTracking
+              ? 'ENABLED'
+              : 'DISABLED (config)';
+            const streakOf = (team, count) => (team ? `${this.getTeamName(team)} ${count}` : 'N/A');
+            const yesNo = (v) => (v ? 'Yes' : 'No');
 
+            // Squad shows one admin warn at a time and the next replaces it, so the old single
+            // 45-line message could not be read. Three short pages, spaced out below.
+            const pages = [
+              [
+                '--- [TB Diag 1/3] ---',
+                `DB: [${dbResult.message}] | Scramble test: [${scrambleResult.message}]`,
+                `Version ${this.constructor.version} | ${pluginStatus}`,
+                `Win streak: ${streakOf(this.winStreakTeam, this.winStreakCount)} (max ${this.options.maxWinStreak})`,
+                `Consecutive: ${streakOf(this.consecutiveWinsTeam, this.consecutiveWinsCount)} (max ${this.options.maxConsecutiveWinsWithoutThreshold || 'Disabled'})`
+              ],
+              [
+                '--- [TB Diag 2/3] ---',
+                `Pending: ${yesNo(this._scramblePending)} | Active: ${yesNo(this._scrambleInProgress)} | Round end: ${yesNo(this._scrambleOnRoundEnd)}`,
+                `Moves: ${scrambleInfo}`,
+                `Layer: ${layerName} (${gameMode}) | Teams: ${team1Name} | ${team2Name}`,
+                `Players: ${players.length} (T1 ${t1Players.length}, unassigned ${t1UnassignedPlayers.length} | T2 ${t2Players.length}, unassigned ${t2UnassignedPlayers.length})`,
+                `Squads: ${squads.length} (T1 ${t1Squads.length} | T2 ${t2Squads.length})`
+              ],
+              [
+                '--- [TB Diag 3/3] ---',
+                `Dominant: ${this.options?.minTicketsToCountAsDominantWin || 150} tix | Single round: ${this.options?.enableSingleRoundScramble ? `ON (> ${this.options?.singleRoundScrambleThreshold} tix)` : 'OFF'}`,
+                `Invasion: Atk ${this.options?.invasionAttackTeamThreshold} | Def ${this.options?.invasionDefenceTeamThreshold} | TC: Dom ${this.options?.tcDominantThreshold ?? 'standard'} | Single ${this.options?.tcSingleRoundScrambleThreshold ?? 'standard'}`,
+                `Seed auto scramble: ${this.seedAutoScrambleStatus()}`,
+                `Scramble: ${(this.options?.scramblePercentage || 0.5) * 100}% | ${this.options?.scrambleAnnouncementDelay}s (Seed ${this.options?.seedScrambleAnnouncementDelay}s) | max ${this.options?.maxScrambleCompletionTime}ms`,
+                `Discord: Mirror ${yesNo(this.options?.mirrorRconBroadcasts)} | Details ${yesNo(this.options?.postScrambleDetails)}`
+              ]
+            ].map((lines) => lines.join('\n'));
+
+            // Discord first: it does not have to wait out the in-game page spacing.
             const targetReportChannel = this.discordReportChannel || this.discordChannel;
             if (targetReportChannel) {
               const embeds = DiscordHelpers.buildDiagEmbeds(this, results);
@@ -461,7 +439,12 @@ const CommandHandlers = {
               embeds[0].description = `Executed by **${adminName}** (In-Game)\n${embeds[0].description}`;
               await DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds });
             }
-            return response;
+
+            for (let i = 0; i < pages.length; i++) {
+              if (i > 0) await new Promise((resolve) => setTimeout(resolve, 5500));
+              await this.respond(player, pages[i]);
+            }
+            return pages.join('\n');
           }
           default: {
             return await this.respond(
