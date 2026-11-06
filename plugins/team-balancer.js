@@ -141,6 +141,7 @@
  *   discordAdminRoleIDs                - Array of Role IDs required for Discord admin commands (empty = all in channel).
  *   mirrorRconBroadcasts               - Mirror RCON broadcasts to Discord.
  *   postScrambleDetails                - Post detailed swap plan to Discord after scramble.
+ *                                        Live plans: report channel. Dry runs: admin channel.
  *
  * Advanced:
  *   useEloForBalance                   - Weight scrambles by EloTracker mu ratings.
@@ -2271,10 +2272,13 @@ export default class TeamBalancer extends BasePlugin {
         pullEntireSquads: this.options.clanGroupingPullEntireSquads
       });
 
+      // A dry run answers the admin who asked for it, so its plan goes to the admin channel next to
+      // their command. Live plans go to the report channel, which is the archive.
       const targetReportChannel = this.discordReportChannel || this.discordChannel;
-      if (targetReportChannel && this.options.postScrambleDetails) {
+      const planChannel = isSimulated ? this.discordChannel || targetReportChannel : targetReportChannel;
+      if (planChannel && this.options.postScrambleDetails) {
         const embed = await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this, eloMap);
-        DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(planChannel, { embeds: [embed] });
       }
 
       if (swapPlan && swapPlan.length > 0) {

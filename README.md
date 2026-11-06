@@ -288,7 +288,7 @@ discordAdminChannelID               - Channel for admin commands.
 discordReportChannelID              - Channel for automated reports (win streaks, scramble plans, errors). Defaults to admin channel if unset.
 discordAdminRoleIDs                 - Array of Role IDs required for Discord admin commands (empty = all in channel).
 mirrorRconBroadcasts                - Mirror RCON broadcasts to Discord.
-postScrambleDetails                 - Post detailed swap plan to Discord after scramble.
+postScrambleDetails                 - Post detailed swap plan to Discord after scramble. Live plans go to the report channel, dry-run plans to the admin channel.
 
 Clan Tag Grouping:
 enableClanTagGrouping               - Keep players sharing a clan tag (e.g. [ABC]) together when they are on the same team during a scramble (default: false).

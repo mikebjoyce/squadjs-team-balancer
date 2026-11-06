@@ -845,6 +845,37 @@ async function runPluginLogicTests() {
   tb.options.tcSingleRoundScrambleThreshold = null;
   tb.options.maxWinStreak = 2;
 
+  // --- Phase 3.12: Dry-run plans go to the admin channel ---
+  console.log('\n[Phase 3.12: Dry-run plan routing]');
+
+  // A dry run answers the admin who typed it, so its plan belongs next to their command in the admin
+  // channel. Live plans stay in the report channel, which is the archive.
+  {
+    const adminSends = [];
+    const reportSends = [];
+    tb.discordChannel = { send: async (data) => { adminSends.push(data); } };
+    tb.discordReportChannel = { send: async (data) => { reportSends.push(data); } };
+    tb.options.postScrambleDetails = true;
+    tb.server.players = [
+      ...Array.from({ length: 9 }, (_, i) => ({ eosID: `route_t1_${i}`, steamID: `7656119810000000${i}`, name: `RouteT1_${i}`, teamID: 1, squadID: null, roles: ['Rifleman'] })),
+      { eosID: 'route_t2_0', steamID: '76561198100000099', name: 'RouteT2_0', teamID: 2, squadID: null, roles: ['Rifleman'] }
+    ];
+    const planTitle = (sends, text) => sends.some((d) => d.embeds?.[0]?.title?.includes(text));
+
+    await tb.executeScramble(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert(planTitle(adminSends, 'Dry Run'), 'dry run: the plan is posted to the admin channel.');
+    assert(!planTitle(reportSends, 'Dry Run'), 'dry run: the plan is not posted to the report channel.');
+
+    await tb.executeScramble(false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert(planTitle(reportSends, 'Execution Plan'), 'live: the plan is still posted to the report channel.');
+
+    tb.discordChannel = null;
+    tb.discordReportChannel = null;
+    await tb.resetStreak();
+  }
+
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);
   if (passCount !== testCount) {
