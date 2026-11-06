@@ -776,6 +776,13 @@ async function runPluginLogicTests() {
   await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
   assert(tb.winStreakTeam === 1 && tb.winStreakCount === 1, 'unresolved layer: streak is left unchanged.');
   assert(tb._scramblePending === false, 'unresolved layer: no scramble is armed.');
+  // resolveLayerInfo() stores the 'Unknown' placeholder for a layer object without name and mode.
+  // That is just as unclassifiable as null.
+  tb.gameModeCached = 'Unknown';
+  tb.layerNameCached = 'Unknown';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakTeam === 1 && tb.winStreakCount === 1 && tb._scramblePending === false,
+    "unresolved layer: an 'Unknown' layer leaves the streak unchanged too.");
   await tb.cancelPendingScramble(null, null, true);
   await tb.resetStreak();
   tb.gameModeCached = 'RAAS';

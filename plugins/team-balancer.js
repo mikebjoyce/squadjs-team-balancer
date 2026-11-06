@@ -56,8 +56,9 @@
  *   ignoredGameModes (take it out and Seed rounds are streak-evaluated instead), and the
  *   round's own layer must have resolved — the lastKnownGoodLayer fallback can be the
  *   previous round's layer, too weak to shuffle teams on.
- * - A round that ends before any layer has resolved since startup (no fallback either) is
- *   not evaluated at all: it could be a Seed round, so the streak is left unchanged.
+ * - A round that ends before any layer has resolved since startup (no fallback either), or
+ *   with a layer that has neither name nor gamemode ('Unknown'), is not evaluated at all: it
+ *   could be a Seed round, so the streak is left unchanged.
  * - useEloForBalance: pulls mu ratings from a running EloTracker instance
  *   at scramble time. Gracefully falls back to pure numerical balance if
  *   EloTracker is absent or the cache is empty.
@@ -1578,7 +1579,9 @@ export default class TeamBalancer extends BasePlugin {
       // ignored-mode checks both answer "no" on an empty layer, so a Seed round would be counted
       // as a competitive one. Leave the streak untouched: this may be a Seed round that must not
       // count, or a real one whose layer never arrived, and discarding a real streak is worse.
-      if (this.gameModeCached == null && this.layerNameCached == null) {
+      // 'Unknown' is the placeholder resolveLayerInfo() stores for a layer object without fields.
+      const unresolved = (value) => value == null || value === 'Unknown';
+      if (unresolved(this.gameModeCached) && unresolved(this.layerNameCached)) {
         Logger.verbose('TeamBalancer', 1, '[TeamBalancer] Skipping round evaluation: no layer resolved since startup, so this round cannot be classified. Streak left unchanged.');
         return;
       }
