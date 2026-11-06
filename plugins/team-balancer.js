@@ -482,6 +482,13 @@ export default class TeamBalancer extends BasePlugin {
       Logger.verbose('TeamBalancer', 1, `singleRoundScrambleThreshold (${this.options.singleRoundScrambleThreshold}) must be greater than minTicketsToCountAsDominantWin (${this.options.minTicketsToCountAsDominantWin}). Enforcing ${newThreshold}.`);
       this.options.singleRoundScrambleThreshold = newThreshold;
     }
+    // Same rule for Territory Control, on the values a TC round actually uses (null = standard).
+    const tcDominant = this.options.tcDominantThreshold ?? this.options.minTicketsToCountAsDominantWin;
+    const tcSingle = this.options.tcSingleRoundScrambleThreshold ?? this.options.singleRoundScrambleThreshold;
+    if (tcSingle <= tcDominant) {
+      Logger.verbose('TeamBalancer', 1, `Territory Control single-round threshold (${tcSingle}) must be greater than the TC dominant threshold (${tcDominant}). Enforcing ${tcDominant + 50}.`);
+      this.options.tcSingleRoundScrambleThreshold = tcDominant + 50;
+    }
   }
 
   constructor(server, options, connectors) {
@@ -1655,10 +1662,10 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
-      const isInvasion = this.gameModeCached?.toLowerCase().includes('invasion') ?? false;
+      const gameModeLower = this.gameModeCached?.toLowerCase() || '';
+      const isInvasion = gameModeLower.includes('invasion');
       // Territory Control is symmetric like RAAS/AAS and differs only in its numbers, and only once
       // an operator sets them. SquadJS spells the mode "Territory Control" or "TC" depending on the source.
-      const gameModeLower = this.gameModeCached?.toLowerCase() || '';
       const isTC = gameModeLower === 'tc' || gameModeLower.includes('territory control');
       const singleRoundThreshold =
         (isTC ? this.options.tcSingleRoundScrambleThreshold : null) ?? this.options.singleRoundScrambleThreshold;

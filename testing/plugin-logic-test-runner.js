@@ -846,6 +846,19 @@ async function runPluginLogicTests() {
   assert(tb._scramblePending === true, 'TC: tcSingleRoundScrambleThreshold does not apply to RAAS.');
   await tb.cancelPendingScramble(null, null, true);
   await tb.resetStreak();
+  // Only tcDominantThreshold set: TC's single-round threshold falls back to the standard 500, below
+  // TC dominance. Mount validation must lift it, or a TC win that is not even dominant scrambles.
+  tb.options.tcSingleRoundScrambleThreshold = null;
+  tb.options.tcDominantThreshold = 600;
+  tb.validateOptions();
+  assert(tb.options.tcSingleRoundScrambleThreshold === 650, `TC: validation lifts the TC single-round threshold above TC dominance (${tb.options.tcSingleRoundScrambleThreshold}).`);
+  tb.gameModeCached = 'Territory Control';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 550 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === false, 'TC: a 550-ticket win below TC dominance (600) does not trigger a single-round scramble.');
+  await tb.cancelPendingScramble(null, null, true);
+  await tb.resetStreak();
+  tb.options.tcDominantThreshold = null;
+  tb.gameModeCached = 'RAAS';
   tb.options.enableSingleRoundScramble = false;
   tb.options.tcSingleRoundScrambleThreshold = null;
   tb.options.maxWinStreak = 2;

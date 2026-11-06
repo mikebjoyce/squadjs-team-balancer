@@ -268,7 +268,7 @@ minTicketsToCountAsDominantWin      - Min ticket diff for a dominant win in Stan
 invasionAttackTeamThreshold         - Ticket diff for Invasion attackers to count as dominant (default: 300).
 invasionDefenceTeamThreshold        - Ticket diff for Invasion defenders to count as dominant (default: 500).
 tcDominantThreshold                 - Ticket diff for a dominant win on Territory Control (default: null = minTicketsToCountAsDominantWin). Also sets the TC stomp cutoff at 1.5x.
-tcSingleRoundScrambleThreshold      - Single-round scramble margin on Territory Control (default: null = singleRoundScrambleThreshold).
+tcSingleRoundScrambleThreshold      - Single-round scramble margin on Territory Control (default: null = singleRoundScrambleThreshold). Raised to the TC dominant threshold + 50 at startup if it would sit at or below it.
 
 Scramble Execution:
 scrambleAnnouncementDelay           - Seconds before scramble executes after announcement (default: 25).
