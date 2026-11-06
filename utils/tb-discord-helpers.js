@@ -175,6 +175,8 @@ export const DiscordHelpers = {
         { name: 'Single Round Scramble', value: tb.options?.enableSingleRoundScramble ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` : 'OFF', inline: true },
         { name: 'Seed Auto Scramble', value: tb.seedAutoScrambleStatus(), inline: true },
         { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
+        // "standard" rather than the resolved number, so the embed shows whether TC is tuned at all.
+        { name: 'TC Thresholds', value: `Dom: ${tb.options?.tcDominantThreshold ?? 'standard'} | Single: ${tb.options?.tcSingleRoundScrambleThreshold ?? 'standard'}`, inline: true },
         { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
         { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s (Seed: ${tb.options?.seedScrambleAnnouncementDelay}s)`, inline: true },
         { name: 'Max Scramble Time', value: `${tb.options?.maxScrambleCompletionTime}ms`, inline: true },

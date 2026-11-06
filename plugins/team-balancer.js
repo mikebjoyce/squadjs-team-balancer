@@ -105,8 +105,12 @@
  *   minTicketsToCountAsDominantWin     - Ticket threshold for Standard modes (default: 150).
  *   invasionAttackTeamThreshold        - Ticket threshold for Invasion attackers (default: 300).
  *   invasionDefenceTeamThreshold       - Ticket threshold for Invasion defenders (default: 650).
+ *   tcDominantThreshold                - Ticket threshold for Territory Control, symmetric
+ *                                        (default: null = use minTicketsToCountAsDominantWin).
  *   enableSingleRoundScramble          - Scramble on a single massive margin round.
  *   singleRoundScrambleThreshold       - Ticket margin for single-round trigger (default: 250).
+ *   tcSingleRoundScrambleThreshold     - Single-round margin on Territory Control
+ *                                        (default: null = use singleRoundScrambleThreshold).
  *
  * Scramble Execution:
  *   scrambleAnnouncementDelay          - Seconds before scramble executes (default: 12).
@@ -174,6 +178,8 @@
  *   "minTicketsToCountAsDominantWin": 150,
  *   "invasionAttackTeamThreshold": 300,
  *   "invasionDefenceTeamThreshold": 650,
+ *   "tcDominantThreshold": null,
+ *   "tcSingleRoundScrambleThreshold": null,
  *   "scrambleAnnouncementDelay": 12,
  *   "scramblePercentage": 0.5,
  *   "enableClanTagGrouping": false,
@@ -287,7 +293,17 @@ export default class TeamBalancer extends BasePlugin {
       invasionDefenceTeamThreshold: {
         default: 650,
         type: 'number'
-      },      
+      },
+      tcDominantThreshold: {
+        default: null,
+        type: 'number',
+        description: 'Ticket margin for a dominant win on Territory Control. null uses minTicketsToCountAsDominantWin. TC is symmetric, so this one number also sets the stomp cutoff (1.5x).'
+      },
+      tcSingleRoundScrambleThreshold: {
+        default: null,
+        type: 'number',
+        description: 'Single-round scramble margin on Territory Control. null uses singleRoundScrambleThreshold.'
+      },
       scrambleAnnouncementDelay: {
         default: 12,
         type: 'number'
@@ -1630,11 +1646,17 @@ export default class TeamBalancer extends BasePlugin {
       }
 
       const isInvasion = this.gameModeCached?.toLowerCase().includes('invasion') ?? false;
+      // Territory Control is symmetric like RAAS/AAS and differs only in its numbers, and only once
+      // an operator sets them. SquadJS spells the mode "Territory Control" or "TC" depending on the source.
+      const gameModeLower = this.gameModeCached?.toLowerCase() || '';
+      const isTC = gameModeLower === 'tc' || gameModeLower.includes('territory control');
+      const singleRoundThreshold =
+        (isTC ? this.options.tcSingleRoundScrambleThreshold : null) ?? this.options.singleRoundScrambleThreshold;
 
-      if (this.options.enableSingleRoundScramble && !isInvasion && margin >= this.options.singleRoundScrambleThreshold) {
+      if (this.options.enableSingleRoundScramble && !isInvasion && margin >= singleRoundThreshold) {
         roundReport.scrambled = true;
         roundReport.scrambleCondition = 'Single Round Margin';
-        Logger.verbose('TeamBalancer', 2, `[SingleRoundScramble] Triggered! Margin: ${margin} >= Threshold: ${this.options.singleRoundScrambleThreshold}`);
+        Logger.verbose('TeamBalancer', 2, `[SingleRoundScramble] Triggered! Margin: ${margin} >= Threshold: ${singleRoundThreshold}`);
         const message = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.singleRoundScramble, {
           margin,
           delay: this.options.scrambleAnnouncementDelay
@@ -1651,7 +1673,8 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
-      const dominantThreshold = this.options.minTicketsToCountAsDominantWin ?? 175;
+      const dominantThreshold =
+        (isTC ? this.options.tcDominantThreshold : null) ?? this.options.minTicketsToCountAsDominantWin ?? 175;
       const stompThreshold = Math.floor(dominantThreshold * 1.5);
       const closeGameMargin = Math.floor(dominantThreshold * 0.34);
       const moderateWinThreshold = Math.floor((dominantThreshold + closeGameMargin) / 2);
@@ -1711,11 +1734,11 @@ export default class TeamBalancer extends BasePlugin {
                 ? this.RconMessages.nonDominant.invasionAttackWin
                 : this.RconMessages.nonDominant.invasionDefendWin;
           } else {
-            const threshold = this.options.minTicketsToCountAsDominantWin ?? 175;
-
-            const veryCloseCutoff = Math.floor(threshold * 0.11);
-            const closeCutoff = Math.floor(threshold * 0.45);
-            const tacticalCutoff = Math.floor(threshold * 0.68);
+            // Off dominantThreshold, not the raw option: the ladder describes how far short of
+            // dominance the win fell, so it has to use the scale the dominance test just used.
+            const veryCloseCutoff = Math.floor(dominantThreshold * 0.11);
+            const closeCutoff = Math.floor(dominantThreshold * 0.45);
+            const tacticalCutoff = Math.floor(dominantThreshold * 0.68);
 
             if (margin < veryCloseCutoff) {
               template = this.RconMessages.nonDominant.narrowVictory;

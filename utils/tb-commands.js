@@ -445,6 +445,7 @@ const CommandHandlers = {
               `Single Round Scramble: ${this.options?.enableSingleRoundScramble ? `ON (> ${this.options?.singleRoundScrambleThreshold} tix)` : 'OFF'}`,
               `Seed Auto Scramble: ${this.seedAutoScrambleStatus()}`,
               `Invasion Thresholds: Atk: ${this.options?.invasionAttackTeamThreshold} | Def: ${this.options?.invasionDefenceTeamThreshold}`,
+              `TC Thresholds: Dom: ${this.options?.tcDominantThreshold ?? 'standard'} | Single: ${this.options?.tcSingleRoundScrambleThreshold ?? 'standard'}`,
               `Scramble %: ${(this.options?.scramblePercentage || 0.5) * 100}%`,
               `Scramble Delay: ${this.options?.scrambleAnnouncementDelay}s (Seed: ${this.options?.seedScrambleAnnouncementDelay}s)`,
               `Max Scramble Time: ${this.options?.maxScrambleCompletionTime}ms`,

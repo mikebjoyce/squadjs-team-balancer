@@ -163,6 +163,8 @@ Add to your `config.json`:
   "minTicketsToCountAsDominantWin": 150,
   "invasionAttackTeamThreshold": 300,
   "invasionDefenceTeamThreshold": 650,
+  "tcDominantThreshold": null,
+  "tcSingleRoundScrambleThreshold": null,
    "scrambleAnnouncementDelay": 12,
    "scramblePercentage": 0.5,
    "enableClanTagGrouping": false,
@@ -264,6 +266,8 @@ singleRoundScrambleThreshold        - Ticket margin for single-round trigger (de
 minTicketsToCountAsDominantWin      - Min ticket diff for a dominant win in Standard modes (default: 150).
 invasionAttackTeamThreshold         - Ticket diff for Invasion attackers to count as dominant (default: 300).
 invasionDefenceTeamThreshold        - Ticket diff for Invasion defenders to count as dominant (default: 650).
+tcDominantThreshold                 - Ticket diff for a dominant win on Territory Control (default: null = minTicketsToCountAsDominantWin). Also sets the TC stomp cutoff at 1.5x.
+tcSingleRoundScrambleThreshold      - Single-round scramble margin on Territory Control (default: null = singleRoundScrambleThreshold).
 
 Scramble Execution:
 scrambleAnnouncementDelay           - Seconds before scramble executes after announcement (default: 12).
@@ -310,6 +314,7 @@ enableDatabaseLogging               - If true, round reports are also written to
 
 - **RAAS / AAS**: Uses `minTicketsToCountAsDominantWin` threshold.
 - **Invasion**: Uses separate thresholds for attackers (`invasionAttackTeamThreshold`) and defenders (`invasionDefenceTeamThreshold`).
+- **Territory Control**: Symmetric, so both teams are judged on one number: `tcDominantThreshold` (stomp cutoff derived at 1.5x) and `tcSingleRoundScrambleThreshold` for the single-round scramble. Both default to `null`, which keeps the RAAS/AAS values; set them once you know what a lopsided TC round looks like on your server.
 - **Seed**: Excluded from win streak tracking. Optional auto-scramble at round end via `enableSeedAutoScramble`, independent of `enableWinStreakTracking` — that option is about streaks and never governed seeding — and it fires even when the round ends without a winner (an admin switching the layer mid-seed). `!teambalancer off` does stop it: that toggle is the admin kill switch, and it is the runtime way to disarm the trigger without a restart. Two conditions still apply: "Seed" must be in `ignoredGameModes` — take it out and Seed rounds are evaluated like any other mode instead — and the round's own layer must have resolved, since the fallback to the last known layer is too weak a basis for shuffling teams. This trigger runs on its own countdown, `seedScrambleAnnouncementDelay` (default 5s), not the global `scrambleAnnouncementDelay` — the gap between a Seed round ending and the map change is much shorter.
 - **Unknown layer**: A round that ends before any layer has resolved since startup — so there is no previous layer to fall back on either — is not evaluated. It could be a Seed round, so the win streak is left unchanged rather than counted or reset.
 - Other modes and map names can be excluded via `ignoredGameModes`.
@@ -324,6 +329,7 @@ The plugin operates two independent win tracking systems that can each trigger s
 Tracks wins where the victor exceeded configured ticket margin thresholds:
 - **Standard modes (RAAS/AAS)**: `minTicketsToCountAsDominantWin` (default: 150)
 - **Invasion mode**: Separate thresholds for attackers (`invasionAttackTeamThreshold`: 300) and defenders (`invasionDefenceTeamThreshold`: 650)
+- **Territory Control**: `tcDominantThreshold` (default `null` → the Standard value)
 
 A scramble triggers when one team achieves `maxWinStreak` dominant victories in a row (default: 2).
 

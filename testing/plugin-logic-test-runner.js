@@ -792,6 +792,43 @@ async function runPluginLogicTests() {
     assert(result?.movedSuccessfully === 1 && result?.failedToMove === 1, 'verify: falls back to the session counters after the timeout.');
   }
 
+  // --- Phase 3.11: Territory Control thresholds ---
+  console.log('\n[Phase 3.11: Territory Control thresholds]');
+
+  // SquadJS hands TC over as "Territory Control" or "TC". Its own thresholds replace the standard
+  // ones only when set; null keeps the RAAS/AAS scale.
+  tb.options.maxWinStreak = 3; // a dominant win must not arm a streak scramble in this phase
+  tb.options.tcDominantThreshold = 500; // standard (minTicketsToCountAsDominantWin) is 300 here
+  await tb.resetStreak();
+  tb.gameModeCached = 'Territory Control';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 0, 'TC: a 400-ticket win is not dominant under tcDominantThreshold 500.');
+  await tb.resetStreak();
+  tb.gameModeCached = 'TC';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 600 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 1, 'TC: a 600-ticket win is dominant under tcDominantThreshold 500 ("TC" spelling).');
+  await tb.resetStreak();
+  tb.options.tcDominantThreshold = null;
+  tb.gameModeCached = 'Territory Control';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 1, 'TC: tcDominantThreshold null falls back to the standard threshold.');
+  await tb.resetStreak();
+  tb.options.enableSingleRoundScramble = true;
+  tb.options.singleRoundScrambleThreshold = 500;
+  tb.options.tcSingleRoundScrambleThreshold = 800;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 600 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === false, 'TC: a 600-ticket margin does not trigger the single-round scramble under tcSingleRoundScrambleThreshold 800.');
+  await tb.cancelPendingScramble(null, null, true);
+  await tb.resetStreak();
+  tb.gameModeCached = 'RAAS';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 600 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'TC: tcSingleRoundScrambleThreshold does not apply to RAAS.');
+  await tb.cancelPendingScramble(null, null, true);
+  await tb.resetStreak();
+  tb.options.enableSingleRoundScramble = false;
+  tb.options.tcSingleRoundScrambleThreshold = null;
+  tb.options.maxWinStreak = 2;
+
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);
   if (passCount !== testCount) {
