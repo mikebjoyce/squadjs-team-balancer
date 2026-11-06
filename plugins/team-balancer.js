@@ -104,18 +104,18 @@
  *   maxConsecutiveWinsWithoutThreshold - Any consecutive wins to trigger scramble; 0 = disabled.
  *   minTicketsToCountAsDominantWin     - Ticket threshold for Standard modes (default: 150).
  *   invasionAttackTeamThreshold        - Ticket threshold for Invasion attackers (default: 300).
- *   invasionDefenceTeamThreshold       - Ticket threshold for Invasion defenders (default: 650).
+ *   invasionDefenceTeamThreshold       - Ticket threshold for Invasion defenders (default: 500).
  *   tcDominantThreshold                - Ticket threshold for Territory Control, symmetric
  *                                        (default: null = use minTicketsToCountAsDominantWin).
  *   enableSingleRoundScramble          - Scramble on a single massive margin round.
- *   singleRoundScrambleThreshold       - Ticket margin for single-round trigger (default: 250).
+ *   singleRoundScrambleThreshold       - Ticket margin for single-round trigger (default: 200).
  *   tcSingleRoundScrambleThreshold     - Single-round margin on Territory Control
  *                                        (default: null = use singleRoundScrambleThreshold).
  *
  * Scramble Execution:
- *   scrambleAnnouncementDelay          - Seconds before scramble executes (default: 12).
+ *   scrambleAnnouncementDelay          - Seconds before scramble executes (default: 25).
  *   scramblePercentage                 - Fraction of players to move (default: 0.5).
- *   changeTeamRetryInterval            - RCON retry interval in ms (default: 50).
+ *   changeTeamRetryInterval            - RCON retry interval in ms (default: 100).
  *   maxScrambleCompletionTime          - Max execution time in ms (default: 15000).
  *   warnOnSwap                         - RCON warn players when swapped.
  *   requireScrambleConfirmation        - Require !scramble confirm for manual scrambles.
@@ -149,7 +149,7 @@
  * Dev:
  *   devMode                            - Allow commands from any player regardless of admin status.
  *   reportLogPath                      - Path to the JSONL log file for round reports.
- *   enableDatabaseLogging              - If true, round reports are also written to the database in addition to the JSONL log (default: false).
+ *   enableDatabaseLogging              - If true, round reports are also written to the database in addition to the JSONL log (default: true).
  *   scrambleReportPath                 - Directory for one JSON report per scramble, dry runs included
  *                                        (default: "TeamBalancerScrambleReports/"; empty disables).
  *
@@ -175,15 +175,15 @@
  *   "enableSeedAutoScramble": true,
  *   "seedScrambleAnnouncementDelay": 5,
  *   "maxWinStreak": 2,
- *   "maxConsecutiveWinsWithoutThreshold": 0,
- *   "enableSingleRoundScramble": false,
- *   "singleRoundScrambleThreshold": 250,
+ *   "maxConsecutiveWinsWithoutThreshold": 3,
+ *   "enableSingleRoundScramble": true,
+ *   "singleRoundScrambleThreshold": 200,
  *   "minTicketsToCountAsDominantWin": 150,
  *   "invasionAttackTeamThreshold": 300,
- *   "invasionDefenceTeamThreshold": 650,
+ *   "invasionDefenceTeamThreshold": 500,
  *   "tcDominantThreshold": null,
  *   "tcSingleRoundScrambleThreshold": null,
- *   "scrambleAnnouncementDelay": 12,
+ *   "scrambleAnnouncementDelay": 25,
  *   "scramblePercentage": 0.5,
  *   "enableClanTagGrouping": false,
  *   "minClanGroupSize": 2,
@@ -192,7 +192,7 @@
  *   "clanTagCaseSensitive": true,
  *   "clanGroupingPullEntireSquads": false,
  *   "clanTagIgnoreList": [],
- *   "changeTeamRetryInterval": 50,
+ *   "changeTeamRetryInterval": 100,
  *   "maxScrambleCompletionTime": 15000,
  *   "showWinStreakMessages": true,
  *   "warnOnSwap": true,
@@ -205,10 +205,10 @@
  *   "discordAdminRoleIDs": [],
  *   "mirrorRconBroadcasts": true,
  *   "postScrambleDetails": true,
- *   "useEloForBalance": false,
+ *   "useEloForBalance": true,
  *   "devMode": false,
  *   "reportLogPath": "team-balancer-reports.jsonl",
- *   "enableDatabaseLogging": false,
+ *   "enableDatabaseLogging": true,
  *   "scrambleReportPath": "TeamBalancerScrambleReports/"
  * }
  *
@@ -274,16 +274,16 @@ export default class TeamBalancer extends BasePlugin {
         type: 'number'
       },      
       maxConsecutiveWinsWithoutThreshold: {
-        default: 0,
+        default: 3,
         type: 'number',
         description: 'Trigger scramble after X consecutive wins, ignoring ticket thresholds. Set to 0 to disable.'
       },
       enableSingleRoundScramble: {
-        default: false,
+        default: true,
         type: 'boolean'
       },
       singleRoundScrambleThreshold: {
-        default: 250,
+        default: 200,
         type: 'number'
       },
       minTicketsToCountAsDominantWin: {
@@ -295,7 +295,7 @@ export default class TeamBalancer extends BasePlugin {
         type: 'number'
       },      
       invasionDefenceTeamThreshold: {
-        default: 650,
+        default: 500,
         type: 'number'
       },
       tcDominantThreshold: {
@@ -309,7 +309,7 @@ export default class TeamBalancer extends BasePlugin {
         description: 'Single-round scramble margin on Territory Control. null uses singleRoundScrambleThreshold.'
       },
       scrambleAnnouncementDelay: {
-        default: 12,
+        default: 25,
         type: 'number'
       },      
       scramblePercentage: {
@@ -352,7 +352,7 @@ export default class TeamBalancer extends BasePlugin {
          description: 'Clan tags to exclude from clan grouping entirely. Tags are matched after the same normalization used by clanTagCaseSensitive (raw match when true, normalized when false). Example: ["NL", "ADMIN"] to prevent those clans from being kept together during scrambles.'
        },
         changeTeamRetryInterval: {
-         default: 50,
+         default: 100,
          type: 'number'
        },
       maxScrambleCompletionTime: {
@@ -414,7 +414,7 @@ export default class TeamBalancer extends BasePlugin {
         description: 'Time in seconds to wait for scramble confirmation.'
       },
       useEloForBalance: {
-        default: false,
+        default: true,
         type: 'boolean',
         description: 'Use EloTracker ratings to influence team balance during scrambles. Requires EloTracker plugin to be active.'
       },
@@ -429,7 +429,7 @@ export default class TeamBalancer extends BasePlugin {
        },
        enableDatabaseLogging: {
          required: false,
-         default: false,
+         default: true,
          type: 'boolean',
          description: 'If true, round reports are also written to the database in addition to the JSONL log.'
        },
@@ -1699,7 +1699,7 @@ export default class TeamBalancer extends BasePlugin {
       }`);
 
       const invasionAttackThreshold = this.options.invasionAttackTeamThreshold ?? 300;
-      const invasionDefenceThreshold = this.options.invasionDefenceTeamThreshold ?? 650;
+      const invasionDefenceThreshold = this.options.invasionDefenceTeamThreshold ?? 500;
 
       if (isInvasion) {
         if (

@@ -130,6 +130,7 @@ const defaultTestOptions = {
   discordReportChannelID: null,
   discordAdminRoleIDs: [],
   scrambleReportPath: '', // no report files from the phases that are not about them
+  enableDatabaseLogging: false, // the mock model has no create(); Phase 3.7 stubs insertRoundReport itself
 };
 
 // Helper for asserting test conditions

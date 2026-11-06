@@ -104,7 +104,7 @@ export default class SwapExecutor {
         Logger.verbose('TeamBalancer', 1, `[SwapExecutor] Error in retry loop: ${err?.message || err}`);
         this.completeSession();
       });
-    }, this.options.changeTeamRetryInterval || 50);
+    }, this.options.changeTeamRetryInterval || 100);
 
     this.overallTimeout = setTimeout(() => {
       this.completeSession();

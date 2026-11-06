@@ -157,15 +157,15 @@ Add to your `config.json`:
   "enableSeedAutoScramble": true,
   "seedScrambleAnnouncementDelay": 5,
   "maxWinStreak": 2,
-  "maxConsecutiveWinsWithoutThreshold": 0,
-  "enableSingleRoundScramble": false,
-  "singleRoundScrambleThreshold": 250,
+  "maxConsecutiveWinsWithoutThreshold": 3,
+  "enableSingleRoundScramble": true,
+  "singleRoundScrambleThreshold": 200,
   "minTicketsToCountAsDominantWin": 150,
   "invasionAttackTeamThreshold": 300,
-  "invasionDefenceTeamThreshold": 650,
+  "invasionDefenceTeamThreshold": 500,
   "tcDominantThreshold": null,
   "tcSingleRoundScrambleThreshold": null,
-   "scrambleAnnouncementDelay": 12,
+   "scrambleAnnouncementDelay": 25,
    "scramblePercentage": 0.5,
    "enableClanTagGrouping": false,
    "minClanGroupSize": 2,
@@ -174,7 +174,7 @@ Add to your `config.json`:
    "clanTagCaseSensitive": true,
    "clanGroupingPullEntireSquads": false,
    "clanTagIgnoreList": [],
-   "changeTeamRetryInterval": 50,
+   "changeTeamRetryInterval": 100,
   "maxScrambleCompletionTime": 15000,
   "showWinStreakMessages": true,
   "warnOnSwap": true,
@@ -187,10 +187,10 @@ Add to your `config.json`:
   "discordAdminRoleIDs": [],
   "mirrorRconBroadcasts": true,
   "postScrambleDetails": true,
-  "useEloForBalance": false,
+  "useEloForBalance": true,
   "devMode": false,
    "reportLogPath": "team-balancer-reports.jsonl",
-   "enableDatabaseLogging": false,
+   "enableDatabaseLogging": true,
    "scrambleReportPath": "TeamBalancerScrambleReports/"
 }
 ```
@@ -261,19 +261,19 @@ seedScrambleAnnouncementDelay       - Countdown for the seed auto-scramble only,
 
 Win Streak:
 maxWinStreak                        - Dominant wins in a row to trigger scramble (default: 2).
-maxConsecutiveWinsWithoutThreshold  - Any consecutive wins to trigger scramble; 0 = disabled (default: 0).
-enableSingleRoundScramble           - Scramble after a single round with extreme ticket margin.
-singleRoundScrambleThreshold        - Ticket margin for single-round trigger (default: 250).
+maxConsecutiveWinsWithoutThreshold  - Any consecutive wins to trigger scramble; 0 = disabled (default: 3).
+enableSingleRoundScramble           - Scramble after a single round with extreme ticket margin (default: true).
+singleRoundScrambleThreshold        - Ticket margin for single-round trigger (default: 200).
 minTicketsToCountAsDominantWin      - Min ticket diff for a dominant win in Standard modes (default: 150).
 invasionAttackTeamThreshold         - Ticket diff for Invasion attackers to count as dominant (default: 300).
-invasionDefenceTeamThreshold        - Ticket diff for Invasion defenders to count as dominant (default: 650).
+invasionDefenceTeamThreshold        - Ticket diff for Invasion defenders to count as dominant (default: 500).
 tcDominantThreshold                 - Ticket diff for a dominant win on Territory Control (default: null = minTicketsToCountAsDominantWin). Also sets the TC stomp cutoff at 1.5x.
 tcSingleRoundScrambleThreshold      - Single-round scramble margin on Territory Control (default: null = singleRoundScrambleThreshold).
 
 Scramble Execution:
-scrambleAnnouncementDelay           - Seconds before scramble executes after announcement (default: 12).
+scrambleAnnouncementDelay           - Seconds before scramble executes after announcement (default: 25).
 scramblePercentage                  - Fraction of players to move (default: 0.5).
-changeTeamRetryInterval             - RCON retry interval in ms (default: 50).
+changeTeamRetryInterval             - RCON retry interval in ms (default: 100).
 maxScrambleCompletionTime           - Max time in ms for all swaps to complete (default: 15000).
 warnOnSwap                          - RCON warn players when swapped.
 requireScrambleConfirmation         - Require !scramble confirm before executing manual scrambles.
@@ -301,12 +301,12 @@ clanGroupingPullEntireSquads        - When true, contributing squads merge whole
 clanTagIgnoreList                   - Clan tags to exclude from clan grouping entirely (default: []).
 
 Advanced:
-useEloForBalance                    - Weight scrambles by EloTracker mu ratings. Requires EloTracker plugin. Falls back to numerical balance if EloTracker is absent.
+useEloForBalance                    - Weight scrambles by EloTracker mu ratings (default: true). Requires EloTracker plugin. Falls back to numerical balance if EloTracker is absent.
 
 Dev:
 devMode                             - Allow commands from any player regardless of admin status.
 reportLogPath                       - Path to the JSONL log file for round reports (default: 'team-balancer-reports.jsonl').
-enableDatabaseLogging               - If true, round reports are also written to the database in addition to the JSONL log (default: false).
+enableDatabaseLogging               - If true, round reports are also written to the database in addition to the JSONL log (default: true).
 scrambleReportPath                  - Directory for one JSON report per scramble, dry runs included: the plan, the verified execution results of a live run, and the roster before the scramble (default: 'TeamBalancerScrambleReports/', relative to the SquadJS working directory). Empty disables.
 ```
 
@@ -330,7 +330,7 @@ The plugin operates two independent win tracking systems that can each trigger s
 ### Dominant Win Streaks (Primary)
 Tracks wins where the victor exceeded configured ticket margin thresholds:
 - **Standard modes (RAAS/AAS)**: `minTicketsToCountAsDominantWin` (default: 150)
-- **Invasion mode**: Separate thresholds for attackers (`invasionAttackTeamThreshold`: 300) and defenders (`invasionDefenceTeamThreshold`: 650)
+- **Invasion mode**: Separate thresholds for attackers (`invasionAttackTeamThreshold`: 300) and defenders (`invasionDefenceTeamThreshold`: 500)
 - **Territory Control**: `tcDominantThreshold` (default `null` → the Standard value)
 
 A scramble triggers when one team achieves `maxWinStreak` dominant victories in a row (default: 2).
@@ -406,7 +406,7 @@ TimeBeforeVote=45
 > [!IMPORTANT]
 > Ensure your `scrambleAnnouncementDelay` gives the plugin enough time to calculate and execute all swaps before the Map Voting phase concludes. If the plugin is still executing when Faction Voting begins, the remaining players will not be swapped successfully.
 
-**Seed rounds run on a shorter clock.** The window between a Seed round ending and the next map loading can be far shorter than the timings above, which is why the seed auto-scramble has its own `seedScrambleAnnouncementDelay` (default 5s, minimum 3s) instead of the global 12s/30s value. This matters because a countdown that has not fired by the time `NEW_GAME` arrives is discarded outright — teams are freshly assigned at that point, so firing into the new round would scramble the wrong one. Too long a seed delay therefore does not merely delay the scramble, it cancels it. If your seed rounds still end without a scramble, lower this value further.
+**Seed rounds run on a shorter clock.** The window between a Seed round ending and the next map loading can be far shorter than the timings above, which is why the seed auto-scramble has its own `seedScrambleAnnouncementDelay` (default 5s, minimum 3s) instead of the global 25s/30s value. This matters because a countdown that has not fired by the time `NEW_GAME` arrives is discarded outright — teams are freshly assigned at that point, so firing into the new round would scramble the wrong one. Too long a seed delay therefore does not merely delay the scramble, it cancels it. If your seed rounds still end without a scramble, lower this value further.
 
 ---
 
