@@ -736,6 +736,25 @@ async function runPluginLogicTests() {
   tb.options.enableWinStreakTracking = true;
   tb.options.enableSeedAutoScramble = true;
 
+  // --- Phase 3.8: NEW_GAME team flip survives a failed DB write ---
+  console.log('\n[Phase 3.8: NEW_GAME flip without DB]');
+
+  // Team IDs swap sides every round. If the flipped state cannot be persisted, the in-memory
+  // streak must still follow the team, or it points at the wrong side for the whole round.
+  tb.winStreakTeam = 1;
+  tb.winStreakCount = 1;
+  tb.consecutiveWinsTeam = 1;
+  tb.consecutiveWinsCount = 1;
+  const realSaveState = tb.db.saveState.bind(tb.db);
+  tb.db.saveState = async () => null; // what tb-database returns when the write fails
+  await tb.onNewGame({ layer: { gamemode: 'RAAS', name: 'Yehorivka_RAAS_v1' } });
+  clearTimeout(tb._abbreviationPollStartTimeout);
+  assert(tb.winStreakTeam === 2, 'newgame: win streak team is flipped in memory when saveState fails.');
+  assert(tb.consecutiveWinsTeam === 2, 'newgame: consecutive-wins team is flipped in memory when saveState fails.');
+  assert(tb.winStreakCount === 1 && tb.consecutiveWinsCount === 1, 'newgame: streak counts are kept when saveState fails.');
+  tb.db.saveState = realSaveState;
+  await tb.resetStreak();
+
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);
   if (passCount !== testCount) {

@@ -1339,6 +1339,11 @@ export default class TeamBalancer extends BasePlugin {
           this.consecutiveWinsTeam = dbRes.consecutiveWinsTeam;
           this.consecutiveWinsCount = dbRes.consecutiveWinsCount;
           this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
+        } else {
+          // DB write failed: apply the flip in memory anyway. Team IDs swap every round, so
+          // skipping it would leave both streaks pointing at the wrong team for this round.
+          this.winStreakTeam = flippedTeam;
+          this.consecutiveWinsTeam = flippedConTeam;
         }
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[DB] onNewGame saveState failed: ${err.message}`);
