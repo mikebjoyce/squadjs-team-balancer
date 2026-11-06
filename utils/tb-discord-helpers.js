@@ -733,10 +733,18 @@ export const DiscordHelpers = {
         // Compatibility: Discord.js v12 knows only the singular `embed` key, so send one embed
         // per message. Content and files ride on the first; the rest follow in order.
         if (err.message === 'Cannot send an empty message' && data.embeds && data.embeds.length > 0) {
+          // Each embed is its own request and gets its own rate-limit retry; one that fails does
+          // not take the ones after it down too.
           const { embeds, ...rest } = data;
+          let firstError = null;
           for (let i = 0; i < embeds.length; i++) {
-            await executeSend(i === 0 ? { ...rest, embed: embeds[i] } : { embed: embeds[i] }, isRetry);
+            try {
+              await executeSend(i === 0 ? { ...rest, embed: embeds[i] } : { embed: embeds[i] });
+            } catch (embedErr) {
+              if (!firstError) firstError = embedErr;
+            }
           }
+          if (firstError) throw firstError;
           return true;
         }
 
