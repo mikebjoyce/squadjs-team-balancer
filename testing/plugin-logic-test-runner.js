@@ -917,6 +917,8 @@ async function runPluginLogicTests() {
 
   // --- Phase 3.14: Per-scramble JSON report ---
   console.log('\n[Phase 3.14: Scramble report files]');
+  // The files hold every player's name and SteamID, so an operator has to opt in.
+  assert(TeamBalancer.optionsSpecification.scrambleReportPath.default === '', 'report: scramble reports are off unless scrambleReportPath is set.');
   {
     const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-scramble-reports-'));
     tb.options.scrambleReportPath = reportDir;

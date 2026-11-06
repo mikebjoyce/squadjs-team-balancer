@@ -191,7 +191,7 @@ Add to your `config.json`:
   "devMode": false,
    "reportLogPath": "team-balancer-reports.jsonl",
    "enableDatabaseLogging": true,
-   "scrambleReportPath": "TeamBalancerScrambleReports/"
+   "scrambleReportPath": ""
 }
 ```
 
@@ -307,7 +307,7 @@ Dev:
 devMode                             - Allow commands from any player regardless of admin status.
 reportLogPath                       - Path to the JSONL log file for round reports (default: 'team-balancer-reports.jsonl').
 enableDatabaseLogging               - If true, round reports are also written to the database in addition to the JSONL log (default: true).
-scrambleReportPath                  - Directory for one JSON report per scramble, dry runs included: the plan, the verified execution results of a live run, and the roster before the scramble (default: 'TeamBalancerScrambleReports/', relative to the SquadJS working directory). Empty disables.
+scrambleReportPath                  - Directory for one JSON report per scramble, dry runs included: the plan, the verified execution results of a live run, and the roster before the scramble (default: '' = off). Set e.g. 'TeamBalancerScrambleReports/' (relative to the SquadJS working directory) to opt in. The files hold player names and SteamIDs and are never rotated.
 ```
 
 ---

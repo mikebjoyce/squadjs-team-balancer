@@ -151,7 +151,7 @@
  *   reportLogPath                      - Path to the JSONL log file for round reports.
  *   enableDatabaseLogging              - If true, round reports are also written to the database in addition to the JSONL log (default: true).
  *   scrambleReportPath                 - Directory for one JSON report per scramble, dry runs included
- *                                        (default: "TeamBalancerScrambleReports/"; empty disables).
+ *                                        (default: "" = off). Files hold player names and SteamIDs.
  *
  * IMPORTANT: The "database" option specifies which Sequelize connector to use for persistence.
  * Set it to the name of your configured connector (default: "sqlite"). Examples:
@@ -209,7 +209,7 @@
  *   "devMode": false,
  *   "reportLogPath": "team-balancer-reports.jsonl",
  *   "enableDatabaseLogging": true,
- *   "scrambleReportPath": "TeamBalancerScrambleReports/"
+ *   "scrambleReportPath": ""
  * }
  *
  * Author:
@@ -435,9 +435,9 @@ export default class TeamBalancer extends BasePlugin {
        },
        scrambleReportPath: {
          required: false,
-         default: 'TeamBalancerScrambleReports/',
+         default: '',
          type: 'string',
-         description: 'Directory for one JSON report per scramble (plan, execution results, roster before the scramble). Dry runs included. Empty disables. Relative to the SquadJS working directory.'
+         description: 'Directory for one JSON report per scramble (plan, execution results, roster before the scramble), dry runs included. Empty (the default) disables it. Opt in only knowingly: the files hold player names and SteamIDs and are never rotated. Relative to the SquadJS working directory.'
        }
      };
    }
@@ -2205,27 +2205,29 @@ export default class TeamBalancer extends BasePlugin {
         this.server.players
       );
 
-      // Roster before the scramble, for the JSON scramble report.
-      const playerByEos = new Map(this.server.players.map((p) => [p.eosID, p]));
-      const playerInfo = (eosID) => ({
-        eosID,
-        name: playerByEos.get(eosID)?.name ?? 'Unknown',
-        steamID: playerByEos.get(eosID)?.steamID ?? null
-      });
-      const squadsOf = (teamID) => transformedSquads
-        .filter((s) => s.teamID === teamID)
-        .map((s) => ({ squadID: s.id, locked: s.locked, players: s.players.map(playerInfo) }));
-      const unassignedOf = (teamID) => transformedPlayers
-        .filter((p) => p.teamID === teamID && !p.squadID)
-        .map((p) => playerInfo(p.eosID));
-      preScrambleState = {
-        winStreakTeam: this.winStreakTeam,
-        winStreakCount: this.winStreakCount,
-        t1Squads: squadsOf('1'),
-        t2Squads: squadsOf('2'),
-        t1Unassigned: unassignedOf('1'),
-        t2Unassigned: unassignedOf('2')
-      };
+      // Roster before the scramble, for the JSON scramble report (only built when reports are on).
+      if (this.options.scrambleReportPath) {
+        const playerByEos = new Map(this.server.players.map((p) => [p.eosID, p]));
+        const playerInfo = (eosID) => ({
+          eosID,
+          name: playerByEos.get(eosID)?.name ?? 'Unknown',
+          steamID: playerByEos.get(eosID)?.steamID ?? null
+        });
+        const squadsOf = (teamID) => transformedSquads
+          .filter((s) => s.teamID === teamID)
+          .map((s) => ({ squadID: s.id, locked: s.locked, players: s.players.map(playerInfo) }));
+        const unassignedOf = (teamID) => transformedPlayers
+          .filter((p) => p.teamID === teamID && !p.squadID)
+          .map((p) => playerInfo(p.eosID));
+        preScrambleState = {
+          winStreakTeam: this.winStreakTeam,
+          winStreakCount: this.winStreakCount,
+          t1Squads: squadsOf('1'),
+          t2Squads: squadsOf('2'),
+          t1Unassigned: unassignedOf('1'),
+          t2Unassigned: unassignedOf('2')
+        };
+      }
 
       let eloMap = null;
       let minPlayersToMove = 0;
