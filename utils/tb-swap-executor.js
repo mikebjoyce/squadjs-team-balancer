@@ -71,6 +71,10 @@ export default class SwapExecutor {
       return;
     }
 
+    // The previous session is still verifying: a move queued now would join its move list and be
+    // counted in both reports. Wait it out; verifyMoves() is bounded by maxScrambleCompletionTime.
+    while (this._completing) await new Promise((resolve) => setTimeout(resolve, 50));
+
     this.pendingPlayerMoves.set(eosID, {
       targetTeamID,
       attempts: 0,

@@ -939,6 +939,31 @@ async function runPluginLogicTests() {
     assert(executor._completing === false, 'executor: a cleanup during verification does not leave the executor stuck.');
   }
 
+  // A move queued while the previous session is still being verified must not join that session's
+  // move list: the new session's report would count the old moves too.
+  {
+    let refreshes = 0;
+    const server = {
+      players: [
+        { eosID: 'oldA', steamID: 'oldA', name: 'OldA', teamID: 1 },
+        { eosID: 'newB', steamID: 'newB', name: 'NewB', teamID: 1 }
+      ],
+      rcon: {
+        switchTeam: async (id, teamID) => { server.players.find((p) => p.steamID === id).teamID = Number(teamID); },
+        warn: async () => {}
+      },
+      updatePlayerList: () => new Promise((resolve) => setTimeout(resolve, refreshes++ === 0 ? 300 : 0))
+    };
+    const executor = new SwapExecutor(server, { changeTeamRetryInterval: 20, maxScrambleCompletionTime: 2000 });
+    await executor.queueMove('oldA', 2);
+    for (let i = 0; i < 400 && !executor._completing; i++) await new Promise((r) => setTimeout(r, 5));
+    await executor.queueMove('newB', 2);
+    await executor.waitForCompletion(3000, 10);
+    const report = executor.getLastSessionReport();
+    assert(report?.totalMoves === 1 && report?.movedSuccessfully === 1,
+      `executor: a session started during the previous one's verification reports only its own moves (${report?.totalMoves} total).`);
+  }
+
   // --- Phase 3.14: Per-scramble JSON report ---
   console.log('\n[Phase 3.14: Scramble report files]');
   // The files hold every player's name and SteamID, so an operator has to opt in.
