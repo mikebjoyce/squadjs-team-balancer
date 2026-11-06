@@ -29,7 +29,8 @@
  *     moving as a unit is the norm and goes unlabelled. Those players are
  *     omitted from the regular squad blocks; virtual squads nobody moved out
  *     of are omitted entirely.
- *     buildScrambleCompletedEmbed(...)            — Post-execution summary embed.
+ *     buildScrambleCompletedEmbed(...)            — Post-execution summary embed, naming
+ *                                                   the players that failed to move.
  *     buildScrambleFailedEmbed(reason, time, tb)  — Failure notification embed.
  *     buildFatalErrorEmbed(err, context, tb)      — Critical error embed with stack.
  *     buildWinStreakEmbed(tb, message)            — Win streak broadcast embed.
@@ -619,7 +620,7 @@ export const DiscordHelpers = {
     return embed;
   },
 
-  buildScrambleCompletedEmbed(totalMoves, movedSuccessfully, failedToMove, disconnected, duration) {
+  buildScrambleCompletedEmbed(totalMoves, movedSuccessfully, failedToMove, disconnected, duration, failedNames = []) {
     const successRate = totalMoves > 0 ? Math.round((movedSuccessfully / totalMoves) * 100) : 100;
 
     const embed = {
@@ -638,6 +639,13 @@ export const DiscordHelpers = {
 
     if (failedToMove > 0) {
       embed.description = '⚠️ Some players could not be moved. Check logs for details.';
+    }
+
+    // 20 names of at most 40 characters keep the field well inside Discord's 1024-character limit.
+    if (failedNames.length > 0) {
+      const list = failedNames.slice(0, 20).map((n) => String(n).slice(0, 40)).join('\n');
+      const more = failedNames.length > 20 ? `\n…and ${failedNames.length - 20} more` : '';
+      embed.fields.push({ name: `Failed Players (${failedNames.length})`, value: `\`\`\`text\n${list}${more}\n\`\`\``, inline: false });
     }
 
     return embed;

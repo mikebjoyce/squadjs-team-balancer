@@ -387,6 +387,19 @@ check('pushChunkedFields returns what it dropped and appends no notice of its ow
   for (const f of embed.fields) assert.ok(f.value.length <= 1024, `field "${f.name}" is ${f.value.length} chars`);
 });
 
+// The completion summary names the players a scramble could not move, so an admin can fix them by
+// hand. Capped, so a mass failure cannot push the field past Discord's 1024-character limit.
+check('scramble completed embed lists the players that failed to move', () => {
+  const names = Array.from({ length: 25 }, (_, i) => `Stuck_${i}_${'x'.repeat(60)}`);
+  const embed = DiscordHelpers.buildScrambleCompletedEmbed(30, 5, 25, 0, 1200, names);
+  const field = embed.fields.find((f) => f.name.includes('Failed Players'));
+  assert.ok(field, 'no failed-players field');
+  assert.ok(field.name.includes('25'), field.name);
+  assert.ok(field.value.includes('Stuck_0_'), 'first name missing');
+  assert.ok(field.value.includes('5 more'), 'overflow note missing');
+  assert.ok(field.value.length <= 1024, `${field.value.length} chars`);
+});
+
 // discord.js v12 (stock SquadJS 4.1.0) has no `embeds` key: an embeds-only payload reads as empty
 // and is rejected. The fallback must still deliver every embed of a multi-embed payload.
 {

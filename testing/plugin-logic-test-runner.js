@@ -792,6 +792,22 @@ async function runPluginLogicTests() {
     assert(result?.movedSuccessfully === 1 && result?.failedToMove === 1, 'verify: falls back to the session counters after the timeout.');
   }
 
+  // Verification names the players still on the wrong team; disconnected ones are not failures.
+  {
+    const server = {
+      players: [
+        { eosID: 'moved', name: 'MovedPlayer', teamID: 2 },
+        { eosID: 'stuck', name: 'StuckPlayer', teamID: 1 }
+      ],
+      updatePlayerList: async () => {}
+    };
+    const executor = new SwapExecutor(server, { maxScrambleCompletionTime: 1000 });
+    executor.activeSession = { startTime: Date.now(), totalMoves: 3, movesSent: 3, failedMoves: 0 };
+    for (const eosID of ['moved', 'stuck', 'gone']) executor.sessionMoves.set(eosID, { targetTeamID: 2 });
+    const result = await executor.verifyMoves();
+    assert(JSON.stringify(result.failedNames) === JSON.stringify(['StuckPlayer']), 'verify: failedNames lists only the player still on the wrong team.');
+  }
+
   // --- Phase 3.11: Territory Control thresholds ---
   console.log('\n[Phase 3.11: Territory Control thresholds]');
 

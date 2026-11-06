@@ -214,7 +214,7 @@ export default class SwapExecutor {
        clearTimeout(refreshTimer);
      }
 
-     const verified = { moved: 0, failed: 0, disconnected: 0 };
+     const verified = { moved: 0, failed: 0, disconnected: 0, failedNames: [] };
 
      for (const [eosID, moveData] of this.sessionMoves.entries()) {
        const player = this.server.players.find(p => p.eosID === eosID);
@@ -225,6 +225,7 @@ export default class SwapExecutor {
           verified.moved++; // Successfully on correct team
        } else {
          verified.failed++; // Still on wrong team
+         verified.failedNames.push(player.name || eosID);
        }
      }
 
@@ -234,7 +235,8 @@ export default class SwapExecutor {
        totalMoves: this.sessionMoves.size,
        movedSuccessfully: verified.moved,
        failedToMove: verified.failed,
-       disconnected: verified.disconnected
+       disconnected: verified.disconnected,
+       failedNames: verified.failedNames
      };
    }
 
@@ -251,7 +253,7 @@ export default class SwapExecutor {
       this.overallTimeout = null;
     }
 
-    const { totalMoves, movedSuccessfully, failedToMove, disconnected } = await this.verifyMoves();
+    const { totalMoves, movedSuccessfully, failedToMove, disconnected, failedNames = [] } = await this.verifyMoves();
     const duration = Date.now() - this.activeSession.startTime;
     const successRate = totalMoves > 0 ? Math.round((movedSuccessfully / totalMoves) * 100) : 100;
 
@@ -267,7 +269,8 @@ export default class SwapExecutor {
         movedSuccessfully,
         failedToMove,
         disconnected,
-        duration
+        duration,
+        failedNames
       );
       DiscordHelpers.sendDiscordMessage(this.teamBalancer.discordChannel, { embeds: [embed] });
     }
