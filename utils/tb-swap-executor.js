@@ -14,7 +14,9 @@
  * SwapExecutor (default)
  *   Class. Key public methods:
  *     queueMove(eosID, targetTeamID, isSimulated) — Add a player to the move queue.
- *     waitForCompletion(timeoutMs, intervalMs)     — Await queue drain or timeout.
+ *     waitForCompletion(timeoutMs, intervalMs)     — Await queue drain and verification, or timeout.
+ *     getLastSessionReport()                       — Verified results of the last finished session,
+ *                                                    null until one finishes (reset per session).
  *     cleanup()                                    — Cancel timers and clear all state.
  *
  * ─── DEPENDENCIES ────────────────────────────────────────────────
@@ -60,6 +62,7 @@ export default class SwapExecutor {
     this.isProcessing = false;
     this._completing = false; // Atomic lock to prevent duplicate verifyMoves() calls
     this.sessionMoves = new Map(); // Track all moves for verification
+    this._lastSessionReport = null; // Set by completeSession(), read by the plugin's scramble report
   }
 
   async queueMove(eosID, targetTeamID, isSimulated = false) {
@@ -87,6 +90,7 @@ export default class SwapExecutor {
 
   startMonitoring() {
     Logger.verbose('TeamBalancer', 4, '[SwapExecutor] Starting monitoring');
+    this._lastSessionReport = null; // a new session must never report the previous one's results
 
     this.activeSession = {
       startTime: Date.now(),
@@ -256,6 +260,7 @@ export default class SwapExecutor {
     const { totalMoves, movedSuccessfully, failedToMove, disconnected, failedNames = [] } = await this.verifyMoves();
     const duration = Date.now() - this.activeSession.startTime;
     const successRate = totalMoves > 0 ? Math.round((movedSuccessfully / totalMoves) * 100) : 100;
+    this._lastSessionReport = { totalMoves, movedSuccessfully, failedToMove, disconnected, failedNames, duration, successRate };
 
     Logger.verbose('TeamBalancer', 2, `[SwapExecutor] Session complete in ${duration}ms: ${movedSuccessfully} moved, ${disconnected} disconnected, ${failedToMove} failed (${totalMoves} total, ${successRate}%)`);
 
@@ -283,13 +288,21 @@ export default class SwapExecutor {
 
   async waitForCompletion(timeoutMs = 10000, intervalMs = 100) {
     const start = Date.now();
-    while (this.pendingPlayerMoves.size > 0) {
+    // The queue drains before completeSession() has verified the moves, so waiting on the queue
+    // alone returned while verification was still running. processRetries() empties the queue and
+    // calls completeSession(), which sets _completing before its first await, so one of the two
+    // conditions holds until the session is fully done.
+    while (this.pendingPlayerMoves.size > 0 || this._completing) {
       if (Date.now() - start > timeoutMs) {
         Logger.verbose('TeamBalancer', 1, `[SwapExecutor] waitForCompletion timed out after ${timeoutMs}ms`);
         break;
       }
       await new Promise((res) => setTimeout(res, intervalMs));
     }
+  }
+
+  getLastSessionReport() {
+    return this._lastSessionReport;
   }
 
   cleanup() {

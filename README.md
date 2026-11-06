@@ -190,7 +190,8 @@ Add to your `config.json`:
   "useEloForBalance": false,
   "devMode": false,
    "reportLogPath": "team-balancer-reports.jsonl",
-   "enableDatabaseLogging": false
+   "enableDatabaseLogging": false,
+   "scrambleReportPath": "TeamBalancerScrambleReports/"
 }
 ```
 
@@ -306,6 +307,7 @@ Dev:
 devMode                             - Allow commands from any player regardless of admin status.
 reportLogPath                       - Path to the JSONL log file for round reports (default: 'team-balancer-reports.jsonl').
 enableDatabaseLogging               - If true, round reports are also written to the database in addition to the JSONL log (default: false).
+scrambleReportPath                  - Directory for one JSON report per scramble, dry runs included: the plan, the verified execution results of a live run, and the roster before the scramble (default: 'TeamBalancerScrambleReports/', relative to the SquadJS working directory). Empty disables.
 ```
 
 ---

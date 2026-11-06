@@ -150,6 +150,8 @@
  *   devMode                            - Allow commands from any player regardless of admin status.
  *   reportLogPath                      - Path to the JSONL log file for round reports.
  *   enableDatabaseLogging              - If true, round reports are also written to the database in addition to the JSONL log (default: false).
+ *   scrambleReportPath                 - Directory for one JSON report per scramble, dry runs included
+ *                                        (default: "TeamBalancerScrambleReports/"; empty disables).
  *
  * IMPORTANT: The "database" option specifies which Sequelize connector to use for persistence.
  * Set it to the name of your configured connector (default: "sqlite"). Examples:
@@ -206,7 +208,8 @@
  *   "useEloForBalance": false,
  *   "devMode": false,
  *   "reportLogPath": "team-balancer-reports.jsonl",
- *   "enableDatabaseLogging": false
+ *   "enableDatabaseLogging": false,
+ *   "scrambleReportPath": "TeamBalancerScrambleReports/"
  * }
  *
  * Author:
@@ -429,6 +432,12 @@ export default class TeamBalancer extends BasePlugin {
          default: false,
          type: 'boolean',
          description: 'If true, round reports are also written to the database in addition to the JSONL log.'
+       },
+       scrambleReportPath: {
+         required: false,
+         default: 'TeamBalancerScrambleReports/',
+         type: 'string',
+         description: 'Directory for one JSON report per scramble (plan, execution results, roster before the scramble). Dry runs included. Empty disables. Relative to the SquadJS working directory.'
        }
      };
    }
@@ -2160,6 +2169,10 @@ export default class TeamBalancer extends BasePlugin {
     const adminName = player?.name || (steamID ? `admin ${steamID}` : 'system');
     Logger.verbose('TeamBalancer', 4, `Scramble started by ${adminName}`);
 
+    // For the JSON scramble report written in the finally block.
+    let swapPlan = null;
+    let preScrambleState = null;
+    let executionReport = null;
     try {
       let broadcastMessage;
       if (isSimulated) {
@@ -2184,6 +2197,28 @@ export default class TeamBalancer extends BasePlugin {
         this.server.squads,
         this.server.players
       );
+
+      // Roster before the scramble, for the JSON scramble report.
+      const playerByEos = new Map(this.server.players.map((p) => [p.eosID, p]));
+      const playerInfo = (eosID) => ({
+        eosID,
+        name: playerByEos.get(eosID)?.name ?? 'Unknown',
+        steamID: playerByEos.get(eosID)?.steamID ?? null
+      });
+      const squadsOf = (teamID) => transformedSquads
+        .filter((s) => s.teamID === teamID)
+        .map((s) => ({ squadID: s.id, locked: s.locked, players: s.players.map(playerInfo) }));
+      const unassignedOf = (teamID) => transformedPlayers
+        .filter((p) => p.teamID === teamID && !p.squadID)
+        .map((p) => playerInfo(p.eosID));
+      preScrambleState = {
+        winStreakTeam: this.winStreakTeam,
+        winStreakCount: this.winStreakCount,
+        t1Squads: squadsOf('1'),
+        t2Squads: squadsOf('2'),
+        t1Unassigned: unassignedOf('1'),
+        t2Unassigned: unassignedOf('2')
+      };
 
       let eloMap = null;
       let minPlayersToMove = 0;
@@ -2259,7 +2294,7 @@ export default class TeamBalancer extends BasePlugin {
 
       Logger.verbose('TeamBalancer', 4, `Calling scrambler with ${transformedSquads.length} squads and ${transformedPlayers.length} players`);
 
-      const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+      swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
         squads: transformedSquads,
         players: transformedPlayers,
         winStreakTeam: this.winStreakTeam,
@@ -2292,6 +2327,7 @@ export default class TeamBalancer extends BasePlugin {
             affectedPlayers
           });
 
+          let queuedMoves = 0;
           for (const move of swapPlan) {
             const player = this.server.players.find(p => p.eosID === move.eosID);
             if (!player) {
@@ -2312,8 +2348,12 @@ export default class TeamBalancer extends BasePlugin {
             });
             
             await this.reliablePlayerMove(move.eosID, move.targetTeamID, isSimulated);
+            queuedMoves++;
           }
           await this.waitForScrambleToFinish(this.options.maxScrambleCompletionTime);
+          // Only a scramble that queued moves started a session of its own; otherwise the executor
+          // still holds the previous scramble's results.
+          if (queuedMoves > 0) executionReport = this.swapExecutor.getLastSessionReport();
 
           const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`;
           Logger.verbose('TeamBalancer', 4, `Broadcasting: "${msg}"`);
@@ -2384,7 +2424,39 @@ export default class TeamBalancer extends BasePlugin {
       // empty swap plan, or a throw) — so the pending flag ends here, not in resetStreak. Same
       // helper the other teardown paths use, so "no countdown outstanding" has one meaning.
       this._clearPendingScrambleCountdown();
+      if (swapPlan) await this._writeScrambleReport(swapPlan, isSimulated, preScrambleState, executionReport);
       Logger.verbose('TeamBalancer', 4, 'Scramble finished');
+    }
+  }
+
+  /**
+   * Writes one JSON file per scramble, dry runs included, to scrambleReportPath: the plan, the
+   * verified execution results of a live run, and the roster before the scramble. An empty path
+   * disables it. Never throws: the report is diagnostics and must not fail the scramble.
+   */
+  async _writeScrambleReport(swapPlan, isSimulated, preScrambleState, execution) {
+    if (!this.options.scrambleReportPath) return;
+    try {
+      const dir = path.resolve(process.cwd(), this.options.scrambleReportPath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const now = new Date();
+      const report = {
+        type: isSimulated ? 'dry-run' : 'live',
+        timestamp: now.getTime(),
+        isoTimestamp: now.toISOString(),
+        layerName: this.layerNameCached || 'Unknown',
+        gamemode: this.gameModeCached || 'Unknown',
+        calculationTime: swapPlan.calculationTime || 0,
+        totalMovesInPlan: swapPlan.length,
+        plan: swapPlan.map((m) => ({ eosID: m.eosID, targetTeamID: m.targetTeamID })),
+        execution: execution || null,
+        preScrambleState
+      };
+      const file = path.join(dir, `scramble-report-${report.isoTimestamp.replace(/[:.]/g, '-')}.json`);
+      await fs.promises.writeFile(file, JSON.stringify(report, null, 2));
+      Logger.verbose('TeamBalancer', 2, `[ScrambleReport] Written to ${file}`);
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 1, `[ScrambleReport] Failed to write: ${err.message}`);
     }
   }
 

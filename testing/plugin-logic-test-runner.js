@@ -1,5 +1,8 @@
 import TeamBalancer from '../plugins/team-balancer.js';
 import SwapExecutor from '../utils/tb-swap-executor.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import Logger from '../../core/logger.js'; // The plugin uses this, so we need a mock.
 
 // Suppress logger output for cleaner test results
@@ -126,6 +129,7 @@ const defaultTestOptions = {
   discordAdminChannelID: null,
   discordReportChannelID: null,
   discordAdminRoleIDs: [],
+  scrambleReportPath: '', // no report files from the phases that are not about them
 };
 
 // Helper for asserting test conditions
@@ -873,6 +877,49 @@ async function runPluginLogicTests() {
 
     tb.discordChannel = null;
     tb.discordReportChannel = null;
+    await tb.resetStreak();
+  }
+
+  // --- Phase 3.13: waitForCompletion waits for the verification step ---
+  console.log('\n[Phase 3.13: SwapExecutor completion]');
+
+  // The queue drains before completeSession() has verified the moves, so waiting on the queue alone
+  // returned while verification was still running and the session report did not exist yet.
+  {
+    const server = {
+      players: [{ eosID: 'slow1', steamID: 's1', name: 'Slow1', teamID: 1 }],
+      rcon: {
+        switchTeam: async (id, teamID) => { server.players[0].teamID = Number(teamID); },
+        warn: async () => {}
+      },
+      updatePlayerList: () => new Promise((resolve) => setTimeout(resolve, 300))
+    };
+    const executor = new SwapExecutor(server, { changeTeamRetryInterval: 20, maxScrambleCompletionTime: 2000 });
+    await executor.queueMove('slow1', 2);
+    await executor.waitForCompletion(2000, 10);
+    const report = executor.getLastSessionReport?.();
+    assert(report?.movedSuccessfully === 1, 'executor: waitForCompletion returns only once the session report exists.');
+  }
+
+  // --- Phase 3.14: Per-scramble JSON report ---
+  console.log('\n[Phase 3.14: Scramble report files]');
+  {
+    const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-scramble-reports-'));
+    tb.options.scrambleReportPath = reportDir;
+    tb.server.players = [
+      ...Array.from({ length: 9 }, (_, i) => ({ eosID: `rep_t1_${i}`, steamID: `7656119820000000${i}`, name: `RepT1_${i}`, teamID: 1, squadID: null, roles: ['Rifleman'] })),
+      { eosID: 'rep_t2_0', steamID: '76561198200000099', name: 'RepT2_0', teamID: 2, squadID: null, roles: ['Rifleman'] }
+    ];
+    await tb.executeScramble(true);
+    await tb.executeScramble(false);
+    const reports = fs.readdirSync(reportDir).map((f) => JSON.parse(fs.readFileSync(path.join(reportDir, f), 'utf8')));
+    const dry = reports.find((r) => r.type === 'dry-run');
+    const live = reports.find((r) => r.type === 'live');
+    assert(reports.length === 2, `report: one file per scramble (${reports.length} written).`);
+    assert(dry?.plan?.length > 0 && dry?.execution === null, 'report: a dry run records its plan and no execution results.');
+    assert(live?.plan?.length > 0 && live?.execution?.totalMoves === live?.plan?.length, 'report: a live scramble records the execution results of its own moves.');
+    assert(live?.preScrambleState?.t1Unassigned?.length === 9 && live?.preScrambleState?.t2Unassigned?.length === 1, 'report: the roster before the scramble is captured.');
+    tb.options.scrambleReportPath = '';
     await tb.resetStreak();
   }
 
