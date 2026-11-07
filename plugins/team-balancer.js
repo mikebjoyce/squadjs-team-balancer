@@ -56,6 +56,9 @@
  *   ignoredGameModes (take it out and Seed rounds are streak-evaluated instead), and the
  *   round's own layer must have resolved — the lastKnownGoodLayer fallback can be the
  *   previous round's layer, too weak to shuffle teams on.
+ * - A round that ends before any layer has resolved since startup (no fallback either), or
+ *   with a layer that has neither name nor gamemode ('Unknown'), is not evaluated at all: it
+ *   could be a Seed round, so the streak is left unchanged.
  * - useEloForBalance: pulls mu ratings from a running EloTracker instance
  *   at scramble time. Gracefully falls back to pure numerical balance if
  *   EloTracker is absent or the cache is empty.
@@ -102,14 +105,18 @@
  *   maxConsecutiveWinsWithoutThreshold - Any consecutive wins to trigger scramble; 0 = disabled.
  *   minTicketsToCountAsDominantWin     - Ticket threshold for Standard modes (default: 150).
  *   invasionAttackTeamThreshold        - Ticket threshold for Invasion attackers (default: 300).
- *   invasionDefenceTeamThreshold       - Ticket threshold for Invasion defenders (default: 650).
+ *   invasionDefenceTeamThreshold       - Ticket threshold for Invasion defenders (default: 500).
+ *   tcDominantThreshold                - Ticket threshold for Territory Control, symmetric
+ *                                        (default: null = use minTicketsToCountAsDominantWin).
  *   enableSingleRoundScramble          - Scramble on a single massive margin round.
- *   singleRoundScrambleThreshold       - Ticket margin for single-round trigger (default: 250).
+ *   singleRoundScrambleThreshold       - Ticket margin for single-round trigger (default: 200).
+ *   tcSingleRoundScrambleThreshold     - Single-round margin on Territory Control
+ *                                        (default: null = use singleRoundScrambleThreshold).
  *
  * Scramble Execution:
- *   scrambleAnnouncementDelay          - Seconds before scramble executes (default: 12).
+ *   scrambleAnnouncementDelay          - Seconds before scramble executes (default: 25).
  *   scramblePercentage                 - Fraction of players to move (default: 0.5).
- *   changeTeamRetryInterval            - RCON retry interval in ms (default: 50).
+ *   changeTeamRetryInterval            - RCON retry interval in ms (default: 100).
  *   maxScrambleCompletionTime          - Max execution time in ms (default: 15000).
  *   warnOnSwap                         - RCON warn players when swapped.
  *   requireScrambleConfirmation        - Require !scramble confirm for manual scrambles.
@@ -135,6 +142,7 @@
  *   discordAdminRoleIDs                - Array of Role IDs required for Discord admin commands (empty = all in channel).
  *   mirrorRconBroadcasts               - Mirror RCON broadcasts to Discord.
  *   postScrambleDetails                - Post detailed swap plan to Discord after scramble.
+ *                                        Live plans: report channel. Dry runs: admin channel.
  *
  * Advanced:
  *   useEloForBalance                   - Weight scrambles by EloTracker mu ratings.
@@ -142,7 +150,9 @@
  * Dev:
  *   devMode                            - Allow commands from any player regardless of admin status.
  *   reportLogPath                      - Path to the JSONL log file for round reports.
- *   enableDatabaseLogging              - If true, round reports are also written to the database in addition to the JSONL log (default: false).
+ *   enableDatabaseLogging              - If true, round reports are also written to the database in addition to the JSONL log (default: true).
+ *   scrambleReportPath                 - Directory for one JSON report per scramble, dry runs included
+ *                                        (default: "" = off). Files hold player names and SteamIDs.
  *
  * IMPORTANT: The "database" option specifies which Sequelize connector to use for persistence.
  * Set it to the name of your configured connector (default: "sqlite"). Examples:
@@ -166,13 +176,15 @@
  *   "enableSeedAutoScramble": true,
  *   "seedScrambleAnnouncementDelay": 5,
  *   "maxWinStreak": 2,
- *   "maxConsecutiveWinsWithoutThreshold": 0,
- *   "enableSingleRoundScramble": false,
- *   "singleRoundScrambleThreshold": 250,
+ *   "maxConsecutiveWinsWithoutThreshold": 3,
+ *   "enableSingleRoundScramble": true,
+ *   "singleRoundScrambleThreshold": 200,
  *   "minTicketsToCountAsDominantWin": 150,
  *   "invasionAttackTeamThreshold": 300,
- *   "invasionDefenceTeamThreshold": 650,
- *   "scrambleAnnouncementDelay": 12,
+ *   "invasionDefenceTeamThreshold": 500,
+ *   "tcDominantThreshold": null,
+ *   "tcSingleRoundScrambleThreshold": null,
+ *   "scrambleAnnouncementDelay": 25,
  *   "scramblePercentage": 0.5,
  *   "enableClanTagGrouping": false,
  *   "minClanGroupSize": 2,
@@ -181,7 +193,7 @@
  *   "clanTagCaseSensitive": true,
  *   "clanGroupingPullEntireSquads": false,
  *   "clanTagIgnoreList": [],
- *   "changeTeamRetryInterval": 50,
+ *   "changeTeamRetryInterval": 100,
  *   "maxScrambleCompletionTime": 15000,
  *   "showWinStreakMessages": true,
  *   "warnOnSwap": true,
@@ -194,10 +206,11 @@
  *   "discordAdminRoleIDs": [],
  *   "mirrorRconBroadcasts": true,
  *   "postScrambleDetails": true,
- *   "useEloForBalance": false,
+ *   "useEloForBalance": true,
  *   "devMode": false,
  *   "reportLogPath": "team-balancer-reports.jsonl",
- *   "enableDatabaseLogging": false
+ *   "enableDatabaseLogging": true,
+ *   "scrambleReportPath": ""
  * }
  *
  * Author:
@@ -262,16 +275,16 @@ export default class TeamBalancer extends BasePlugin {
         type: 'number'
       },      
       maxConsecutiveWinsWithoutThreshold: {
-        default: 0,
+        default: 3,
         type: 'number',
         description: 'Trigger scramble after X consecutive wins, ignoring ticket thresholds. Set to 0 to disable.'
       },
       enableSingleRoundScramble: {
-        default: false,
+        default: true,
         type: 'boolean'
       },
       singleRoundScrambleThreshold: {
-        default: 250,
+        default: 200,
         type: 'number'
       },
       minTicketsToCountAsDominantWin: {
@@ -283,11 +296,21 @@ export default class TeamBalancer extends BasePlugin {
         type: 'number'
       },      
       invasionDefenceTeamThreshold: {
-        default: 650,
+        default: 500,
         type: 'number'
-      },      
+      },
+      tcDominantThreshold: {
+        default: null,
+        type: 'number',
+        description: 'Ticket margin for a dominant win on Territory Control. null uses minTicketsToCountAsDominantWin. TC is symmetric, so this one number also sets the stomp cutoff (1.5x).'
+      },
+      tcSingleRoundScrambleThreshold: {
+        default: null,
+        type: 'number',
+        description: 'Single-round scramble margin on Territory Control. null uses singleRoundScrambleThreshold.'
+      },
       scrambleAnnouncementDelay: {
-        default: 12,
+        default: 25,
         type: 'number'
       },      
       scramblePercentage: {
@@ -330,7 +353,7 @@ export default class TeamBalancer extends BasePlugin {
          description: 'Clan tags to exclude from clan grouping entirely. Tags are matched after the same normalization used by clanTagCaseSensitive (raw match when true, normalized when false). Example: ["NL", "ADMIN"] to prevent those clans from being kept together during scrambles.'
        },
         changeTeamRetryInterval: {
-         default: 50,
+         default: 100,
          type: 'number'
        },
       maxScrambleCompletionTime: {
@@ -392,7 +415,7 @@ export default class TeamBalancer extends BasePlugin {
         description: 'Time in seconds to wait for scramble confirmation.'
       },
       useEloForBalance: {
-        default: false,
+        default: true,
         type: 'boolean',
         description: 'Use EloTracker ratings to influence team balance during scrambles. Requires EloTracker plugin to be active.'
       },
@@ -407,9 +430,15 @@ export default class TeamBalancer extends BasePlugin {
        },
        enableDatabaseLogging: {
          required: false,
-         default: false,
+         default: true,
          type: 'boolean',
          description: 'If true, round reports are also written to the database in addition to the JSONL log.'
+       },
+       scrambleReportPath: {
+         required: false,
+         default: '',
+         type: 'string',
+         description: 'Directory for one JSON report per scramble (plan, execution results, roster before the scramble), dry runs included. Empty (the default) disables it. Opt in only knowingly: the files hold player names and SteamIDs and are never rotated. Relative to the SquadJS working directory.'
        }
      };
    }
@@ -453,6 +482,13 @@ export default class TeamBalancer extends BasePlugin {
       const newThreshold = this.options.minTicketsToCountAsDominantWin + 50;
       Logger.verbose('TeamBalancer', 1, `singleRoundScrambleThreshold (${this.options.singleRoundScrambleThreshold}) must be greater than minTicketsToCountAsDominantWin (${this.options.minTicketsToCountAsDominantWin}). Enforcing ${newThreshold}.`);
       this.options.singleRoundScrambleThreshold = newThreshold;
+    }
+    // Same rule for Territory Control, on the values a TC round actually uses (null = standard).
+    const tcDominant = this.options.tcDominantThreshold ?? this.options.minTicketsToCountAsDominantWin;
+    const tcSingle = this.options.tcSingleRoundScrambleThreshold ?? this.options.singleRoundScrambleThreshold;
+    if (tcSingle <= tcDominant) {
+      Logger.verbose('TeamBalancer', 1, `Territory Control single-round threshold (${tcSingle}) must be greater than the TC dominant threshold (${tcDominant}). Enforcing ${tcDominant + 50}.`);
+      this.options.tcSingleRoundScrambleThreshold = tcDominant + 50;
     }
   }
 
@@ -1339,6 +1375,11 @@ export default class TeamBalancer extends BasePlugin {
           this.consecutiveWinsTeam = dbRes.consecutiveWinsTeam;
           this.consecutiveWinsCount = dbRes.consecutiveWinsCount;
           this.lastSyncTimestamp = dbRes.lastSyncTimestamp;
+        } else {
+          // DB write failed: apply the flip in memory anyway. Team IDs swap every round, so
+          // skipping it would leave both streaks pointing at the wrong team for this round.
+          this.winStreakTeam = flippedTeam;
+          this.consecutiveWinsTeam = flippedConTeam;
         }
       } catch (err) {
         Logger.verbose('TeamBalancer', 1, `[DB] onNewGame saveState failed: ${err.message}`);
@@ -1534,6 +1575,17 @@ export default class TeamBalancer extends BasePlugin {
       // report, all of which tolerate the previous round's layer as a guess.
       this._applyLayerFallback(roundReport);
 
+      // No layer has resolved since startup, so there was nothing to fall back on. The seed and
+      // ignored-mode checks both answer "no" on an empty layer, so a Seed round would be counted
+      // as a competitive one. Leave the streak untouched: this may be a Seed round that must not
+      // count, or a real one whose layer never arrived, and discarding a real streak is worse.
+      // 'Unknown' is the placeholder resolveLayerInfo() stores for a layer object without fields.
+      const unresolved = (value) => value == null || value === 'Unknown';
+      if (unresolved(this.gameModeCached) && unresolved(this.layerNameCached)) {
+        Logger.verbose('TeamBalancer', 1, '[TeamBalancer] Skipping round evaluation: no layer resolved since startup, so this round cannot be classified. Streak left unchanged.');
+        return;
+      }
+
       // Check for Draw (Winner is null)
       if (!data || !data.winner) {
         Logger.verbose('TeamBalancer', 2, 'Round ended in a Draw.');
@@ -1613,12 +1665,18 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
-      const isInvasion = this.gameModeCached?.toLowerCase().includes('invasion') ?? false;
+      const gameModeLower = this.gameModeCached?.toLowerCase() || '';
+      const isInvasion = gameModeLower.includes('invasion');
+      // Territory Control is symmetric like RAAS/AAS and differs only in its numbers, and only once
+      // an operator sets them. SquadJS spells the mode "Territory Control" or "TC" depending on the source.
+      const isTC = gameModeLower === 'tc' || gameModeLower.includes('territory control');
+      const singleRoundThreshold =
+        (isTC ? this.options.tcSingleRoundScrambleThreshold : null) ?? this.options.singleRoundScrambleThreshold;
 
-      if (this.options.enableSingleRoundScramble && !isInvasion && margin >= this.options.singleRoundScrambleThreshold) {
+      if (this.options.enableSingleRoundScramble && !isInvasion && margin >= singleRoundThreshold) {
         roundReport.scrambled = true;
         roundReport.scrambleCondition = 'Single Round Margin';
-        Logger.verbose('TeamBalancer', 2, `[SingleRoundScramble] Triggered! Margin: ${margin} >= Threshold: ${this.options.singleRoundScrambleThreshold}`);
+        Logger.verbose('TeamBalancer', 2, `[SingleRoundScramble] Triggered! Margin: ${margin} >= Threshold: ${singleRoundThreshold}`);
         const message = `${this.RconMessages.prefix} ${this.formatMessage(this.RconMessages.singleRoundScramble, {
           margin,
           delay: this.options.scrambleAnnouncementDelay
@@ -1635,7 +1693,8 @@ export default class TeamBalancer extends BasePlugin {
         return;
       }
 
-      const dominantThreshold = this.options.minTicketsToCountAsDominantWin ?? 175;
+      const dominantThreshold =
+        (isTC ? this.options.tcDominantThreshold : null) ?? this.options.minTicketsToCountAsDominantWin ?? 175;
       const stompThreshold = Math.floor(dominantThreshold * 1.5);
       const closeGameMargin = Math.floor(dominantThreshold * 0.34);
       const moderateWinThreshold = Math.floor((dominantThreshold + closeGameMargin) / 2);
@@ -1650,7 +1709,7 @@ export default class TeamBalancer extends BasePlugin {
       }`);
 
       const invasionAttackThreshold = this.options.invasionAttackTeamThreshold ?? 300;
-      const invasionDefenceThreshold = this.options.invasionDefenceTeamThreshold ?? 650;
+      const invasionDefenceThreshold = this.options.invasionDefenceTeamThreshold ?? 500;
 
       if (isInvasion) {
         if (
@@ -1695,11 +1754,11 @@ export default class TeamBalancer extends BasePlugin {
                 ? this.RconMessages.nonDominant.invasionAttackWin
                 : this.RconMessages.nonDominant.invasionDefendWin;
           } else {
-            const threshold = this.options.minTicketsToCountAsDominantWin ?? 175;
-
-            const veryCloseCutoff = Math.floor(threshold * 0.11);
-            const closeCutoff = Math.floor(threshold * 0.45);
-            const tacticalCutoff = Math.floor(threshold * 0.68);
+            // Off dominantThreshold, not the raw option: the ladder describes how far short of
+            // dominance the win fell, so it has to use the scale the dominance test just used.
+            const veryCloseCutoff = Math.floor(dominantThreshold * 0.11);
+            const closeCutoff = Math.floor(dominantThreshold * 0.45);
+            const tacticalCutoff = Math.floor(dominantThreshold * 0.68);
 
             if (margin < veryCloseCutoff) {
               template = this.RconMessages.nonDominant.narrowVictory;
@@ -2120,6 +2179,10 @@ export default class TeamBalancer extends BasePlugin {
     const adminName = player?.name || (steamID ? `admin ${steamID}` : 'system');
     Logger.verbose('TeamBalancer', 4, `Scramble started by ${adminName}`);
 
+    // For the JSON scramble report written in the finally block.
+    let swapPlan = null;
+    let preScrambleState = null;
+    let executionReport = null;
     try {
       let broadcastMessage;
       if (isSimulated) {
@@ -2144,6 +2207,30 @@ export default class TeamBalancer extends BasePlugin {
         this.server.squads,
         this.server.players
       );
+
+      // Roster before the scramble, for the JSON scramble report (only built when reports are on).
+      if (this.options.scrambleReportPath) {
+        const playerByEos = new Map(this.server.players.map((p) => [p.eosID, p]));
+        const playerInfo = (eosID) => ({
+          eosID,
+          name: playerByEos.get(eosID)?.name ?? 'Unknown',
+          steamID: playerByEos.get(eosID)?.steamID ?? null
+        });
+        const squadsOf = (teamID) => transformedSquads
+          .filter((s) => s.teamID === teamID)
+          .map((s) => ({ squadID: s.id, locked: s.locked, players: s.players.map(playerInfo) }));
+        const unassignedOf = (teamID) => transformedPlayers
+          .filter((p) => p.teamID === teamID && !p.squadID)
+          .map((p) => playerInfo(p.eosID));
+        preScrambleState = {
+          winStreakTeam: this.winStreakTeam,
+          winStreakCount: this.winStreakCount,
+          t1Squads: squadsOf('1'),
+          t2Squads: squadsOf('2'),
+          t1Unassigned: unassignedOf('1'),
+          t2Unassigned: unassignedOf('2')
+        };
+      }
 
       let eloMap = null;
       let minPlayersToMove = 0;
@@ -2219,7 +2306,7 @@ export default class TeamBalancer extends BasePlugin {
 
       Logger.verbose('TeamBalancer', 4, `Calling scrambler with ${transformedSquads.length} squads and ${transformedPlayers.length} players`);
 
-      const swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
+      swapPlan = await Scrambler.scrambleTeamsPreservingSquads({
         squads: transformedSquads,
         players: transformedPlayers,
         winStreakTeam: this.winStreakTeam,
@@ -2232,10 +2319,13 @@ export default class TeamBalancer extends BasePlugin {
         pullEntireSquads: this.options.clanGroupingPullEntireSquads
       });
 
+      // A dry run answers the admin who asked for it, so its plan goes to the admin channel next to
+      // their command. Live plans go to the report channel, which is the archive.
       const targetReportChannel = this.discordReportChannel || this.discordChannel;
-      if (targetReportChannel && this.options.postScrambleDetails) {
+      const planChannel = isSimulated ? this.discordChannel || targetReportChannel : targetReportChannel;
+      if (planChannel && this.options.postScrambleDetails) {
         const embed = await DiscordHelpers.createScrambleDetailsMessage(swapPlan, isSimulated, this, eloMap);
-        DiscordHelpers.sendDiscordMessage(targetReportChannel, { embeds: [embed] });
+        DiscordHelpers.sendDiscordMessage(planChannel, { embeds: [embed] });
       }
 
       if (swapPlan && swapPlan.length > 0) {
@@ -2249,6 +2339,7 @@ export default class TeamBalancer extends BasePlugin {
             affectedPlayers
           });
 
+          let queuedMoves = 0;
           for (const move of swapPlan) {
             const player = this.server.players.find(p => p.eosID === move.eosID);
             if (!player) {
@@ -2269,8 +2360,12 @@ export default class TeamBalancer extends BasePlugin {
             });
             
             await this.reliablePlayerMove(move.eosID, move.targetTeamID, isSimulated);
+            queuedMoves++;
           }
           await this.waitForScrambleToFinish(this.options.maxScrambleCompletionTime);
+          // Only a scramble that queued moves started a session of its own; otherwise the executor
+          // still holds the previous scramble's results.
+          if (queuedMoves > 0) executionReport = this.swapExecutor.getLastSessionReport();
 
           const msg = `${this.RconMessages.prefix} ${this.RconMessages.scrambleCompleteMessage.trim()}`;
           Logger.verbose('TeamBalancer', 4, `Broadcasting: "${msg}"`);
@@ -2341,7 +2436,39 @@ export default class TeamBalancer extends BasePlugin {
       // empty swap plan, or a throw) — so the pending flag ends here, not in resetStreak. Same
       // helper the other teardown paths use, so "no countdown outstanding" has one meaning.
       this._clearPendingScrambleCountdown();
+      if (swapPlan) await this._writeScrambleReport(swapPlan, isSimulated, preScrambleState, executionReport);
       Logger.verbose('TeamBalancer', 4, 'Scramble finished');
+    }
+  }
+
+  /**
+   * Writes one JSON file per scramble, dry runs included, to scrambleReportPath: the plan, the
+   * verified execution results of a live run, and the roster before the scramble. An empty path
+   * disables it. Never throws: the report is diagnostics and must not fail the scramble.
+   */
+  async _writeScrambleReport(swapPlan, isSimulated, preScrambleState, execution) {
+    if (!this.options.scrambleReportPath) return;
+    try {
+      const dir = path.resolve(process.cwd(), this.options.scrambleReportPath);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const now = new Date();
+      const report = {
+        type: isSimulated ? 'dry-run' : 'live',
+        timestamp: now.getTime(),
+        isoTimestamp: now.toISOString(),
+        layerName: this.layerNameCached || 'Unknown',
+        gamemode: this.gameModeCached || 'Unknown',
+        calculationTime: swapPlan.calculationTime || 0,
+        totalMovesInPlan: swapPlan.length,
+        plan: swapPlan.map((m) => ({ eosID: m.eosID, targetTeamID: m.targetTeamID })),
+        execution: execution || null,
+        preScrambleState
+      };
+      const file = path.join(dir, `scramble-report-${report.isoTimestamp.replace(/[:.]/g, '-')}.json`);
+      await fs.promises.writeFile(file, JSON.stringify(report, null, 2));
+      Logger.verbose('TeamBalancer', 2, `[ScrambleReport] Written to ${file}`);
+    } catch (err) {
+      Logger.verbose('TeamBalancer', 1, `[ScrambleReport] Failed to write: ${err.message}`);
     }
   }
 

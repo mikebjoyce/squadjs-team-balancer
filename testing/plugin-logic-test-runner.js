@@ -1,4 +1,8 @@
 import TeamBalancer from '../plugins/team-balancer.js';
+import SwapExecutor from '../utils/tb-swap-executor.js';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import Logger from '../../core/logger.js'; // The plugin uses this, so we need a mock.
 
 // Suppress logger output for cleaner test results
@@ -125,6 +129,8 @@ const defaultTestOptions = {
   discordAdminChannelID: null,
   discordReportChannelID: null,
   discordAdminRoleIDs: [],
+  scrambleReportPath: '', // no report files from the phases that are not about them
+  enableDatabaseLogging: false, // the mock model has no create(); Phase 3.7 stubs insertRoundReport itself
 };
 
 // Helper for asserting test conditions
@@ -735,6 +741,290 @@ async function runPluginLogicTests() {
   tb.manuallyDisabled = false;
   tb.options.enableWinStreakTracking = true;
   tb.options.enableSeedAutoScramble = true;
+
+  // --- Phase 3.8: NEW_GAME team flip survives a failed DB write ---
+  console.log('\n[Phase 3.8: NEW_GAME flip without DB]');
+
+  // Team IDs swap sides every round. If the flipped state cannot be persisted, the in-memory
+  // streak must still follow the team, or it points at the wrong side for the whole round.
+  tb.winStreakTeam = 1;
+  tb.winStreakCount = 1;
+  tb.consecutiveWinsTeam = 1;
+  tb.consecutiveWinsCount = 1;
+  const realSaveState = tb.db.saveState.bind(tb.db);
+  tb.db.saveState = async () => null; // what tb-database returns when the write fails
+  await tb.onNewGame({ layer: { gamemode: 'RAAS', name: 'Yehorivka_RAAS_v1' } });
+  clearTimeout(tb._abbreviationPollStartTimeout);
+  assert(tb.winStreakTeam === 2, 'newgame: win streak team is flipped in memory when saveState fails.');
+  assert(tb.consecutiveWinsTeam === 2, 'newgame: consecutive-wins team is flipped in memory when saveState fails.');
+  assert(tb.winStreakCount === 1 && tb.consecutiveWinsCount === 1, 'newgame: streak counts are kept when saveState fails.');
+  tb.db.saveState = realSaveState;
+  await tb.resetStreak();
+
+  // --- Phase 3.9: A round whose layer never resolved does not feed the streak ---
+  console.log('\n[Phase 3.9: Unclassifiable round]');
+
+  // No layer since startup and nothing to fall back on: the round could be a Seed round, so it must
+  // neither count toward the streak nor reset it.
+  tb.options.maxWinStreak = 2;
+  tb.gameModeCached = 'RAAS';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } }); // streak 1, persisted
+  assert(tb.winStreakTeam === 1 && tb.winStreakCount === 1, 'unresolved layer: setup round starts a streak.');
+  tb.gameModeCached = null;
+  tb.layerNameCached = null;
+  tb.lastKnownGoodLayer = null;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakTeam === 1 && tb.winStreakCount === 1, 'unresolved layer: streak is left unchanged.');
+  assert(tb._scramblePending === false, 'unresolved layer: no scramble is armed.');
+  // resolveLayerInfo() stores the 'Unknown' placeholder for a layer object without name and mode.
+  // That is just as unclassifiable as null.
+  tb.gameModeCached = 'Unknown';
+  tb.layerNameCached = 'Unknown';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakTeam === 1 && tb.winStreakCount === 1 && tb._scramblePending === false,
+    "unresolved layer: an 'Unknown' layer leaves the streak unchanged too.");
+  await tb.cancelPendingScramble(null, null, true);
+  await tb.resetStreak();
+  tb.gameModeCached = 'RAAS';
+
+  // --- Phase 3.10: Move verification does not hang on a stuck RCON ---
+  console.log('\n[Phase 3.10: SwapExecutor verification timeout]');
+
+  // updatePlayerList() is an RCON round-trip with no timeout of its own. A refresh that never
+  // returns must fall back to the session counters instead of blocking completeSession() forever.
+  {
+    const stuckServer = { players: [], updatePlayerList: () => new Promise(() => {}) };
+    const executor = new SwapExecutor(stuckServer, { maxScrambleCompletionTime: 100 });
+    executor.activeSession = { startTime: Date.now(), totalMoves: 2, movesSent: 1, failedMoves: 1 };
+    const result = await Promise.race([
+      executor.verifyMoves(),
+      new Promise((resolve) => setTimeout(() => resolve('hung'), 2000))
+    ]);
+    assert(result !== 'hung', 'verify: a stuck updatePlayerList() does not hang verification.');
+    assert(result?.movedSuccessfully === 1 && result?.failedToMove === 1, 'verify: falls back to the session counters after the timeout.');
+  }
+
+  // Verification names the players still on the wrong team; disconnected ones are not failures.
+  {
+    const server = {
+      players: [
+        { eosID: 'moved', name: 'MovedPlayer', teamID: 2 },
+        { eosID: 'stuck', name: 'StuckPlayer', teamID: 1 }
+      ],
+      updatePlayerList: async () => {}
+    };
+    const executor = new SwapExecutor(server, { maxScrambleCompletionTime: 1000 });
+    executor.activeSession = { startTime: Date.now(), totalMoves: 3, movesSent: 3, failedMoves: 0 };
+    for (const eosID of ['moved', 'stuck', 'gone']) executor.sessionMoves.set(eosID, { targetTeamID: 2 });
+    const result = await executor.verifyMoves();
+    assert(JSON.stringify(result.failedNames) === JSON.stringify(['StuckPlayer']), 'verify: failedNames lists only the player still on the wrong team.');
+  }
+
+  // --- Phase 3.11: Territory Control thresholds ---
+  console.log('\n[Phase 3.11: Territory Control thresholds]');
+
+  // SquadJS hands TC over as "Territory Control" or "TC". Its own thresholds replace the standard
+  // ones only when set; null keeps the RAAS/AAS scale.
+  tb.options.maxWinStreak = 3; // a dominant win must not arm a streak scramble in this phase
+  tb.options.tcDominantThreshold = 500; // standard (minTicketsToCountAsDominantWin) is 300 here
+  await tb.resetStreak();
+  tb.gameModeCached = 'Territory Control';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 0, 'TC: a 400-ticket win is not dominant under tcDominantThreshold 500.');
+  await tb.resetStreak();
+  tb.gameModeCached = 'TC';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 600 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 1, 'TC: a 600-ticket win is dominant under tcDominantThreshold 500 ("TC" spelling).');
+  await tb.resetStreak();
+  tb.options.tcDominantThreshold = null;
+  tb.gameModeCached = 'Territory Control';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 400 }, loser: { tickets: 0 } });
+  assert(tb.winStreakCount === 1, 'TC: tcDominantThreshold null falls back to the standard threshold.');
+  await tb.resetStreak();
+  tb.options.enableSingleRoundScramble = true;
+  tb.options.singleRoundScrambleThreshold = 500;
+  tb.options.tcSingleRoundScrambleThreshold = 800;
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 600 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === false, 'TC: a 600-ticket margin does not trigger the single-round scramble under tcSingleRoundScrambleThreshold 800.');
+  await tb.cancelPendingScramble(null, null, true);
+  await tb.resetStreak();
+  tb.gameModeCached = 'RAAS';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 600 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === true, 'TC: tcSingleRoundScrambleThreshold does not apply to RAAS.');
+  await tb.cancelPendingScramble(null, null, true);
+  await tb.resetStreak();
+  // Only tcDominantThreshold set: TC's single-round threshold falls back to the standard 500, below
+  // TC dominance. Mount validation must lift it, or a TC win that is not even dominant scrambles.
+  tb.options.tcSingleRoundScrambleThreshold = null;
+  tb.options.tcDominantThreshold = 600;
+  tb.validateOptions();
+  assert(tb.options.tcSingleRoundScrambleThreshold === 650, `TC: validation lifts the TC single-round threshold above TC dominance (${tb.options.tcSingleRoundScrambleThreshold}).`);
+  tb.gameModeCached = 'Territory Control';
+  await tb.onRoundEnded({ winner: { team: 1, tickets: 550 }, loser: { tickets: 0 } });
+  assert(tb._scramblePending === false, 'TC: a 550-ticket win below TC dominance (600) does not trigger a single-round scramble.');
+  await tb.cancelPendingScramble(null, null, true);
+  await tb.resetStreak();
+  tb.options.tcDominantThreshold = null;
+  tb.gameModeCached = 'RAAS';
+  tb.options.enableSingleRoundScramble = false;
+  tb.options.tcSingleRoundScrambleThreshold = null;
+  tb.options.maxWinStreak = 2;
+
+  // --- Phase 3.12: Dry-run plans go to the admin channel ---
+  console.log('\n[Phase 3.12: Dry-run plan routing]');
+
+  // A dry run answers the admin who typed it, so its plan belongs next to their command in the admin
+  // channel. Live plans stay in the report channel, which is the archive.
+  {
+    const adminSends = [];
+    const reportSends = [];
+    tb.discordChannel = { send: async (data) => { adminSends.push(data); } };
+    tb.discordReportChannel = { send: async (data) => { reportSends.push(data); } };
+    tb.options.postScrambleDetails = true;
+    tb.server.players = [
+      ...Array.from({ length: 9 }, (_, i) => ({ eosID: `route_t1_${i}`, steamID: `7656119810000000${i}`, name: `RouteT1_${i}`, teamID: 1, squadID: null, roles: ['Rifleman'] })),
+      { eosID: 'route_t2_0', steamID: '76561198100000099', name: 'RouteT2_0', teamID: 2, squadID: null, roles: ['Rifleman'] }
+    ];
+    const planTitle = (sends, text) => sends.some((d) => d.embeds?.[0]?.title?.includes(text));
+
+    await tb.executeScramble(true);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert(planTitle(adminSends, 'Dry Run'), 'dry run: the plan is posted to the admin channel.');
+    assert(!planTitle(reportSends, 'Dry Run'), 'dry run: the plan is not posted to the report channel.');
+
+    await tb.executeScramble(false);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert(planTitle(reportSends, 'Execution Plan'), 'live: the plan is still posted to the report channel.');
+
+    tb.discordChannel = null;
+    tb.discordReportChannel = null;
+    await tb.resetStreak();
+  }
+
+  // --- Phase 3.13: waitForCompletion waits for the verification step ---
+  console.log('\n[Phase 3.13: SwapExecutor completion]');
+
+  // The queue drains before completeSession() has verified the moves, so waiting on the queue alone
+  // returned while verification was still running and the session report did not exist yet.
+  {
+    const server = {
+      players: [{ eosID: 'slow1', steamID: 's1', name: 'Slow1', teamID: 1 }],
+      rcon: {
+        switchTeam: async (id, teamID) => { server.players[0].teamID = Number(teamID); },
+        warn: async () => {}
+      },
+      updatePlayerList: () => new Promise((resolve) => setTimeout(resolve, 300))
+    };
+    const executor = new SwapExecutor(server, { changeTeamRetryInterval: 20, maxScrambleCompletionTime: 2000 });
+    await executor.queueMove('slow1', 2);
+    await executor.waitForCompletion(2000, 10);
+    const report = executor.getLastSessionReport?.();
+    assert(report?.movedSuccessfully === 1, 'executor: waitForCompletion returns only once the session report exists.');
+  }
+
+  // A cleanup() while completeSession() is verifying (unmount, error paths) must not throw or leave
+  // the executor stuck in _completing, or every later scramble waits out the full timeout.
+  {
+    const rejections = [];
+    const onRejection = (err) => rejections.push(err?.message || String(err));
+    process.on('unhandledRejection', onRejection);
+    const server = {
+      players: [{ eosID: 'c1', steamID: 'c1', name: 'C1', teamID: 1 }],
+      rcon: {
+        switchTeam: async (id, teamID) => { server.players[0].teamID = Number(teamID); },
+        warn: async () => {}
+      },
+      updatePlayerList: () => new Promise((resolve) => setTimeout(resolve, 200))
+    };
+    const executor = new SwapExecutor(server, { changeTeamRetryInterval: 20, maxScrambleCompletionTime: 2000 });
+    await executor.queueMove('c1', 2);
+    for (let i = 0; i < 400 && !executor._completing; i++) await new Promise((r) => setTimeout(r, 5));
+    executor.cleanup();
+    await new Promise((r) => setTimeout(r, 400));
+    process.off('unhandledRejection', onRejection);
+    assert(rejections.length === 0, `executor: a cleanup during verification throws nothing (${rejections.join('; ') || 'none'}).`);
+    assert(executor._completing === false, 'executor: a cleanup during verification does not leave the executor stuck.');
+  }
+
+  // A move queued while the previous session is still being verified must not join that session's
+  // move list: the new session's report would count the old moves too.
+  {
+    let refreshes = 0;
+    const server = {
+      players: [
+        { eosID: 'oldA', steamID: 'oldA', name: 'OldA', teamID: 1 },
+        { eosID: 'newB', steamID: 'newB', name: 'NewB', teamID: 1 }
+      ],
+      rcon: {
+        switchTeam: async (id, teamID) => { server.players.find((p) => p.steamID === id).teamID = Number(teamID); },
+        warn: async () => {}
+      },
+      updatePlayerList: () => new Promise((resolve) => setTimeout(resolve, refreshes++ === 0 ? 300 : 0))
+    };
+    const executor = new SwapExecutor(server, { changeTeamRetryInterval: 20, maxScrambleCompletionTime: 2000 });
+    await executor.queueMove('oldA', 2);
+    for (let i = 0; i < 400 && !executor._completing; i++) await new Promise((r) => setTimeout(r, 5));
+    await executor.queueMove('newB', 2);
+    await executor.waitForCompletion(3000, 10);
+    const report = executor.getLastSessionReport();
+    assert(report?.totalMoves === 1 && report?.movedSuccessfully === 1,
+      `executor: a session started during the previous one's verification reports only its own moves (${report?.totalMoves} total).`);
+  }
+
+  // --- Phase 3.14: Per-scramble JSON report ---
+  console.log('\n[Phase 3.14: Scramble report files]');
+  // The files hold every player's name and SteamID, so an operator has to opt in.
+  assert(TeamBalancer.optionsSpecification.scrambleReportPath.default === '', 'report: scramble reports are off unless scrambleReportPath is set.');
+  {
+    const reportDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tb-scramble-reports-'));
+    tb.options.scrambleReportPath = reportDir;
+    tb.server.players = [
+      ...Array.from({ length: 9 }, (_, i) => ({ eosID: `rep_t1_${i}`, steamID: `7656119820000000${i}`, name: `RepT1_${i}`, teamID: 1, squadID: null, roles: ['Rifleman'] })),
+      { eosID: 'rep_t2_0', steamID: '76561198200000099', name: 'RepT2_0', teamID: 2, squadID: null, roles: ['Rifleman'] }
+    ];
+    await tb.executeScramble(true);
+    await tb.executeScramble(false);
+    const reports = fs.readdirSync(reportDir).map((f) => JSON.parse(fs.readFileSync(path.join(reportDir, f), 'utf8')));
+    const dry = reports.find((r) => r.type === 'dry-run');
+    const live = reports.find((r) => r.type === 'live');
+    assert(reports.length === 2, `report: one file per scramble (${reports.length} written).`);
+    assert(dry?.plan?.length > 0 && dry?.execution === null, 'report: a dry run records its plan and no execution results.');
+    assert(live?.plan?.length > 0 && live?.execution?.totalMoves === live?.plan?.length, 'report: a live scramble records the execution results of its own moves.');
+    assert(live?.preScrambleState?.t1Unassigned?.length === 9 && live?.preScrambleState?.t2Unassigned?.length === 1, 'report: the roster before the scramble is captured.');
+    tb.options.scrambleReportPath = '';
+    await tb.resetStreak();
+  }
+
+  // --- Phase 3.15: In-game diag is paged ---
+  console.log('\n[Phase 3.15: Paged in-game diag]');
+
+  // Squad shows one admin warn at a time and the next replaces it, so one long diag message is
+  // unreadable. It goes out as three short pages, spaced out so each can be read.
+  {
+    const warns = [];
+    const delays = [];
+    const realWarn = tb.server.rcon.warn;
+    const realSetTimeout = globalThis.setTimeout;
+    tb.server.rcon.warn = async (id, msg) => { warns.push(msg); };
+    globalThis.setTimeout = (fn, ms, ...args) => {
+      if (ms >= 5000) { delays.push(ms); ms = 0; } // the page spacing; keeps this test fast
+      return realSetTimeout(fn, ms, ...args);
+    };
+    try {
+      await tb.onChatCommand({ message: 'diag', chat: 'ChatAdmin', steamID: 'admin1', player: { name: 'Admin', steamID: 'admin1' } });
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+      tb.server.rcon.warn = realWarn;
+    }
+    const pages = warns.filter((w) => w.includes('TB Diag'));
+    assert(pages.length === 3, `diag: sent as three pages (${pages.length}).`);
+    assert(pages.every((p, i) => p.includes(`${i + 1}/3`)), 'diag: pages are numbered in order.');
+    assert(pages.every((p) => p.split('\n').length <= 7), 'diag: every page is at most 7 lines.');
+    assert(delays.length === 2, `diag: the pages are spaced out (${delays.length} pauses).`);
+    const all = pages.join('\n');
+    assert(['DB:', 'Scramble test:', 'Layer:', 'Players:', 'Squads:', 'Dominant:', 'TC:', 'Seed auto scramble:', 'Discord:'].every((k) => all.includes(k)),
+      'diag: the pages still carry every section of the old message.');
+  }
 
   // --- Final Report ---
   console.log(`\n🏁 All logic tests completed. Result: ${passCount}/${testCount} passed.`);

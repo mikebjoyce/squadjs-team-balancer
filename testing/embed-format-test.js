@@ -387,6 +387,71 @@ check('pushChunkedFields returns what it dropped and appends no notice of its ow
   for (const f of embed.fields) assert.ok(f.value.length <= 1024, `field "${f.name}" is ${f.value.length} chars`);
 });
 
+// The completion summary names the players a scramble could not move, so an admin can fix them by
+// hand. Capped, so a mass failure cannot push the field past Discord's 1024-character limit.
+check('scramble completed embed lists the players that failed to move', () => {
+  const names = Array.from({ length: 25 }, (_, i) => `Stuck_${i}_${'x'.repeat(60)}`);
+  const embed = DiscordHelpers.buildScrambleCompletedEmbed(30, 5, 25, 0, 1200, names);
+  const field = embed.fields.find((f) => f.name.includes('Failed Players'));
+  assert.ok(field, 'no failed-players field');
+  assert.ok(field.name.includes('25'), field.name);
+  assert.ok(field.value.includes('Stuck_0_'), 'first name missing');
+  assert.ok(field.value.includes('5 more'), 'overflow note missing');
+  assert.ok(field.value.length <= 1024, `${field.value.length} chars`);
+});
+
+// discord.js v12 (stock SquadJS 4.1.0) has no `embeds` key: an embeds-only payload reads as empty
+// and is rejected. The fallback must still deliver every embed of a multi-embed payload.
+{
+  const sent = [];
+  const v12Channel = {
+    send: async (data) => {
+      if (!data.embed) throw new Error('Cannot send an empty message');
+      sent.push(data.embed.title);
+    }
+  };
+  const ok = await DiscordHelpers.sendDiscordMessage(v12Channel, { embeds: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
+  check('discord.js v12 fallback sends every embed, one message each', () => {
+    assert.strictEqual(ok, true);
+    assert.deepStrictEqual(sent, ['A', 'B', 'C']);
+  });
+}
+
+// Each embed of the fallback gets its own rate-limit retry, even when the combined payload already
+// used one, and one embed that cannot be sent does not take the ones after it down too.
+{
+  const sent = [];
+  let payloadAttempts = 0;
+  let bAttempts = 0;
+  const rateLimited = () => Object.assign(new Error('rate limited'), { status: 429, retryAfter: 1 });
+  const v12Channel = {
+    send: async (data) => {
+      if (data.embeds) throw payloadAttempts++ === 0 ? rateLimited() : new Error('Cannot send an empty message');
+      if (data.embed.title === 'B' && bAttempts++ === 0) throw rateLimited();
+      sent.push(data.embed.title);
+    }
+  };
+  const ok = await DiscordHelpers.sendDiscordMessage(v12Channel, { embeds: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
+  check('discord.js v12 fallback retries a rate-limited embed', () => {
+    assert.strictEqual(ok, true);
+    assert.deepStrictEqual(sent, ['A', 'B', 'C']);
+  });
+
+  const sent2 = [];
+  const brokenChannel = {
+    send: async (data) => {
+      if (!data.embed) throw new Error('Cannot send an empty message');
+      if (data.embed.title === 'B') throw new Error('Missing Permissions');
+      sent2.push(data.embed.title);
+    }
+  };
+  const ok2 = await DiscordHelpers.sendDiscordMessage(brokenChannel, { embeds: [{ title: 'A' }, { title: 'B' }, { title: 'C' }] });
+  check('discord.js v12 fallback still sends the embeds after a failed one', () => {
+    assert.strictEqual(ok2, false);
+    assert.deepStrictEqual(sent2, ['A', 'C']);
+  });
+}
+
 // Sample output for eyeballing column alignment.
 if (process.argv.includes('--print')) {
   for (const embed of [withClans, merged, dividedClan]) {

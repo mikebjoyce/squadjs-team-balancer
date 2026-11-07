@@ -29,7 +29,8 @@
  *     moving as a unit is the norm and goes unlabelled. Those players are
  *     omitted from the regular squad blocks; virtual squads nobody moved out
  *     of are omitted entirely.
- *     buildScrambleCompletedEmbed(...)            — Post-execution summary embed.
+ *     buildScrambleCompletedEmbed(...)            — Post-execution summary embed, naming
+ *                                                   the players that failed to move.
  *     buildScrambleFailedEmbed(reason, time, tb)  — Failure notification embed.
  *     buildFatalErrorEmbed(err, context, tb)      — Critical error embed with stack.
  *     buildWinStreakEmbed(tb, message)            — Win streak broadcast embed.
@@ -175,6 +176,8 @@ export const DiscordHelpers = {
         { name: 'Single Round Scramble', value: tb.options?.enableSingleRoundScramble ? `ON (> ${tb.options?.singleRoundScrambleThreshold} tix)` : 'OFF', inline: true },
         { name: 'Seed Auto Scramble', value: tb.seedAutoScrambleStatus(), inline: true },
         { name: 'Invasion Thresholds', value: `Atk: ${tb.options?.invasionAttackTeamThreshold} | Def: ${tb.options?.invasionDefenceTeamThreshold}`, inline: true },
+        // "standard" rather than the resolved number, so the embed shows whether TC is tuned at all.
+        { name: 'TC Thresholds', value: `Dom: ${tb.options?.tcDominantThreshold ?? 'standard'} | Single: ${tb.options?.tcSingleRoundScrambleThreshold ?? 'standard'}`, inline: true },
         { name: 'Scramble %', value: `${(tb.options?.scramblePercentage || 0.5) * 100}%`, inline: true },
         { name: 'Scramble Delay', value: `${tb.options?.scrambleAnnouncementDelay}s (Seed: ${tb.options?.seedScrambleAnnouncementDelay}s)`, inline: true },
         { name: 'Max Scramble Time', value: `${tb.options?.maxScrambleCompletionTime}ms`, inline: true },
@@ -617,7 +620,7 @@ export const DiscordHelpers = {
     return embed;
   },
 
-  buildScrambleCompletedEmbed(totalMoves, movedSuccessfully, failedToMove, disconnected, duration) {
+  buildScrambleCompletedEmbed(totalMoves, movedSuccessfully, failedToMove, disconnected, duration, failedNames = []) {
     const successRate = totalMoves > 0 ? Math.round((movedSuccessfully / totalMoves) * 100) : 100;
 
     const embed = {
@@ -636,6 +639,13 @@ export const DiscordHelpers = {
 
     if (failedToMove > 0) {
       embed.description = '⚠️ Some players could not be moved. Check logs for details.';
+    }
+
+    // 20 names of at most 40 characters keep the field well inside Discord's 1024-character limit.
+    if (failedNames.length > 0) {
+      const list = failedNames.slice(0, 20).map((n) => String(n).slice(0, 40)).join('\n');
+      const more = failedNames.length > 20 ? `\n…and ${failedNames.length - 20} more` : '';
+      embed.fields.push({ name: `Failed Players (${failedNames.length})`, value: `\`\`\`text\n${list}${more}\n\`\`\``, inline: false });
     }
 
     return embed;
@@ -720,11 +730,22 @@ export const DiscordHelpers = {
           return executeSend(data, true);
         }
 
-        // Compatibility: Discord.js v12 Fallback
+        // Compatibility: Discord.js v12 knows only the singular `embed` key, so send one embed
+        // per message. Content and files ride on the first; the rest follow in order.
         if (err.message === 'Cannot send an empty message' && data.embeds && data.embeds.length > 0) {
-          const legacyData = { ...data, embed: data.embeds[0] };
-          delete legacyData.embeds;
-          return executeSend(legacyData, isRetry);
+          // Each embed is its own request and gets its own rate-limit retry; one that fails does
+          // not take the ones after it down too.
+          const { embeds, ...rest } = data;
+          let firstError = null;
+          for (let i = 0; i < embeds.length; i++) {
+            try {
+              await executeSend(i === 0 ? { ...rest, embed: embeds[i] } : { embed: embeds[i] });
+            } catch (embedErr) {
+              if (!firstError) firstError = embedErr;
+            }
+          }
+          if (firstError) throw firstError;
+          return true;
         }
 
         throw err;
